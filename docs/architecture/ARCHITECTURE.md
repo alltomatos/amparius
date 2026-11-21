@@ -169,10 +169,10 @@ documento (intenção) → cálculo (motor) → XML (gerador) → validação (X
 |---|---|
 | Dev | docker compose (Postgres, Redis, RabbitMQ, MinIO) + api/worker locais |
 | Staging | 1 região, mesma topologia de produção, dados sintéticos |
-| Produção | 1 região BR no início (active-passive), Postgres gerenciado com PITR, 2+ réplicas de api |
+| Produção | **células** em VPS com Docker (ver `SCALING.md` e ADR 0005): uma VPS por conjunto de tenants, control plane separado, Postgres com PITR e réplica por célula |
 | Relay | instalado no cliente (Windows/Linux), Postgres local, serviço com auto-start |
 
-Capacidade inicial: 200 tenants, 20 mil documentos fiscais/mês, 500 usuários simultâneos. Revisar após 3 meses de operação.
+Capacidade inicial: 1 célula M (~120 tenants), 20 mil documentos fiscais/mês, 500 usuários simultâneos. Crescimento por adição de células; revisar após 3 meses de operação.
 
 ## 12. Falhas esperadas e resposta
 

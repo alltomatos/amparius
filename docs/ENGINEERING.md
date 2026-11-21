@@ -1,4 +1,4 @@
-# Engenharia — Amparius
+﻿# Engenharia — Amparius
 
 Documento interno da equipe. O README da raiz é comercial e não deve conter detalhes técnicos.
 
@@ -15,6 +15,8 @@ Documento interno da equipe. O README da raiz é comercial e não deve conter de
 ## Forma
 
 Monólito modular: um repositório, dois deploys no SaaS (`api`, `worker`) e um binário de relay. Módulos com schema e contrato próprios; integração por serviço público ou evento versionado. Microsserviço só com ADR e evidência de gargalo.
+
+Implantação por **células** em VPS (ver `docs/architecture/SCALING.md`): cada célula atende um conjunto de tenants; o control plane decide a colocação.
 
 ## Estrutura prevista
 
@@ -33,6 +35,7 @@ docs/               PRD, arquitetura, DER, UML, ADRs, pesquisa
 
 - `docs/prd/PRD.md` — produto e escopo
 - `docs/architecture/ARCHITECTURE.md` — arquitetura, relay, fiscal, IA
+- `docs/architecture/SCALING.md` — células em VPS, capacidade e migração de tenant
 - `docs/data/DER.md` — modelo de dados
 - `docs/uml/UML.md` — componentes, sequências, estados
 - `docs/adr/` — decisões registradas

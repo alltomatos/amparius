@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200" role="img" aria-label="Amparius">
+  <defs>
+    <linearGradient id="iconGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3898EC" />
+      <stop offset="100%" stop-color="#0073CF" />
+    </linearGradient>
+  </defs>
+  <g transform="translate(5, 15)">
+    <path d="M 32 76 C 32 34, 68 8, 112 12 C 138 14, 158 28, 166 44 C 145 34, 118 32, 92 40 C 66 48, 46 62, 32 76 Z" fill="url(#iconGrad)" />
+    <path d="M 105 46 L 124 46 L 156 154 C 146 156, 134 152, 127 142 L 105 78 Z" fill="url(#iconGrad)" />
+    <path d="M 136 28 C 104 16, 72 34, 58 68 L 40 112 L 62 112 L 86 58 C 96 38, 116 30, 136 28 Z" fill="#00274C" />
+    <path d="M 24 64 C 10 92, 16 132, 42 152 C 56 162, 74 160, 92 148 L 148 106 C 155 100, 161 93, 165 86 L 174 92 L 174 62 L 146 72 L 154 78 C 144 90, 128 102, 108 112 C 94 119, 80 120, 68 116 C 74 111, 86 108, 98 108 C 104 108, 107 103, 102 100 C 88 95, 70 100, 56 112 C 44 122, 36 120, 32 106 C 28 92, 32 76, 40 62 C 34 62, 28 63, 24 64 Z" fill="#00274C" />
+    <path d="M 152 72 L 175 61 L 173 88 L 165 82 C 158 92, 146 102, 134 110 C 145 98, 155 86, 159 77 Z" fill="url(#iconGrad)" />
+  </g>
+</svg>

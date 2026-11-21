@@ -36,6 +36,8 @@ docs/               PRD, arquitetura, DER, UML, ADRs, pesquisa
 - `docs/prd/PRD.md` — produto e escopo
 - `docs/architecture/ARCHITECTURE.md` — arquitetura, relay, fiscal, IA
 - `docs/architecture/SCALING.md` — células em VPS, capacidade e migração de tenant
+- `docs/design/MOCKUPS.md` — telas, decisões visuais e como regenerar
+- `docs/design/AI-ASSISTANT.md` — contrato do assistente contextual
 - `docs/data/DER.md` — modelo de dados
 - `docs/uml/UML.md` — componentes, sequências, estados
 - `docs/adr/` — decisões registradas

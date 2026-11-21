@@ -1,0 +1,37 @@
+# binários / artefatos
+/bin/
+/dist/
+/target/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# segredos e ambiente
+.env
+.env.*
+!.env.example
+*.pem
+*.pfx
+*.p12
+certificados/
+secrets/
+
+# dados locais e logs
+/data/
+/tmp/
+/logs/
+*.log
+
+# editores
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+
+# sistema
+.DS_Store
+Thumbs.db
+
+# node (docs/tooling)
+node_modules/

@@ -50,6 +50,8 @@ Uma VPS com Docker Compose (ou Swarm leve, se necessário) contendo:
 
 Isolamento: rede Docker por célula, sem porta de banco exposta, mTLS entre edge/control plane e a célula.
 
+O relay **não** é uma célula: é um papel do instalador no cliente (ADR 0006), com banco local e base temporária. Ele não entra na conta de capacidade das VPS; entra apenas como carga de sincronização e emissão fiscal.
+
 ## 3. Control plane
 
 Pequeno e independente das células:

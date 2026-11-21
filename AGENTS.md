@@ -92,6 +92,8 @@ docs/               PRD, arquitetura, DER, UML, ADRs, pesquisa
 - Toda entidade sincronizável tem `updated_at`, `version` e origem (`origin_node`).
 - Nada de "last write wins" silencioso em dinheiro ou fiscal: conflito é registrado e revisado.
 
+- O instalador tem dois papéis: estação e servidor da loja (ADR 0006). O servidor da loja guarda base temporária, serve a LAN e sincroniza; não é réplica completa do SaaS.
+
 ## 9. Definição de pronto
 
 Uma entrega só termina quando:

@@ -1,6 +1,6 @@
 # ADR 0002 — Relay local e operação offline
 
-Status: aceito · 21/11/2026
+Status: aceito · 21/11/2026 · refinado pelo ADR 0006
 
 ## Contexto
 

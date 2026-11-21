@@ -54,7 +54,17 @@ Ao mesmo tempo, 2026–2033 é a transição da **reforma tributária do consumo
 
 - Estoque e almoxarifado; documentos e assinatura; notificações (e-mail/WhatsApp); relatórios e dashboards; IA/MCP; auditoria; importação/exportação; API pública e webhooks.
 
-### 4.4 Fora de escopo (v1)
+### 4.4 Modos de uso e acesso
+
+| Modo | Onde roda | Para quem |
+|---|---|---|
+| **Web** | navegador, portal SaaS | gestão, financeiro, contador, acesso remoto |
+| **Desktop — estação** | PC do operador (Windows/Linux; macOS depois) | atendimento no balcão |
+| **Desktop — servidor da loja** | um PC da unidade, marcado na configuração | serve os terminais da LAN e assume quando a internet cai |
+
+O servidor da loja guarda uma **base temporária** (cadastros, preços, tabelas fiscais, contratos/OS abertos, caixa, agenda e histórico recente) e sincroniza ao reconectar. A interface é a mesma nos três modos.
+
+### 4.5 Fora de escopo (v1)
 
 Folha de pagamento, eSocial completo, contabilidade completa (diário/razão oficial), produção industrial, frota, BI avançado, marketplace.
 

@@ -108,6 +108,28 @@ Regras: schema por módulo, sem `JOIN` cruzado em código de módulo, integraç�
 
 A UI mostra o estado: **online**, **offline com fila** e **contingência fiscal**, com contagem e idade da fila.
 
+### 6.4 Modos de instalação e acesso
+
+Um **único instalador** (Windows e Linux primeiro; macOS depois) com dois papéis escolhidos na configuração:
+
+| Papel | O que faz |
+|---|---|
+| **Estação** | cliente desktop do operador; fala com o SaaS ou com o servidor da loja |
+| **Servidor da loja (relay)** | banco local, servidor web na LAN, fila de sincronização e base temporária |
+
+No papel de servidor da loja:
+
+- PostgreSQL local + servidor web HTTPS para os terminais do balcão;
+- **base temporária**: cadastros, catálogo e preços, tabelas fiscais vigentes, contratos/OS abertos, caixa, agenda e últimos 90 dias de histórico (janela configurável, busca sob demanda);
+- credencial de operador emitida pelo SaaS e validada localmente (cache com validade);
+- fila idempotente e sincronização ao reconectar.
+
+Acesso em três caminhos com a **mesma interface**: portal web do SaaS (online), web local servida pelo servidor da loja (offline ou LAN) e desktop.
+
+Segurança: matrícula do dispositivo no control plane, chave por instalação, TLS local emitido no provisionamento, escuta apenas na LAN por padrão; túnel de saída para acesso remoto é opcional e desligado.
+
+Detalhes e consequências: ADR 0006.
+
 ## 7. Fiscal
 
 ### 7.1 Camadas

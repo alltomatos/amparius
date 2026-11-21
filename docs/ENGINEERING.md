@@ -26,8 +26,8 @@ cmd/worker/         filas, jobs, emissão fiscal
 internal/modules/   identity, party, catalog, finance, fiscal, funeral, cemetery, floriculture, inventory, documents, ai, sync
 internal/platform/  banco, fila, cache, auth, observabilidade
 migrations/         SQL forward-only
-relay/              workspace Rust do relay
-client/             workspace Rust do cliente desktop
+relay/              workspace Rust do relay (papel servidor da loja)
+client/             workspace Rust do cliente desktop (papel estação)
 docs/               PRD, arquitetura, DER, UML, ADRs, pesquisa
 ```
 

@@ -22,8 +22,19 @@ O gerador usa a logomarca oficial (azul `#00274C` / `#0073CF`) e produz `index.h
 | `05-painel-saas-cotas.svg` | Cotas do tenant | Admin SaaS | licenças por módulo (núcleo × opcional), cota/em uso/disponível, cota esgotada, acessos 12/20 |
 | `06-painel-saas-licenca.svg` | Liberar / revogar licença | Admin SaaS | modal com módulo, empresa (CNPJ), vigência, resumo da cota, herança da filial e `LICENSE_POOL_EXHAUSTED` |
 | `07-painel-saas-auditoria.svg` | Auditoria de entitlement | Admin SaaS | trilha append-only: quando, módulo, empresa, quem, origem (admin × self-service) e filtros |
+| `08-painel-saas-ia-provedores.svg` | Provedores de IA | Admin SaaS | catálogo global, `kind`, status, chave mascarada do cofre, modelos com preço por 1M (estimativa), fallback reordenável, banner de assistente desligado e estado offline |
+| `09-painel-saas-ia-modelos-cota.svg` | Modelos e cota de tokens | Admin SaaS | allowlist por escopo (tenant × CNPJ) com `fallback_order` e liga/desliga, cota em R$ (teto global + sub-cota), política `overage`/`hard_stop` e alertas de 80% e 100% |
+| `10-painel-saas-ia-consumo.svg` | Consumo de tokens | Admin SaaS | gráfico de custo em R$ por dia/mês, crédito restante, projeção de estouro, trilha `AI_RUN`/`AI_TOOL_CALL` com custo como número principal e tokens como referência |
 
-As telas 05–07 (painel do admin SaaS) ficam em `docs/design/mockups/`; 01–04 e a galeria, em `mockups/`.
+As telas 05–10 (painel do admin SaaS) ficam em `docs/design/mockups/`; 01–04 e a galeria, em `mockups/`.
+
+### Telas 08–10 · IA no control plane (ADR 0008)
+
+- **Dois níveis de configuração.** Provedor e modelo são catálogo global; a allowlist, a ordem de fallback e a cota são configuráveis por tenant ou por CNPJ (o CNPJ herda o que não definir).
+- **Chave nunca aparece.** `api_key_ref` aponta para o cofre; a tela mostra só `cofre · ai/<provedor>` e a chave mascarada `••••••••`.
+- **Cota em R$, não em tokens.** O teto global e a sub-cota são `R$`; tokens entram apenas como estimativa de referência (preço de tabela por 1M).
+- **Estouro é política, não código.** `overage` (excede cobrando) ou `hard_stop` (bloqueia), configurável por tenant; alertas em 80% e 100%.
+- **Offline desliga o assistente.** Sem internet, só textos fixos, sem LLM e sem consumo de cota; o snapshot de enforcement tem `version` + `valid_until` e falha fechado ao expirar.
 
 ## 2. Decisões de interface
 

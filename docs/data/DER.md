@@ -1,6 +1,6 @@
 # DER — Amparius
 
-Versão 0.2 · modelo lógico inicial + entidade legal, estabelecimento e entitlement (ADR 0007). Diagramas em Mermaid; nomes em `snake_case`; toda tabela de negócio carrega `tenant_id`.
+Versão 0.3 · modelo lógico inicial + entidade legal, estabelecimento, entitlement (ADR 0007) e provedores/modelos/cota de IA (ADR 0008). Diagramas em Mermaid; nomes em `snake_case`; toda tabela de negócio carrega `tenant_id`.
 
 > **Decisão de nomes (ADR 0007 §7):** `COMPANY` é a **entidade legal operadora** (CNPJ raiz — a funerária, o cemitério, a floricultura). O subtipo de cadastro de PJ cliente/fornecedor, antes chamado `COMPANY`, passa a se chamar **`PARTY_COMPANY`**. Não existem duas entidades com o mesmo nome. `ESTABLISHMENT` substitui `BRANCH`.
 
@@ -428,9 +428,11 @@ erDiagram
               timestamptz at }
 ```
 
-## 5. Entitlement e módulos — vivem no **control plane**
+> **`AI_AGENT.model` é código estável de modelo, não string livre.** A coluna `model` guarda o `code` do catálogo `ai.ai_model` (ex.: `gpt-4o`, `claude-sonnet-4`), nunca um nome de exibição nem um identificador de provedor. O valor é **referência por código**, resolvida no control plane e validada contra o snapshot de enforcement de IA (`AI_MODEL_ALLOWANCE`) a cada `AI_RUN` — **não há FK entre bancos**, porque `AI_MODEL` vive no control plane e `AI_AGENT` na célula (ADR 0008). Modelo fora da allowlist do snapshot faz o assistente falhar fechado (ver §5).
 
-> **Banco:** o schema `entitlement` e o catálogo `module` pertencem ao **Postgres do control plane** (ADR 0005), junto de billing, diretório de tenants e provisionamento. **Nenhuma dessas tabelas existe na célula.** A célula e o relay guardam apenas um **snapshot assinado** de enforcement (ver nota ao final da seção) — não é tabela de negócio.
+## 5. Entitlement, módulos e IA — vivem no **control plane**
+
+> **Banco:** os schemas `entitlement` e `ai`, o catálogo `module` e o catálogo de provedor/modelo pertencem ao **Postgres do control plane** (ADR 0005), junto de billing, diretório de tenants e provisionamento. **Nenhuma dessas tabelas existe na célula.** A célula e o relay guardam apenas um **snapshot assinado** de enforcement (ver nota ao final da seção) — não é tabela de negócio.
 
 ```mermaid
 erDiagram
@@ -519,6 +521,120 @@ erDiagram
 - **Emissão fiscal** exige cumulativamente: `LICENSE_ASSIGNMENT` vigente para `module_code = 'fiscal'` no `company_id` do fato gerador + `FISCAL_CONFIG`/`CERTIFICATE` daquele `company_id`. Regras de alíquota/CST/NCM continuam vindo exclusivamente das tabelas oficiais datadas (ADR 0004).
 - **Snapshot de enforcement (célula e relay):** pacote assinado contendo `version` monotônica e `valid_until` (TTL), derivado destas tabelas. Não vira tabela na célula; o relay aplica **fail-closed** ao expirar e trata `entitlement.revoked` como operação de sync prioritária.
 
+### 5.1 IA — catálogo, allowlist e cota (schema `ai`, ADR 0008)
+
+> **Banco:** schema `ai` no **Postgres do control plane**, ao lado de `entitlement`. Catálogo de provedor/modelo é **global** (registrado pelo admin SaaS); allowlist, cota e consumo são **por tenant e, opcionalmente, por CNPJ**. Nada disto existe na célula: ela recebe apenas o snapshot de enforcement (allowlist + teto + política, com `version` e `valid_until`, fail-closed ao expirar) — ver nota ao final da seção.
+
+```mermaid
+erDiagram
+  AI_PROVIDER ||--o{ AI_MODEL : offers
+  AI_MODEL ||--o{ AI_MODEL_ALLOWANCE : allowed_as
+  TENANT ||--o{ AI_MODEL_ALLOWANCE : configures
+  COMPANY |o--o{ AI_MODEL_ALLOWANCE : scopes
+  TENANT ||--o{ AI_TOKEN_QUOTA : caps
+  COMPANY |o--o{ AI_TOKEN_QUOTA : sub_caps
+  TENANT ||--o{ AI_USAGE : consumes
+  COMPANY |o--o{ AI_USAGE : consumes
+  AI_PROVIDER }o--|| AI_PROVIDER_KIND : classified_as
+  AI_PROVIDER }o--|| AI_PROVIDER_STATUS : has
+  AI_MODEL }o--|| AI_MODEL_KIND : classified_as
+  AI_MODEL }o--|| AI_MODEL_STATUS : has
+  AI_TOKEN_QUOTA }o--|| AI_QUOTA_PERIOD : measured_in
+  AI_TOKEN_QUOTA }o--|| AI_LIMIT_POLICY : applies
+  AI_TOKEN_QUOTA }o--|| AI_QUOTA_STATUS : has
+
+  AI_PROVIDER { uuid id PK
+                 text code
+                 text name
+                 text kind FK
+                 text api_key_ref
+                 text status FK
+                 timestamptz created_at
+                 timestamptz updated_at }
+  AI_MODEL { uuid id PK
+             uuid provider_id FK
+             text code
+             text name
+             text kind FK
+             int context_window
+             numeric input_price_mtok
+             numeric output_price_mtok
+             text status FK
+             timestamptz created_at
+             timestamptz updated_at }
+  AI_MODEL_ALLOWANCE { uuid id PK
+                       uuid tenant_id FK
+                       uuid company_id FK
+                       uuid model_id FK
+                       int fallback_order
+                       bool enabled
+                       timestamptz created_at
+                       timestamptz updated_at }
+  AI_TOKEN_QUOTA { uuid id PK
+                   uuid tenant_id FK
+                   uuid company_id FK
+                   numeric cap_amount
+                   text period FK
+                   text on_limit_policy FK
+                   text status FK
+                   timestamptz created_at
+                   timestamptz updated_at }
+  AI_USAGE { uuid id PK
+             uuid tenant_id FK
+             uuid company_id FK
+             date period
+             numeric consumed_amount
+             bigint tokens_in
+             bigint tokens_out
+             timestamptz updated_at }
+  AI_PROVIDER_KIND { text code PK
+                     text name }
+  AI_MODEL_KIND { text code PK
+                  text name }
+  AI_PROVIDER_STATUS { text code PK
+                       text name }
+  AI_MODEL_STATUS { text code PK
+                    text name }
+  AI_QUOTA_PERIOD { text code PK
+                    text name }
+  AI_LIMIT_POLICY { text code PK
+                    text name }
+  AI_QUOTA_STATUS { text code PK
+                    text name }
+```
+
+**Tabelas do schema `ai`:**
+
+| tabela | papel | escopo |
+| --- | --- | --- |
+| `AI_PROVIDER` | catálogo de provedores; `code` estável (`openai`, `anthropic`, `deepseek`) nunca reciclado; `api_key_ref` aponta para o **cofre**, nunca a chave | global (admin SaaS) |
+| `AI_MODEL` | catálogo de modelos; `(provider_id, code)` é a chave alternativa estável; preços por 1M tokens são **estimativa de painel** | global |
+| `AI_MODEL_ALLOWANCE` | modelo habilitado e sua `fallback_order` no escopo; `company_id` nulo = vale para o tenant todo | tenant/CNPJ |
+| `AI_TOKEN_QUOTA` | teto em **R$** + período + política de estouro; `company_id` nulo = teto global do tenant | tenant/CNPJ |
+| `AI_USAGE` | consumo acumulado no período, alimentado por reporte da célula; tokens só como referência | tenant/CNPJ |
+
+**Domínios (`code` estável, não `enum` do Postgres):**
+
+| tabela de domínio | códigos |
+| --- | --- |
+| `AI_PROVIDER_KIND` | `llm`, `embedding`, `rerank` |
+| `AI_MODEL_KIND` | `chat`, `embedding`, `rerank` |
+| `AI_PROVIDER_STATUS` | `active`, `disabled` |
+| `AI_MODEL_STATUS` | `active`, `deprecated`, `disabled` |
+| `AI_QUOTA_PERIOD` | `monthly` (único período nesta fatia) |
+| `AI_LIMIT_POLICY` | `overage`, `hard_stop` |
+| `AI_QUOTA_STATUS` | `active`, `disabled` |
+
+**Regras do schema `ai`:**
+
+- **Chaves de escopo.** `AI_MODEL_ALLOWANCE`, `AI_TOKEN_QUOTA` e `AI_USAGE` têm `tenant_id NOT NULL` + RLS; `company_id` é o nível empresa (CNPJ) e **nulo significa o tenant inteiro**. A unicidade usa dois índices parciais por escopo, porque `NULL` não participa de `UNIQUE` simples: allowlist `(tenant_id, model_id) WHERE company_id IS NULL` e `(tenant_id, company_id, model_id)`; cota `(tenant_id) WHERE company_id IS NULL` e `(tenant_id, company_id)`; consumo `(tenant_id, period) WHERE company_id IS NULL` e `(tenant_id, company_id, period)`.
+- **Invariante de cota.** Sub-cota (`company_id` preenchido) só existe **dentro** de um teto global vigente do mesmo tenant e não pode excedê-lo: `sum(sub-cotas ativas) ≤ teto global ativo`. A soma é verificada na escrita da sub-cota e no cálculo do snapshot, nunca presumida.
+- **Unidade.** Teto e consumo são **R$** em `NUMERIC(18,2)`; `input_price_mtok`/`output_price_mtok` são `NUMERIC(18,6)` por 1M tokens e servem **só** à estimativa do painel — nunca ao teto (decisão de produto nº 3 do ADR 0008).
+- **Política de estouro.** `on_limit_policy` (`overage` ou `hard_stop`) é campo da cota, não código; o control plane compara `AI_USAGE.consumed_amount` contra `AI_TOKEN_QUOTA.cap_amount` e aplica a política do escopo mais específico (CNPJ antes de tenant).
+- **Contabilidade por reporte.** `AI_USAGE` é append/upsert por período, alimentado pelo reporte de ocupação da célula (agregação de `AI_RUN.cost`), **sem FK entre bancos** — mesmo padrão de `USER_QUOTA.used`. A célula nunca escreve direto no control plane.
+- **Segredo.** `api_key_ref` é referência ao cofre; a chave não entra no banco, em log nem no repositório (AGENTS.md §6).
+- **Sem redundância na borda.** `AI_AGENT.model`, `AI_RUN` e `AI_TOOL_CALL` continuam na célula; o catálogo e a cota **não** são replicados como tabela. A enforcement na célula é o snapshot assinado (allowlist + teto + política) com `version` monotônica e `valid_until`; expirou sem renovar → **fail-closed**. Offline → assistente desabilitado, sem consumo de cota.
+
 ## 6. Regras de modelagem
 
 1. **Chaves**: `uuidv7` em todas as tabelas; `bigint` sequencial só em log de sync por nó.
@@ -528,10 +644,14 @@ erDiagram
 5. **Exclusão**: `deleted_at` (soft delete) em cadastros; ledger, fiscal e auditoria nunca são apagados.
 6. **Versionamento**: `version int` em entidades sincronizáveis; `updated_at` sempre.
 7. **Enums**: códigos estáveis em tabela de domínio, não `enum` do banco, para permitir evolução.
-8. **Partições**: `ledger_entry`, `fiscal_document`, `fiscal_item`, `sync_operation`, `ai_run`, `audit_log` e `entitlement_event` por mês (e tenant quando necessário).
+8. **Partições**: `ledger_entry`, `fiscal_document`, `fiscal_item`, `sync_operation`, `ai_run`, `audit_log`, `entitlement_event` e `ai_usage` por mês (e tenant quando necessário).
 9. **Índices**: sempre `(tenant_id, ...)`; busca textual só em `reporting`/índice dedicado.
 10. **Fiscal**: `fiscal_document` guarda o XML em object storage com `xml_hash`; o banco guarda metadados e o retorno cru por tentativa.
 11. **Empresa e estabelecimento**: `COMPANY` é a entidade legal (CNPJ raiz) e recebe entitlement, `fiscal_config` e `certificate`; `ESTABLISHMENT` (substitui `BRANCH`) é o estabelecimento/filial e herda o entitlement da empresa. Onde o ADR 0003 diz `branch_id`, lê-se `establishment_id`; `company_id` passa a ser escopo secundário adicional nas políticas de acesso.
-12. **Fronteira control plane**: `module` e `entitlement` vivem no Postgres do control plane; célula e relay só mantêm o snapshot assinado de enforcement (versão + TTL). Nenhuma cópia de tabela de licença na célula.
+12. **Fronteira control plane**: `module` e `entitlement` vivem no Postgres do control plane; célula e relay só mantêm o snapshot assinado de enforcement (versão + TTL). Nenhuma cópia de tabela de licença na célula. O mesmo vale para o schema `ai` (ADR 0008): `ai_provider`, `ai_model`, `ai_model_allowance`, `ai_token_quota` e `ai_usage` **não existem na célula nem no relay** — só o snapshot de IA assinado (allowlist + teto + política, `version` + `valid_until`, fail-closed).
 13. **Migração fiscal forward-only**: `fiscal_config` sai de `tenant_id PK` para `company_id PK` e `certificate` troca `tenant_id` por `company_id` em **migração nova**; a migração existente não é editada. A carga inicial exige `COMPANY` criada por tenant antes do `NOT NULL`.
 14. **Fiscal não se estima**: nenhuma coluna deste modelo (nem `tax_rule`, nem `tax_calculation`) carrega alíquota, CST, cClassTrib, NCM ou CFOP fixos; valores vêm de tabela oficial datada, consultada pela data de competência.
+15. **Cota de IA é dinheiro, preço de modelo não é.** `ai_token_quota.cap_amount` e `ai_usage.consumed_amount` são `NUMERIC(18,2)` em R$ e governam bloqueio; `ai_model.input_price_mtok`/`output_price_mtok` são `NUMERIC(18,6)` por 1M tokens e alimentam **apenas** a estimativa de tokens do painel. Trocar preço de tabela não muda o teto nem o consumo já registrado.
+16. **Código de modelo é referência, não FK entre bancos.** `ai_agent.model` (célula) guarda o `code` de `ai.ai_model`, validado contra o snapshot de IA a cada `ai_run`; os enums de IA são tabelas de domínio (`ai_provider_kind`, `ai_model_kind`, `ai_provider_status`, `ai_model_status`, `ai_quota_period`, `ai_limit_policy`, `ai_quota_status`), nunca `enum` do Postgres. Modelo fora da allowlist vigente faz o run falhar fechado, sem fallback fora do snapshot.
+17. **Escopo de IA em dois níveis com `NULL` explícito.** Em `ai_model_allowance`, `ai_token_quota` e `ai_usage`, `company_id IS NULL` é o escopo do tenant inteiro e `company_id` preenchido é o CNPJ; a unicidade usa índice parcial por escopo, nunca `UNIQUE` simples com `NULL`.
+18. **Contabilidade de IA é por reporte, não por FK.** `ai_usage` é upsert por `(tenant_id, company_id, period)`, índice `(tenant_id, period)` (mais `company_id` quando filtrado), particionada por mês em `period`; consumo chega do reporte da célula (agregação de `ai_run.cost`), como `user_quota.used`, e nunca é digitado. Sub-cota não pode exceder o teto global do tenant.

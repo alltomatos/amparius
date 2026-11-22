@@ -140,6 +140,11 @@ Folha de pagamento, eSocial completo, contabilidade completa (diário/razão ofi
 | RF-103 | Entitlement | Ativar/desativar módulo em self-service, com bloqueio nas 3 camadas (UI/backend/relay) |
 | RF-104 | Entitlement | Sem licença ativa o módulo não funciona; admin SaaS sobrepõe o estado do tenant |
 | RF-105 | Entitlement | Auditoria de ativação/desativação (quem, quando, origem) + leitura congelada de fiscal/reporting |
+| RF-110 | IA | Cadastro de provedor/modelo pelo admin SaaS, com chave em cofre (nunca no banco/log) |
+| RF-111 | IA | Configuração de provedor/modelo/fallback por tenant ou por CNPJ (dois níveis) |
+| RF-112 | IA | Cota de IA em R$: teto global por tenant + sub-cota opcional por CNPJ; estouro configurável `overage` (cobra excedente) ou `hard_stop` (bloqueia) |
+| RF-113 | IA | Painel de consumo em R$ com estimativa de tokens só como referência; auditoria por run (quem, o quê, entrada, saída, custo) |
+| RF-114 | IA | Offline desabilita o assistente (só textos fixos), sem consumo de cota; fail-closed ao expirar o snapshot de enforcement |
 
 ## 7. Requisitos não funcionais
 

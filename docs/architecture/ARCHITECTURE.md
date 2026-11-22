@@ -51,6 +51,8 @@ Versão 0.1 · 21/11/2026
 | RabbitMQ | 3.13+ | eventos de domínio e jobs |
 | Object storage | S3-compatible | XML, PDF, anexos, backups lógicos |
 
+> **Control plane (ADR 0005/0007 §9):** além dos contêineres acima, existe o **control plane** separado, fonte da verdade para billing + entitlement: guarda cota por módulo e por acessos/usuários, licenças atribuídas por CNPJ (com vigência), e a auditoria de ativação/desativação. Não guarda dado de negócio. Célula e relay mantêm apenas o snapshot assinado de enforcement (versão + TTL).
+
 ## 4. Módulos (bounded contexts)
 
 | Módulo | Responsabilidade | Eventos públicos (exemplos) |
@@ -60,14 +62,16 @@ Versão 0.1 · 21/11/2026
 | `catalog` | produto, serviço, plano, preço, NCM/LC116 | `catalog.item.updated` |
 | `finance` | plano de contas, título, parcela, baixa, caixa, ledger | `finance.title.created`, `finance.payment.settled` |
 | `fiscal` | configuração, motor de tributos, documento, transmissão, DANFE | `fiscal.document.authorized`, `fiscal.document.rejected` |
-| `funeral` | contrato, OS, velório, traslado, cremação | `funeral.contract.signed` |
+| `funeral` | contrato, OS, velório, traslado (sem cremação) | `funeral.contract.signed` |
 | `cemetery` | cemitério, quadra, jazigo, concessão, sepultamento | `cemetery.burial.registered` |
+| `cremation` | crematório, cremação, urna, autorização (módulo próprio — ADR 0007, independente de funeral/cemetery) | `cremation.service.registered` |
 | `floriculture` | arranjo, pedido, entrega, rota, lote | `floriculture.order.dispatched` |
 | `inventory` | depósito, item, lote, movimento | `inventory.moved` |
 | `documents` | arquivo, template, assinatura, retenção | `document.stored` |
 | `ai` | agente, execução, ferramenta, conhecimento | `ai.run.finished` |
 | `sync` | nó, cursor, operação, conflito | `sync.batch.applied` |
 | `reporting` | views materializadas e consultas analíticas | — |
+| `entitlement` | concern transversal de enforcement (licença por empresa/CNPJ, cota por módulo, bloqueio em 3 camadas UI/backend/relay) | `entitlement.revoked`, `entitlement.assigned` |
 
 Regras: schema por módulo, sem `JOIN` cruzado em código de módulo, integração por serviço público ou evento versionado.
 
@@ -142,7 +146,7 @@ documento (intenção) → cálculo (motor) → XML (gerador) → validação (X
 - **Motor de tributos**: regras por data de competência, tabelas versionadas (NCM, CST, cClassTrib, alíquotas, LC 116, ISS municipal).
 - **RTC**: IBS/CBS/IS com tabelas oficiais; o motor aceita regime geral e Simples Nacional. Ver `docs/research/receita-federal.md`.
 - **Adaptadores**: NFS-e por município/provedor; NF-e/NFC-e por SEFAZ (autorizador por UF); contingência conforme regra.
-- **Certificado**: A1 no servidor (por tenant) e no relay quando a emissão é local; alerta de expiração em 30 dias.
+- **Certificado**: A1 no servidor (por empresa/CNPJ, não por tenant) e no relay quando a emissão é local; alerta de expiração em 30 dias. Configuração/certificado fiscal são por CNPJ (ADR 0007 §10).
 - **Idempotência**: `idempotency_key` = tenant + tipo + série + número + hash do conteúdo.
 - **Auditoria**: XML enviado, XML retornado, protocolo, hash, usuário, horário, modo (normal/contingência).
 

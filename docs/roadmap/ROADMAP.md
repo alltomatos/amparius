@@ -14,6 +14,7 @@ Versão 0.1 · fases com critério de saída. Nada avança sem o critério da fa
 ## Fase 1 — Espinha dorsal (4–6 semanas)
 
 - `identity` + `party` + `catalog` com RLS e testes de isolamento.
+- `entitlement`: catálogo de módulos, licença por módulo/cota e enforcement nas 3 camadas (ADR 0007).
 - `finance`: plano de contas, títulos, parcelas, baixas, caixa e ledger.
 - `fiscal`: configuração, motor de tributos com tabelas datadas, NFS-e (1 município), XML, XSD, DANFSe.
 - Outbox + worker + idempotência.
@@ -32,6 +33,7 @@ Versão 0.1 · fases com critério de saída. Nada avança sem o critério da fa
 ## Fase 3 — Gestão e IA (4–6 semanas)
 
 - Cemitério: mapa, concessão, sepultamento, exumação.
+- Cremação: crematório, cremação, urna (módulo próprio — ADR 0007).
 - Relatórios e fechamento; exportação para contador.
 - Gateway MCP, agentes de leitura (fiscal, cobrança, atendimento), auditoria de ferramenta.
 - Portal do cliente e API pública.

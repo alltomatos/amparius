@@ -12,6 +12,8 @@ O SaaS atende várias empresas, algumas com filiais, todas no Brasil. Vazamento 
 - **RLS obrigatória** com `current_setting('app.tenant_id')` definido por conexão/transação.
 - `tenant_id` sempre vem do token/sessão, nunca do corpo da requisição.
 - Filial (`branch_id`) é escopo secundário e entra nas políticas de acesso, não na RLS básica.
+
+> Atualização 21/11/2026 (ADR 0007): `BRANCH` foi substituída por `ESTABLISHMENT`; onde esta decisão diz `branch_id`, aplica-se `establishment_id`, e `company_id` (entidade legal / CNPJ) passa a ser escopo secundário adicional. A RLS básica continua apenas por `tenant_id`.
 - Testes automatizados tentam ler dados de outro tenant e devem falhar.
 - Migração para banco dedicado (tenant grande) é possível por exportação lógica, sem mudar o modelo.
 

@@ -33,5 +33,9 @@ secrets/
 .DS_Store
 Thumbs.db
 
+# python (tools/mockups)
+__pycache__/
+*.pyc
+
 # node (docs/tooling)
 node_modules/

@@ -1,18 +1,21 @@
 # DER — Amparius
 
-Versão 0.1 · modelo lógico inicial. Diagramas em Mermaid; nomes em `snake_case`; toda tabela de negócio carrega `tenant_id`.
+Versão 0.2 · modelo lógico inicial + entidade legal, estabelecimento e entitlement (ADR 0007). Diagramas em Mermaid; nomes em `snake_case`; toda tabela de negócio carrega `tenant_id`.
+
+> **Decisão de nomes (ADR 0007 §7):** `COMPANY` é a **entidade legal operadora** (CNPJ raiz — a funerária, o cemitério, a floricultura). O subtipo de cadastro de PJ cliente/fornecedor, antes chamado `COMPANY`, passa a se chamar **`PARTY_COMPANY`**. Não existem duas entidades com o mesmo nome. `ESTABLISHMENT` substitui `BRANCH`.
 
 ## 1. Núcleo: identidade, cadastro e catálogo
 
 ```mermaid
 erDiagram
-  TENANT ||--o{ BRANCH : has
+  TENANT ||--o{ COMPANY : operates
+  COMPANY ||--o{ ESTABLISHMENT : has
   TENANT ||--o{ USER : employs
   USER }o--o{ ROLE : receives
   ROLE }o--o{ PERMISSION : grants
   TENANT ||--o{ PARTY : owns
   PARTY ||--o| PERSON : is
-  PARTY ||--o| COMPANY : is
+  PARTY ||--o| PARTY_COMPANY : is
   PARTY ||--o{ ADDRESS : has
   PARTY ||--o{ CONTACT : has
   PERSON ||--o| DECEASED : refers_to
@@ -28,11 +31,32 @@ erDiagram
            text document
            text regime
            text status }
-  BRANCH { uuid id PK
-           uuid tenant_id FK
-           text name
-           text city
-           text state }
+  COMPANY { uuid id PK
+            uuid tenant_id FK
+            text document
+            text name
+            text kind
+            text status
+            timestamptz created_at
+            timestamptz updated_at
+            timestamptz deleted_at }
+  ESTABLISHMENT { uuid id PK
+                  uuid tenant_id FK
+                  uuid company_id FK
+                  text document
+                  text name
+                  text state_registration
+                  text municipal_registration
+                  text street
+                  text number
+                  text city
+                  text state
+                  text zip
+                  bool is_headquarters
+                  text status
+                  timestamptz created_at
+                  timestamptz updated_at
+                  timestamptz deleted_at }
   USER { uuid id PK
          uuid tenant_id FK
          text email
@@ -54,10 +78,10 @@ erDiagram
   PERSON { uuid party_id PK
            date birth_date
            text gender }
-  COMPANY { uuid party_id PK
-            text trade_name
-            text state_registration
-            text municipal_registration }
+  PARTY_COMPANY { uuid party_id PK
+                  text trade_name
+                  text state_registration
+                  text municipal_registration }
   ADDRESS { uuid id PK
             uuid party_id FK
             text street
@@ -122,10 +146,12 @@ erDiagram
   PAYMENT ||--o{ LEDGER_ENTRY : posts
   TITLE ||--o{ LEDGER_ENTRY : posts
   BANK_ACCOUNT ||--o{ RECONCILIATION : reconciles
-  TENANT ||--|| FISCAL_CONFIG : configures
+  COMPANY ||--|| FISCAL_CONFIG : configures
   FISCAL_CONFIG ||--o{ CERTIFICATE : uses
   TENANT ||--o{ TAX_RULE : applies
   TENANT ||--o{ FISCAL_DOCUMENT : issues
+  COMPANY ||--o{ FISCAL_DOCUMENT : bills_as
+  ESTABLISHMENT ||--o{ FISCAL_DOCUMENT : issued_at
   FISCAL_DOCUMENT ||--o{ FISCAL_ITEM : contains
   FISCAL_ITEM ||--o{ TAX_CALC : calculated
   FISCAL_DOCUMENT ||--o{ EMISSION_ATTEMPT : attempted
@@ -168,7 +194,8 @@ erDiagram
                  numeric debit
                  numeric credit
                  text source }
-  FISCAL_CONFIG { uuid tenant_id PK
+  FISCAL_CONFIG { uuid company_id PK
+                  uuid tenant_id FK
                   text regime
                   text municipality_code
                   text state
@@ -176,6 +203,7 @@ erDiagram
                   text series_nfe }
   CERTIFICATE { uuid id PK
                 uuid tenant_id FK
+                uuid company_id FK
                 text subject
                 timestamptz valid_until
                 text storage_ref }
@@ -187,6 +215,8 @@ erDiagram
              date valid_to }
   FISCAL_DOCUMENT { uuid id PK
                     uuid tenant_id FK
+                    uuid company_id FK
+                    uuid establishment_id FK
                     text kind
                     text series
                     int number
@@ -218,6 +248,8 @@ erDiagram
 ```
 
 ## 3. Setores: funerário, cemitério e floricultura
+
+> `cremation` é módulo próprio (ADR 0007), **não** sub-funcionalidade de `funeral`; suas entidades (crematório, cremação, urna) são modeladas no módulo `cremation` e não neste bloco inicial.
 
 ```mermaid
 erDiagram
@@ -396,7 +428,98 @@ erDiagram
               timestamptz at }
 ```
 
-## 5. Regras de modelagem
+## 5. Entitlement e módulos — vivem no **control plane**
+
+> **Banco:** o schema `entitlement` e o catálogo `module` pertencem ao **Postgres do control plane** (ADR 0005), junto de billing, diretório de tenants e provisionamento. **Nenhuma dessas tabelas existe na célula.** A célula e o relay guardam apenas um **snapshot assinado** de enforcement (ver nota ao final da seção) — não é tabela de negócio.
+
+```mermaid
+erDiagram
+  TENANT ||--o{ LICENSE_POOL : has_quota
+  TENANT ||--|| USER_QUOTA : has_seats
+  TENANT ||--o{ LICENSE_ASSIGNMENT : holds
+  TENANT ||--o{ ENTITLEMENT_EVENT : audits
+  MODULE ||--o{ LICENSE_POOL : pooled_as
+  MODULE ||--o{ LICENSE_ASSIGNMENT : licenses
+  MODULE ||--o{ ENTITLEMENT_EVENT : concerns
+  COMPANY ||--o{ LICENSE_ASSIGNMENT : entitled_by
+  COMPANY ||--o{ ENTITLEMENT_EVENT : concerns
+  MODULE }o--|| MODULE_KIND : classified_as
+  LICENSE_ASSIGNMENT }o--|| LICENSE_STATUS : has
+  ENTITLEMENT_EVENT }o--|| ENTITLEMENT_ACTION : performs
+  ENTITLEMENT_EVENT }o--|| ENTITLEMENT_ORIGIN : originates_from
+
+  MODULE { text code PK
+           text name
+           text kind FK
+           int sort_order
+           bool active }
+  MODULE_KIND { text code PK
+                text name }
+  LICENSE_POOL { uuid id PK
+                 uuid tenant_id FK
+                 text module_code FK
+                 int quota
+                 timestamptz updated_at }
+  LICENSE_ASSIGNMENT { uuid id PK
+                       uuid tenant_id FK
+                       text module_code FK
+                       uuid company_id FK
+                       date valid_from
+                       date valid_to
+                       text status FK
+                       timestamptz created_at
+                       timestamptz updated_at }
+  LICENSE_STATUS { text code PK
+                   text name }
+  USER_QUOTA { uuid tenant_id PK
+               int seats
+               int used
+               timestamptz updated_at }
+  ENTITLEMENT_EVENT { uuid id PK
+                      uuid tenant_id FK
+                      text module_code FK
+                      uuid company_id FK
+                      uuid actor_id
+                      text action FK
+                      text origin FK
+                      timestamptz at }
+  ENTITLEMENT_ACTION { text code PK
+                       text name }
+  ENTITLEMENT_ORIGIN { text code PK
+                       text name }
+```
+
+**Catálogo `MODULE` — 14 módulos (7 núcleo, 7 opcionais):**
+
+| `kind` | `code` | Observação |
+| --- | --- | --- |
+| `core` | `identity` | fora da cota |
+| `core` | `party` | fora da cota |
+| `core` | `catalog` | fora da cota |
+| `core` | `finance` | fora da cota |
+| `core` | `fiscal` | fora da cota; leitura congelada garantida |
+| `core` | `sync` | fora da cota |
+| `core` | `reporting` | fora da cota; leitura congelada garantida |
+| `optional` | `funeral` | na cota |
+| `optional` | `cemetery` | na cota |
+| `optional` | `cremation` | na cota; **distinto de `funeral`** |
+| `optional` | `floriculture` | na cota |
+| `optional` | `inventory` | na cota |
+| `optional` | `documents` | na cota |
+| `optional` | `ai` | na cota |
+
+**Regras do schema de entitlement:**
+
+- A coluna de módulo é `module_code`, FK para `module.code`; o código é estável e nunca é reciclado. Todos os `text ... FK` de enum acima apontam para a tabela de domínio correspondente (regra 7), nunca para `enum` do Postgres.
+- `LICENSE_POOL` é a **cota por módulo por tenant** concedida pelo admin SaaS. A ocupação não é coluna digitada: é contada a partir de `LICENSE_ASSIGNMENT` com licença vigente.
+- `LICENSE_ASSIGNMENT`: **1 licença = 1 módulo em 1 empresa (CNPJ)**. `company_id` aponta para `COMPANY`; filial **não** recebe licença — herda da empresa. `valid_from`/`valid_to` são `date` (vigência comercial) e são o gancho de cobrança.
+- `USER_QUOTA`: cota de acessos/usuários do tenant (`seats`), com `used` alimentado pelo reporte de ocupação da célula, não por FK entre bancos.
+- `ENTITLEMENT_EVENT` é **append-only**: toda ativação/desativação/revogação, por self-service ou admin SaaS, com `actor_id` (usuário do diretório global do control plane, sem FK para a célula) e `at`. Nunca é atualizado nem apagado.
+- **Nenhum** desses registros é aceito do corpo da requisição do cliente; `tenant_id` e `company_id` vêm da sessão autenticada.
+- **Emissão fiscal** exige cumulativamente: `LICENSE_ASSIGNMENT` vigente para `module_code = 'fiscal'` no `company_id` do fato gerador + `FISCAL_CONFIG`/`CERTIFICATE` daquele `company_id`. Regras de alíquota/CST/NCM continuam vindo exclusivamente das tabelas oficiais datadas (ADR 0004).
+- **Snapshot de enforcement (célula e relay):** pacote assinado contendo `version` monotônica e `valid_until` (TTL), derivado destas tabelas. Não vira tabela na célula; o relay aplica **fail-closed** ao expirar e trata `entitlement.revoked` como operação de sync prioritária.
+
+## 6. Regras de modelagem
 
 1. **Chaves**: `uuidv7` em todas as tabelas; `bigint` sequencial só em log de sync por nó.
 2. **Tenant**: `tenant_id NOT NULL` + política RLS `USING (tenant_id = current_setting('app.tenant_id')::uuid)`.
@@ -405,6 +528,10 @@ erDiagram
 5. **Exclusão**: `deleted_at` (soft delete) em cadastros; ledger, fiscal e auditoria nunca são apagados.
 6. **Versionamento**: `version int` em entidades sincronizáveis; `updated_at` sempre.
 7. **Enums**: códigos estáveis em tabela de domínio, não `enum` do banco, para permitir evolução.
-8. **Partições**: `ledger_entry`, `fiscal_document`, `fiscal_item`, `sync_operation`, `ai_run`, `audit_log` por mês (e tenant quando necessário).
+8. **Partições**: `ledger_entry`, `fiscal_document`, `fiscal_item`, `sync_operation`, `ai_run`, `audit_log` e `entitlement_event` por mês (e tenant quando necessário).
 9. **Índices**: sempre `(tenant_id, ...)`; busca textual só em `reporting`/índice dedicado.
 10. **Fiscal**: `fiscal_document` guarda o XML em object storage com `xml_hash`; o banco guarda metadados e o retorno cru por tentativa.
+11. **Empresa e estabelecimento**: `COMPANY` é a entidade legal (CNPJ raiz) e recebe entitlement, `fiscal_config` e `certificate`; `ESTABLISHMENT` (substitui `BRANCH`) é o estabelecimento/filial e herda o entitlement da empresa. Onde o ADR 0003 diz `branch_id`, lê-se `establishment_id`; `company_id` passa a ser escopo secundário adicional nas políticas de acesso.
+12. **Fronteira control plane**: `module` e `entitlement` vivem no Postgres do control plane; célula e relay só mantêm o snapshot assinado de enforcement (versão + TTL). Nenhuma cópia de tabela de licença na célula.
+13. **Migração fiscal forward-only**: `fiscal_config` sai de `tenant_id PK` para `company_id PK` e `certificate` troca `tenant_id` por `company_id` em **migração nova**; a migração existente não é editada. A carga inicial exige `COMPANY` criada por tenant antes do `NOT NULL`.
+14. **Fiscal não se estima**: nenhuma coluna deste modelo (nem `tax_rule`, nem `tax_calculation`) carrega alíquota, CST, cClassTrib, NCM ou CFOP fixos; valores vêm de tabela oficial datada, consultada pela data de competência.

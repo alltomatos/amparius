@@ -22,6 +22,10 @@ flowchart LR
     MQ[(RabbitMQ)]
     OBJ[(Object storage)]
   end
+  subgraph ControlPlane[Control plane]
+    CPDB[(PostgreSQL<br/>billing+entitlement)]
+  end
+  CPDB -.pacote assinado.-> API
   subgraph Externos
     SEFAZ[SEFAZ / Prefeitura]
     BANK[Bancos / PIX]
@@ -251,4 +255,99 @@ classDiagram
   Payment "1" --> "*" LedgerEntry
   TaxEngine "1" --> "*" TaxRule
   FiscalDocument "1" o-- "*" TaxResult
+```
+
+## 7. Estados de módulo/licença (entitlement)
+
+```mermaid
+stateDiagram-v2
+  [*] --> active: licença vigente
+  active --> blocked: desativado (self-service/admin) ou sem licença
+  blocked --> active: reativado (licença válida)
+  active --> expired: valid_to vencido
+  expired --> active: renovada/reatribuída
+  blocked --> expired: valid_to vencido
+  expired --> [*]: licença removida
+```
+
+## 8. Classes de entitlement (control plane, DER §5)
+
+```mermaid
+classDiagram
+  class Module {
+    +string code
+    +string name
+    +ModuleKind kind
+    +int sortOrder
+    +bool active
+  }
+  class ModuleKind {
+    +string code
+    +string name
+  }
+  class Company {
+    +UUID id
+    +UUID tenantId
+    +string document
+    +string name
+    +string kind
+    +string status
+  }
+  class Establishment {
+    +UUID id
+    +UUID companyId
+    +string document
+    +string stateRegistration
+    +string status
+  }
+  class LicensePool {
+    +UUID id
+    +UUID tenantId
+    +string moduleCode
+    +int quota
+  }
+  class LicenseAssignment {
+    +UUID id
+    +UUID tenantId
+    +string moduleCode
+    +UUID companyId
+    +Date validFrom
+    +Date validTo
+    +LicenseStatus status
+  }
+  class LicenseStatus {
+    +string code
+    +string name
+  }
+  class UserQuota {
+    +UUID tenantId
+    +int seats
+    +int used
+  }
+  class EntitlementEvent {
+    +UUID id
+    +UUID tenantId
+    +string moduleCode
+    +UUID companyId
+    +UUID actorId
+    +EntitlementAction action
+    +EntitlementOrigin origin
+    +DateTime at
+  }
+  class EntitlementAction {
+    +string code
+    +string name
+  }
+  class EntitlementOrigin {
+    +string code
+    +string name
+  }
+  Module --> ModuleKind
+  LicenseAssignment --> LicenseStatus
+  EntitlementEvent --> EntitlementAction
+  EntitlementEvent --> EntitlementOrigin
+  Company "1" o-- "*" Establishment
+  Company "1" o-- "*" LicenseAssignment
+  Module "1" o-- "*" LicensePool
+  Module "1" o-- "*" LicenseAssignment
 ```

@@ -41,13 +41,14 @@ Ao mesmo tempo, 2026–2033 é a transição da **reforma tributária do consumo
 - **Cadastro único**: pessoas físicas/jurídicas, endereços, contatos, representantes, falecidos e familiares.
 - **Catálogo**: produtos, serviços, planos, tabelas de preço, NCM, código de serviço (LC 116), CNAE.
 - **Financeiro**: plano de contas, centros de custo, contas bancárias, títulos a pagar/receber, parcelas, baixas, caixa, conciliação, ledger de partidas dobradas.
-- **Fiscal**: configuração por tenant (regime, certificado, inscrições), motor de tributos (incluindo RTC), emissão de **NFS-e** e **NF-e/NFC-e**, contingência, cancelamento, armazenamento de XML, DANFSe/PDF.
+- **Fiscal**: configuração por empresa/CNPJ (regime, certificado, inscrições) — não por tenant (ADR 0007 §10); motor de tributos (incluindo RTC), emissão de **NFS-e** e **NF-e/NFC-e**, contingência, cancelamento, armazenamento de XML, DANFSe/PDF.
 - **Relay local**: operação offline, fila de emissão, sincronização, reconciliação.
 
 ### 4.2 Pacotes de setor (ativáveis)
 
-- **Funerário**: contrato, plano funerário, serviço avulso, ordem de serviço, velório, traslado, cremação, memorial, cobrança recorrente.
+- **Funerário**: contrato, plano funerário, serviço avulso, ordem de serviço, velório, traslado, memorial, cobrança recorrente.
 - **Cemitério**: cemitério, quadra, jazigo, concessão, sepultamento, exumação, manutenção, mapa e ocupação.
+- **Cremação**: crematório, cremação, urna, autorização (módulo próprio — ADR 0007; independente de funerário/cemitério).
 - **Floricultura**: catálogo sazonal, lote/validade, arranjo, pedido, entrega, rota, fornecedor, compras.
 
 ### 4.3 Transversal
@@ -133,6 +134,12 @@ Folha de pagamento, eSocial completo, contabilidade completa (diário/razão ofi
 | RF-080 | IA | Copiloto por módulo com tools permitidas e auditoria |
 | RF-081 | IA | Sugerir cobrança, classificação fiscal e resposta a cliente |
 | RF-090 | Plataforma | API pública com chave por tenant e webhooks assinados |
+| RF-100 | Entitlement | Catálogo de módulos: núcleo (7) fora da cota e opcionais (7) na cota |
+| RF-101 | Entitlement | Cota de licenças por módulo e cota de acessos/usuários por tenant (admin SaaS) |
+| RF-102 | Entitlement | Distribuir licenças por CNPJ: 1 licença = 1 módulo em 1 empresa; filial herda |
+| RF-103 | Entitlement | Ativar/desativar módulo em self-service, com bloqueio nas 3 camadas (UI/backend/relay) |
+| RF-104 | Entitlement | Sem licença ativa o módulo não funciona; admin SaaS sobrepõe o estado do tenant |
+| RF-105 | Entitlement | Auditoria de ativação/desativação (quem, quando, origem) + leitura congelada de fiscal/reporting |
 
 ## 7. Requisitos não funcionais
 
@@ -177,12 +184,12 @@ Folha de pagamento, eSocial completo, contabilidade completa (diário/razão ofi
 3. **Contador**: exportação de arquivos ou integração com sistemas contábeis específicos?
 4. **Relay**: PostgreSQL local (consistente) ou embarcado (leve)? Proposta: Postgres local no relay, com modo leve depois.
 5. **App de campo**: PWA primeiro ou Rust desktop desde o início?
-6. **Cobrança do SaaS**: assinatura por empresa, por usuário ou por volume fiscal?
+6. **Cobrança do SaaS**: assinatura por empresa, por usuário ou por volume fiscal? (ADR 0007: cobrança fica para depois, mas o modelo já grava licença por módulo com cota e vigência datada — gancho pronto.)
 7. **Hospedagem**: região única no Brasil ou duas (ativa/ativa leve)?
 
 ## 11. Glossário
 
-- **Tenant**: empresa cliente do SaaS (com filiais).
+- **Tenant**: grupo econômico cliente do SaaS, com uma ou mais empresas (CNPJ); cada empresa pode ter filiais (estabelecimentos).
 - **Relay**: servidor local no cliente que mantém operação e sincroniza.
 - **Espinha dorsal**: financeiro + fiscal, dos quais os módulos dependem.
 - **Pacote de setor**: conjunto de módulos e vocabulário ativado por vertical.

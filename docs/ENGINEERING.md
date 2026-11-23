@@ -139,3 +139,27 @@ GRANT EXECUTE ON FUNCTION public.uuidv7() TO amparius_app;
 ```
 
 O segredo não deve ser versionado; o DSN é somente variável de ambiente.
+
+### Migration Fiscal
+
+`migrations/0004_fiscal.sql` cria o schema `fiscal` para a configuração fiscal
+por empresa, certificados referenciados por cofre/KMS e regras tributárias
+datadas. Os códigos são domínios em `identity.domain_value`, validados por
+trigger; não há enums PostgreSQL, alíquotas embutidas nem tabelas de códigos
+fiscais nesta etapa.
+
+`fiscal.tax_rule` aceita regras oficiais globais (`tenant_id IS NULL`) somente
+para leitura e regras de exceção isoladas por tenant. A vigência usa intervalo
+half-open e exclusão GiST para impedir sobreposição da mesma chave lógica.
+Regras oficiais são append-only; novas publicações devem ser novas linhas com
+fonte, versão, data e hash SHA-256. O motor fiscal futuro deve falhar fechado
+com `ErrTaxRuleNotFound` quando não encontrar regra oficial datada.
+
+As combinações de `tax_type`, escopo e códigos fiscais são validadas no banco;
+as formas de cálculo exigem os campos próprios de `basis_kind` (inclusive
+faixa do Simples e valor por unidade). Hashes de certificado e regra são
+hexadecimais minúsculos; `source_published_at` e `import_batch` identificam a
+origem obrigatória de cada regra.
+
+Certificados nunca armazenam senha, PIN, chave privada, PFX, token ou bytes
+criptográficos: apenas metadados e uma referência opaca ao Vault/KMS.

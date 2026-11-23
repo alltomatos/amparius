@@ -197,22 +197,57 @@ erDiagram
   FISCAL_CONFIG { uuid company_id PK
                   uuid tenant_id FK
                   text regime
-                  text municipality_code
-                  text state
+                  text environment
+                  char uf nullable
+                  char municipality_code nullable
                   text series_nfse
-                  text series_nfe }
+                  text series_nfe
+                  text status
+                  int config_version }
   CERTIFICATE { uuid id PK
                 uuid tenant_id FK
                 uuid company_id FK
-                text subject
+                text kind
+                text subject_cn
+                text issuer_cn nullable
+                char fingerprint_sha256
+                timestamptz valid_from
                 timestamptz valid_until
-                text storage_ref }
+                text storage_kind
+                text storage_ref
+                text status }
   TAX_RULE { uuid id PK
-             text code
-             text scope
+             uuid tenant_id FK nullable_global
+             text tax_type
+             text regime
+             text scope_kind
+             text ncm
+             text cest
+             text cst
+             text class_trib
+             text cfop
+             text service_code
+             text municipality_code
+             text uf
+             text operation_kind nullable
+             text simples_annex
+             numeric rbt12_from
+             numeric rbt12_to
+             text basis_kind
              numeric rate
+             text rate_unit
+             numeric deduction_amount
+             numeric base_reduction_percent
              date valid_from
-             date valid_to }
+             date valid_to
+             text source_kind
+             text source_name
+             text source_url
+             text source_version
+             date source_published_at
+             char source_hash
+             uuid import_batch
+             int version }
   FISCAL_DOCUMENT { uuid id PK
                     uuid tenant_id FK
                     uuid company_id FK

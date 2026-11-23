@@ -85,22 +85,29 @@ caixa, e append-only. O limite de pagamento e validado no banco em trigger,
 bloqueando a parcela durante a soma dos pagamentos para evitar sobrepagamento
 por corrida.
 
-Os repositórios Go de `party` e `catalog` usam `internal/platform/db`. O tenant
+Os repositórios Go de `party`, `catalog` e `finance` usam `internal/platform/db`.
+O repositório Finance expõe valores monetários como centavos `int64` e converte
+explicitamente para `NUMERIC(18,2)`, mantendo pagamentos, movimentos de caixa e
+lançamentos em transações isoladas por tenant. O tenant
 é colocado no `context.Context` com `db.WithTenant`; cada operação abre uma
 transação e executa `SELECT set_config('app.tenant_id', $1, true)` antes de
 qualquer query. Sem tenant no contexto, a operação falha com
 `db.ErrTenantRequired`.
 
 O teste de isolamento deve usar `AMPA_TEST_POSTGRES_DSN` apontando para um
-papel de aplicação sem `SUPERUSER` e sem `BYPASSRLS`. O usuário administrativo
-`amparius` do Compose é superusuário e não serve para provar RLS. Em ambiente
-local, após as migrações, o papel pode ser preparado com:
+papel de aplicação sem `SUPERUSER` e sem `BYPASSRLS`. O teste Finance também
+exige `AMPA_TEST_POSTGRES_ADMIN_DSN`, uma segunda conexão administrativa usada
+somente no `t.Cleanup` para remover os tenants de teste e seus registros
+append-only; sem esse DSN, nenhum dado Finance é criado. O usuário
+administrativo `amparius` do Compose é superusuário e não serve para provar RLS,
+mas pode ser usado exclusivamente no cleanup. Em ambiente local, após as
+migrações, o papel de aplicação pode ser preparado com:
 
 ```sql
 CREATE ROLE amparius_app LOGIN PASSWORD 'defina-localmente' NOSUPERUSER NOBYPASSRLS;
-GRANT USAGE ON SCHEMA identity, party, catalog TO amparius_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA identity, party, catalog TO amparius_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA identity, party, catalog TO amparius_app;
+GRANT USAGE ON SCHEMA identity, party, catalog, finance TO amparius_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA identity, party, catalog, finance TO amparius_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA identity, party, catalog, finance TO amparius_app;
 GRANT EXECUTE ON FUNCTION public.uuidv7() TO amparius_app;
 ```
 

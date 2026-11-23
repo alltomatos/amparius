@@ -45,18 +45,19 @@ docs/               PRD, arquitetura, DER, UML, ADRs, pesquisa
 - `docs/roadmap/ROADMAP.md` — fases e critérios de saída
 - `AGENTS.md` — regras obrigatórias para agentes e pessoas
 
-## Ambiente (quando o código começar)
+## Ambiente
 
 ```bash
-docker compose up -d      # Postgres, Redis, RabbitMQ, MinIO
-go run ./cmd/api          # SaaS
-go run ./cmd/worker       # worker
-cargo run -p amparius-relay
+.\scripts\dev.ps1 up                        # docker compose up -d (Postgres, Redis, RabbitMQ, MinIO)
+go run ./cmd/api                            # SaaS
+go run ./cmd/worker                         # worker
+cargo run --manifest-path relay/Cargo.toml  # relay (servidor da loja)
+cargo run --manifest-path client/Cargo.toml # client (estação)
 ```
 
 ## Estado
 
-Fase 0 — documentação. Nenhum código de produção ainda.
+Fase 0 — esqueleto entregue: `cmd/api` + `cmd/worker` (Go, health), `relay/` + `client/` (Rust, health), migração `identity` (tenant/company/establishment + RLS). Sem módulo de negócio ainda.
 
 ## Regras que valem para todo mundo
 

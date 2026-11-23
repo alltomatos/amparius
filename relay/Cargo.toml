@@ -1,0 +1,20 @@
+[package]
+name = "amparius-relay"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Relay local do Amparius, papel servidor da loja"
+license = "Proprietary"
+
+[dependencies]
+anyhow = "1"
+axum = "0.8"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[lib]
+path = "src/lib.rs"
+

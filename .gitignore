@@ -2,6 +2,7 @@
 /bin/
 /dist/
 /target/
+**/target/
 *.exe
 *.dll
 *.so

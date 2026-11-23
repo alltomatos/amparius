@@ -57,7 +57,10 @@ cargo run --manifest-path client/Cargo.toml # client (estação)
 
 ## Estado
 
-Fase 0 — esqueleto entregue: `cmd/api` + `cmd/worker` (Go, health), `relay/` + `client/` (Rust, health), migração `identity` (tenant/company/establishment + RLS). Sem módulo de negócio ainda.
+Fase 1 em andamento: `cmd/api` + `cmd/worker` (Go, health), `relay/` +
+`client/` (Rust, health), migrações `identity` e `party/catalog` com RLS,
+acesso Go a `party` e `catalog` com tenant obrigatório por transação e teste
+real de isolamento PostgreSQL.
 
 ## Regras que valem para todo mundo
 
@@ -68,3 +71,26 @@ Fase 0 — esqueleto entregue: `cmd/api` + `cmd/worker` (Go, health), `relay/` +
 5. Mudança estrutural exige ADR.
 6. Nada de segredo no repositório.
 7. Pronto exige teste ou evidência.
+
+## Acesso PostgreSQL e RLS
+
+Os repositórios Go de `party` e `catalog` usam `internal/platform/db`. O tenant
+é colocado no `context.Context` com `db.WithTenant`; cada operação abre uma
+transação e executa `SELECT set_config('app.tenant_id', $1, true)` antes de
+qualquer query. Sem tenant no contexto, a operação falha com
+`db.ErrTenantRequired`.
+
+O teste de isolamento deve usar `AMPA_TEST_POSTGRES_DSN` apontando para um
+papel de aplicação sem `SUPERUSER` e sem `BYPASSRLS`. O usuário administrativo
+`amparius` do Compose é superusuário e não serve para provar RLS. Em ambiente
+local, após as migrações, o papel pode ser preparado com:
+
+```sql
+CREATE ROLE amparius_app LOGIN PASSWORD 'defina-localmente' NOSUPERUSER NOBYPASSRLS;
+GRANT USAGE ON SCHEMA identity, party, catalog TO amparius_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA identity, party, catalog TO amparius_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA identity, party, catalog TO amparius_app;
+GRANT EXECUTE ON FUNCTION public.uuidv7() TO amparius_app;
+```
+
+O segredo não deve ser versionado; o DSN é somente variável de ambiente.

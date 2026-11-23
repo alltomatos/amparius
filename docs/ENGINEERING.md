@@ -74,6 +74,17 @@ real de isolamento PostgreSQL.
 
 ## Acesso PostgreSQL e RLS
 
+### Migration Finance
+
+`migrations/0003_finance.sql` cria o schema `finance` para contas, centros de
+custo, contas bancarias, titulos, parcelas, pagamentos e caixa. Os codigos de
+dominio continuam em `identity.domain_value`; a migration nao cria enums PG.
+Todas as tabelas carregam `tenant_id` e RLS. `finance.ledger_entry` e
+particionado por competencia mensal e, assim como pagamentos e movimentos de
+caixa, e append-only. O limite de pagamento e validado no banco em trigger,
+bloqueando a parcela durante a soma dos pagamentos para evitar sobrepagamento
+por corrida.
+
 Os repositórios Go de `party` e `catalog` usam `internal/platform/db`. O tenant
 é colocado no `context.Context` com `db.WithTenant`; cada operação abre uma
 transação e executa `SELECT set_config('app.tenant_id', $1, true)` antes de

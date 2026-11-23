@@ -74,6 +74,33 @@ real de isolamento PostgreSQL.
 
 ## Acesso PostgreSQL e RLS
 
+### Control plane e enforcement de entitlement
+
+O control plane usa um PostgreSQL separado, acessado pelo DSN
+`AMPA_CONTROL_POSTGRES_DSN`; o DSN da célula (`AMPA_TEST_POSTGRES_DSN`) não
+pode ser reutilizado. O pacote `internal/modules/entitlement` consulta apenas
+`entitlement.module` e `entitlement.license_assignment` e não escreve
+`entitlement_event` neste slice.
+
+O catálogo permite diretamente os módulos `core` ativos. Módulos `optional`
+exigem `license_assignment.status = 'active'`, o mesmo `module_code` e
+`company_id`, além de `valid_from <= data <= valid_to` (com `valid_to` nulo
+permitido). Módulo inexistente/inativo, assignment ausente, vencido ou
+revogado bloqueia; falha de banco também bloqueia com erro distinto
+`ErrEntitlementUnavailable`.
+
+O checker exige o tenant em `db.WithTenant(ctx, tenantID)` e abre uma transação
+que executa `set_config('app.tenant_id', ..., true)` antes da consulta, para
+que o RLS do control plane seja efetivo. O `company_id` é recebido pelo caso
+de uso a partir do contexto autenticado; não é derivado nem confiado ao corpo
+HTTP. Ainda não existe um `company context` global, portanto a integração HTTP
+deve preservar essa fronteira ao adaptar a chamada.
+
+O teste de integração do control plane (`AMPA_CONTROL_POSTGRES_DSN`) deve usar
+um papel de aplicação sem `SUPERUSER` e sem `BYPASSRLS` (por exemplo,
+`amparius_control_app`). Sem esse DSN, o teste é marcado como `SKIP` e o
+relatório deve registrar a ausência claramente.
+
 ### Migration Finance
 
 `migrations/0003_finance.sql` cria o schema `finance` para contas, centros de

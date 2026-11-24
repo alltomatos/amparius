@@ -13,13 +13,16 @@ fixture_dir = Path("internal/modules/fiscal/nfse/testdata/official")
 schema = etree.XMLSchema(etree.parse(str(schema_path)))
 print(f"lxml={'.'.join(map(str, etree.LXML_VERSION))} libxml2={'.'.join(map(str, etree.LIBXML_VERSION))}")
 
-for fixture in (fixture_dir / "dps-minima.xml", fixture_dir / "dps-opcionais.xml"):
+for fixture in sorted(fixture_dir.glob("*.xml")):
     document = etree.parse(str(fixture))
     if schema.validate(document):
         raise SystemExit(f"ERRO: {fixture} foi aceita; esperada rejeicao do facet serie")
     messages = [entry.message for entry in schema.error_log]
     if not any("serie" in message and "pattern" in message for message in messages):
         raise SystemExit(f"ERRO: {fixture} rejeitada por motivo inesperado: {messages}")
+    outras = [m for m in messages if not ("serie" in m and "pattern" in m)]
+    if outras:
+        raise SystemExit(f"ERRO: {fixture} acumulou erros alem do facet serie: {outras}")
     print(f"{fixture}: rejeitada por serie/pattern")
 
 probe = etree.fromstring((fixture_dir / "dps-minima.xml").read_bytes().replace(b"<serie>1</serie>", b"<serie>^1$</serie>"))

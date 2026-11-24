@@ -85,6 +85,20 @@ var officialDocumentKinds = map[string]bool{
 	"CNPJ": true, "CPF": true, "NIF": true, "cNaoNIF": true,
 }
 
+// Limites publicados nos simple types do xs:choice de documento nos grupos
+// prest (TCInfoPrestador) e toma/interm (TCInfoPessoa). Nao ha regra fiscal
+// aqui: apenas os facets do pacote XSD oficial v1.01.
+const (
+	officialCNPJLen = 14
+	officialCPFLen  = 11
+	officialNIFMax  = 40
+)
+
+// officialNaoNIFCodes e a enumeracao de TSCodNaoNIF (motivo da nao informacao
+// do NIF): 0 = nao informado na nota de origem, 1 = dispensado, 2 = nao
+// exigencia. Nenhum outro codigo e aceito.
+var officialNaoNIFCodes = map[string]bool{"0": true, "1": true, "2": true}
+
 // BuildDPSOficial monta a DPS no leiaute oficial v1.01, separada do builder
 // estrutural BuildDPS (que permanece incompativel com o XSD e e usado pelos
 // golden deterministicos da fatia 01). Nao transmite, nao calcula tributo e
@@ -177,8 +191,8 @@ func validateOfficialInput(input OfficialDPSInput) error {
 			return fmt.Errorf("%w: campo obrigatorio ausente: %s", ErrInvalidDPS, campo.nome)
 		}
 	}
-	if !officialDocumentKinds[input.Prestador.DocumentoTipo] {
-		return fmt.Errorf("%w: documento_tipo fora do choice oficial: %s", ErrInvalidDPS, input.Prestador.DocumentoTipo)
+	if err := validateOfficialDocumento(input.Prestador.DocumentoTipo, input.Prestador.Documento, "prest"); err != nil {
+		return err
 	}
 	if _, err := time.Parse("2006-01-02", input.DCompet); err != nil {
 		return fmt.Errorf("%w: dCompet invalido: %v", ErrInvalidDPS, err)
@@ -204,18 +218,61 @@ func validateOfficialPessoa(pessoa *OfficialPessoa, grupo string) error {
 	if pessoa == nil {
 		return nil
 	}
-	if !officialDocumentKinds[pessoa.DocumentoTipo] {
-		return fmt.Errorf("%w: %s.documento_tipo fora do choice oficial: %s", ErrInvalidDPS, grupo, pessoa.DocumentoTipo)
+	if strings.TrimSpace(pessoa.Nome) == "" {
+		return fmt.Errorf("%w: campo obrigatorio ausente: %s.nome", ErrInvalidDPS, grupo)
 	}
-	for _, campo := range []struct{ nome, valor string }{
-		{grupo + ".documento", pessoa.Documento},
-		{grupo + ".nome", pessoa.Nome},
-	} {
-		if strings.TrimSpace(campo.valor) == "" {
-			return fmt.Errorf("%w: campo obrigatorio ausente: %s", ErrInvalidDPS, campo.nome)
+	if strings.TrimSpace(pessoa.Documento) == "" {
+		return fmt.Errorf("%w: campo obrigatorio ausente: %s.documento", ErrInvalidDPS, grupo)
+	}
+	return validateOfficialDocumento(pessoa.DocumentoTipo, pessoa.Documento, grupo)
+}
+
+// validateOfficialDocumento valida o xs:choice de documento pelo tipo
+// escolhido, usando somente os facets oficiais:
+//   - CNPJ: exatamente 14 digitos (TSCNPJ [0-9]{14});
+//   - CPF: exatamente 11 digitos (TSCPF [0-9]{11});
+//   - NIF: 1..40 caracteres (TSNIF minLength=1, maxLength=40);
+//   - cNaoNIF: um codigo da enumeracao 0|1|2 (TSCodNaoNIF).
+//
+// O tipo fora do choice falha fechado, como antes. Um valor que nao casa com o
+// facet do proprio tipo tambem falha fechado, em vez de chegar ao XSD.
+func validateOfficialDocumento(tipo, valor, grupo string) error {
+	tipo = strings.TrimSpace(tipo)
+	if !officialDocumentKinds[tipo] {
+		return fmt.Errorf("%w: %s.documento_tipo fora do choice oficial: %s", ErrInvalidDPS, grupo, tipo)
+	}
+	campo := grupo + ".documento"
+	switch tipo {
+	case "CNPJ":
+		if !isOfficialDigits(valor, officialCNPJLen) {
+			return fmt.Errorf("%w: %s (%s) deve ter exatamente %d digitos", ErrInvalidDPS, campo, tipo, officialCNPJLen)
+		}
+	case "CPF":
+		if !isOfficialDigits(valor, officialCPFLen) {
+			return fmt.Errorf("%w: %s (%s) deve ter exatamente %d digitos", ErrInvalidDPS, campo, tipo, officialCPFLen)
+		}
+	case "NIF":
+		if len([]rune(valor)) > officialNIFMax {
+			return fmt.Errorf("%w: %s (%s) excede %d caracteres", ErrInvalidDPS, campo, tipo, officialNIFMax)
+		}
+	case "cNaoNIF":
+		if !officialNaoNIFCodes[valor] {
+			return fmt.Errorf("%w: %s (cNaoNIF) fora da enumeracao 0|1|2: %s", ErrInvalidDPS, campo, valor)
 		}
 	}
 	return nil
+}
+
+func isOfficialDigits(valor string, tamanho int) bool {
+	if len(valor) != tamanho {
+		return false
+	}
+	for _, r := range valor {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func writeOfficialPessoa(b *strings.Builder, grupo string, pessoa OfficialPessoa) {

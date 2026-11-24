@@ -1,0 +1,40 @@
+{
+  "_comment": "Fixture SINTETICA do choice CPF em prest/toma/interm. Todos os numeros sao sequencias repetidas, sem digito verificador valido e sem pessoa real. Nenhum codigo fiscal, aliquota ou valor de regra entra aqui.",
+  "id": "DPS000000000000000000000000000000000000000011",
+  "versao": "1.01",
+  "tp_amb": "2",
+  "dh_emi": "2026-11-24T12:00:00-03:00",
+  "ver_aplic": "amparius-teste-1",
+  "serie": "1",
+  "n_dps": "11",
+  "d_compet": "2026-11-24",
+  "tp_emit": "1",
+  "c_loc_emi": "2304400",
+  "prestador": {
+    "documento_tipo": "CPF",
+    "documento": "99999999999",
+    "op_simp_nac": "1",
+    "reg_esp_trib": "0"
+  },
+  "tomador": {
+    "documento_tipo": "CPF",
+    "documento": "88888888888",
+    "nome": "Tomador sintetico CPF"
+  },
+  "intermediario": {
+    "documento_tipo": "CPF",
+    "documento": "77777777777",
+    "nome": "Intermediario sintetico CPF"
+  },
+  "servico": {
+    "c_loc_prestacao": "2304400",
+    "c_trib_nac": "000000",
+    "x_desc_serv": "Servico de teste sintetico choice CPF"
+  },
+  "valores": {
+    "v_serv": "1.00",
+    "trib_issqn": "1",
+    "tp_ret_issqn": "1",
+    "ind_tot_trib": "0"
+  }
+}

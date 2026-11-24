@@ -1,0 +1,40 @@
+{
+  "_comment": "Fixture SINTETICA do choice cNaoNIF em prest/toma/interm. Os codigos 2|1|0 pertencem a enumeracao oficial do XSD e existem apenas para exercitar as tres alternativas; nao ha dado de pessoa, empresa ou regra fiscal.",
+  "id": "DPS000000000000000000000000000000000000000013",
+  "versao": "1.01",
+  "tp_amb": "2",
+  "dh_emi": "2026-11-24T12:00:00-03:00",
+  "ver_aplic": "amparius-teste-1",
+  "serie": "1",
+  "n_dps": "13",
+  "d_compet": "2026-11-24",
+  "tp_emit": "1",
+  "c_loc_emi": "2304400",
+  "prestador": {
+    "documento_tipo": "cNaoNIF",
+    "documento": "2",
+    "op_simp_nac": "1",
+    "reg_esp_trib": "0"
+  },
+  "tomador": {
+    "documento_tipo": "cNaoNIF",
+    "documento": "1",
+    "nome": "Tomador sintetico cNaoNIF"
+  },
+  "intermediario": {
+    "documento_tipo": "cNaoNIF",
+    "documento": "0",
+    "nome": "Intermediario sintetico cNaoNIF"
+  },
+  "servico": {
+    "c_loc_prestacao": "2304400",
+    "c_trib_nac": "000000",
+    "x_desc_serv": "Servico de teste sintetico choice cNaoNIF"
+  },
+  "valores": {
+    "v_serv": "1.00",
+    "trib_issqn": "1",
+    "tp_ret_issqn": "1",
+    "ind_tot_trib": "0"
+  }
+}

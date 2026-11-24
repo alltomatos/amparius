@@ -13,6 +13,15 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// tenantCompanyResolver simula o validador de empresa (identity) na integração
+// do control plane: só a empresa conhecida pertence ao tenant.
+type tenantCompanyResolver map[uuid.UUID]uuid.UUID
+
+func (r tenantCompanyResolver) CompanyBelongsToTenant(_ context.Context, tenantID, companyID uuid.UUID) (bool, error) {
+	owner, ok := r[companyID]
+	return ok && owner == tenantID, nil
+}
+
 func TestCheckerControlPlaneTenantCompanyAndFailClosed(t *testing.T) {
 	dsn := os.Getenv("AMPA_CONTROL_POSTGRES_DSN")
 	if dsn == "" {
@@ -37,12 +46,14 @@ func TestCheckerControlPlaneTenantCompanyAndFailClosed(t *testing.T) {
 		t.Fatalf("integração exige papel sem SUPERUSER/BYPASSRLS; role=%s bypass=%v", role, bypass)
 	}
 
-	checker, err := entitlement.NewChecker(database)
+	tenantA, tenantB := uuid.New(), uuid.New()
+	companyA, companyB := uuid.New(), uuid.New()
+	foreignCompany := uuid.New()
+	resolver := tenantCompanyResolver{companyA: tenantA, companyB: tenantB}
+	checker, err := entitlement.NewChecker(database, entitlement.WithCompanyResolver(resolver))
 	if err != nil {
 		t.Fatal(err)
 	}
-	tenantA, tenantB := uuid.New(), uuid.New()
-	companyA, companyB := uuid.New(), uuid.New()
 	inactiveCode := "__test_inactive_" + uuid.NewString()
 	date := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
 
@@ -83,34 +94,39 @@ func TestCheckerControlPlaneTenantCompanyAndFailClosed(t *testing.T) {
 	insert(tenantB, companyB, entitlement.ModuleFuneral, "active", "2026-01-01", "2026-12-31")
 
 	ctxA, ctxB := db.WithTenant(ctx, tenantA), db.WithTenant(ctx, tenantB)
+	ctxCompanyA := db.WithCompany(ctxA, companyA)
 	for name, call := range map[string]func() error{
-		"core ativo":       func() error { return checker.Check(ctxA, entitlement.ModuleFinance, companyA, date) },
-		"optional vigente": func() error { return checker.Check(ctxA, entitlement.ModuleFuneral, companyA, date) },
+		"core ativo":            func() error { return checker.Check(ctxCompanyA, entitlement.ModuleFinance, date) },
+		"optional vigente":      func() error { return checker.Check(ctxCompanyA, entitlement.ModuleFuneral, date) },
+		"explicit company same": func() error { return checker.CheckCompany(ctxA, entitlement.ModuleFuneral, companyA, date) },
 	} {
 		if err := call(); err != nil {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	for name, call := range map[string]func() error{
-		"sem assignment": func() error { return checker.Check(ctxA, entitlement.ModuleInventory, companyA, date) },
-		"vencido":        func() error { return checker.Check(ctxA, entitlement.ModuleCemetery, companyA, date) },
-		"revogado":       func() error { return checker.Check(ctxA, entitlement.ModuleCremation, companyA, date) },
-		"company errada": func() error { return checker.Check(ctxA, entitlement.ModuleFuneral, companyB, date) },
-		"tenant isolado": func() error { return checker.Check(ctxB, entitlement.ModuleFuneral, companyA, date) },
-		"inexistente":    func() error { return checker.Check(ctxA, "does-not-exist", companyA, date) },
-		"inativo":        func() error { return checker.Check(ctxA, inactiveCode, companyA, date) },
+		"sem assignment": func() error { return checker.Check(ctxCompanyA, entitlement.ModuleInventory, date) },
+		"vencido":        func() error { return checker.Check(ctxCompanyA, entitlement.ModuleCemetery, date) },
+		"revogado":       func() error { return checker.Check(ctxCompanyA, entitlement.ModuleCremation, date) },
+		"company errada": func() error { return checker.Check(db.WithCompany(ctxA, companyB), entitlement.ModuleFuneral, date) },
+		"company desconhecida": func() error {
+			return checker.Check(db.WithCompany(ctxA, foreignCompany), entitlement.ModuleFuneral, date)
+		},
+		"tenant isolado": func() error { return checker.Check(db.WithCompany(ctxB, companyA), entitlement.ModuleFuneral, date) },
+		"inexistente":    func() error { return checker.Check(ctxCompanyA, "does-not-exist", date) },
+		"inativo":        func() error { return checker.Check(ctxCompanyA, inactiveCode, date) },
 	} {
 		err := call()
 		if !errors.Is(err, entitlement.ErrModuleDisabled) {
 			t.Errorf("%s: esperado ErrModuleDisabled, recebido %v", name, err)
 		}
 	}
-	if err := checker.Check(ctxA, entitlement.ModuleFuneral, companyA, time.Time{}); !errors.Is(err, entitlement.ErrModuleDisabled) {
+	if err := checker.CheckCompany(ctxA, entitlement.ModuleFuneral, companyA, time.Time{}); !errors.Is(err, entitlement.ErrModuleDisabled) {
 		t.Fatalf("entrada inválida deveria bloquear com ErrModuleDisabled, recebido %v", err)
 	}
-	canceled, cancel := context.WithCancel(ctxA)
+	canceled, cancel := context.WithCancel(ctxCompanyA)
 	cancel()
-	if err := checker.Check(canceled, entitlement.ModuleFuneral, companyA, date); !errors.Is(err, entitlement.ErrEntitlementUnavailable) {
+	if err := checker.Check(canceled, entitlement.ModuleFuneral, date); !errors.Is(err, entitlement.ErrEntitlementUnavailable) {
 		t.Fatalf("falha de banco/transação deveria bloquear com ErrEntitlementUnavailable, recebido %v", err)
 	}
 }

@@ -12,7 +12,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var ErrTenantRequired = errors.New("tenant ausente no contexto")
+var (
+	ErrTenantRequired  = errors.New("tenant ausente no contexto")
+	ErrCompanyRequired = errors.New("empresa ausente no contexto")
+)
 
 type tenantContextKey struct{}
 
@@ -26,6 +29,26 @@ func TenantFromContext(ctx context.Context) (uuid.UUID, error) {
 		return uuid.Nil, ErrTenantRequired
 	}
 	return tenantID, nil
+}
+
+// companyContextKey carrega a empresa/CNPJ resolvida da sessão autenticada.
+// É uma primitiva de escopo de requisição: nunca deve ser preenchida a partir
+// do corpo HTTP, porque o enforcement de módulo é por empresa.
+type companyContextKey struct{}
+
+// WithCompany fixa a empresa confiável no contexto. O tenant continua sendo
+// obrigatório e é verificado em separado.
+func WithCompany(ctx context.Context, companyID uuid.UUID) context.Context {
+	return context.WithValue(ctx, companyContextKey{}, companyID)
+}
+
+// CompanyFromContext devolve a empresa confiável fixada por WithCompany.
+func CompanyFromContext(ctx context.Context) (uuid.UUID, error) {
+	companyID, ok := ctx.Value(companyContextKey{}).(uuid.UUID)
+	if !ok || companyID == uuid.Nil {
+		return uuid.Nil, ErrCompanyRequired
+	}
+	return companyID, nil
 }
 
 type Querier interface {

@@ -368,15 +368,45 @@ revogado bloqueia; falha de banco também bloqueia com erro distinto
 
 O checker exige o tenant em `db.WithTenant(ctx, tenantID)` e abre uma transação
 que executa `set_config('app.tenant_id', ..., true)` antes da consulta, para
-que o RLS do control plane seja efetivo. O `company_id` é recebido pelo caso
-de uso a partir do contexto autenticado; não é derivado nem confiado ao corpo
-HTTP. Ainda não existe um `company context` global, portanto a integração HTTP
-deve preservar essa fronteira ao adaptar a chamada.
+que o RLS do control plane seja efetivo.
+
+#### Contexto confiável de empresa
+
+`db.WithCompany(ctx, companyID)` fixa a empresa/CNPJ autenticada na mesma
+camada de escopo de requisição que o tenant; `db.CompanyFromContext` a lê. É
+uma primitiva de plataforma, não um campo de payload: nenhum endpoint aceita
+`company_id` do corpo, e a empresa só entra no contexto depois da autenticação
+(ou, na fase dev, de um cabeçalho explícito, nunca do JSON).
+
+`Checker.Check(ctx, module, at)` deriva **tenant e empresa do contexto**;
+`Checker.CheckCompany(ctx, module, companyID, at)` existe apenas para
+chamadores internos que já resolveram a empresa de forma confiável (por
+exemplo, um worker processando o CNPJ de um documento fiscal). Nos dois
+caminhos, módulo `core` não consulta assignment; módulo `optional` exige
+assignment ativa e vigente para aquele `company_id`.
+
+Sem tenant ou sem empresa no contexto, a chamada bloqueia com
+`ErrEntitlementUnavailable` (falha ao decidir); parâmetro inválido, módulo
+inexistente/inativo, assignment ausente/vencido/revogado e empresa de outro
+tenant bloqueiam com `ErrModuleDisabled`. Ambos os sentinels continuam
+distinguíveis por `errors.Is`.
+
+Como defesa em profundidade contra uma empresa forjada no contexto, o checker
+aceita `entitlement.WithCompanyResolver`. O módulo `identity` implementa o
+contrato em `Repository.CompanyBelongsToTenant`, consultando
+`identity.company` sob RLS: empresa inexistente, excluída ou de outro tenant
+devolve `(false, nil)` e nega com `ErrModuleDisabled`; falha de leitura devolve
+erro e bloqueia com `ErrEntitlementUnavailable`. O entitlement **não importa**
+`identity`; a composição injeta o resolver na construção do checker, no
+binário que já tem os dois DSNs (control plane e célula).
 
 O teste de integração do control plane (`AMPA_CONTROL_POSTGRES_DSN`) deve usar
 um papel de aplicação sem `SUPERUSER` e sem `BYPASSRLS` (por exemplo,
 `amparius_control_app`). Sem esse DSN, o teste é marcado como `SKIP` e o
-relatório deve registrar a ausência claramente.
+relatório deve registrar a ausência claramente. A verificação do resolver
+(`TestCompanyBelongsToTenantScopesByTenantAndRLS`) usa
+`AMPA_TEST_POSTGRES_DSN` para a célula e `AMPA_TEST_POSTGRES_ADMIN_DSN` para o
+cleanup administrativo, com o papel de aplicação `amparius_app`.
 
 ### Migration Finance
 

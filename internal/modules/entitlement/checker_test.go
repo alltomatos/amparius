@@ -1,8 +1,13 @@
 package entitlement
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
+
+	"github.com/alltomatos/amparius/internal/platform/db"
+	"github.com/google/uuid"
 )
 
 func TestDecideCoreAtivoPermite(t *testing.T) {
@@ -42,5 +47,65 @@ func TestDecideBloqueiaCasosNegativos(t *testing.T) {
 func TestErrosDeContratoSaoDistinguiveis(t *testing.T) {
 	if errors.Is(ErrModuleDisabled, ErrEntitlementUnavailable) || errors.Is(ErrEntitlementUnavailable, ErrModuleDisabled) {
 		t.Fatal("erros estáveis devem ser distinguíveis")
+	}
+}
+
+func TestCheckSemEmpresaNoContextoBloqueia(t *testing.T) {
+	checker := &Checker{}
+	ctx := db.WithTenant(context.Background(), uuid.New())
+	err := checker.Check(ctx, ModuleFuneral, time.Now().UTC())
+	if !errors.Is(err, ErrEntitlementUnavailable) {
+		t.Fatalf("empresa ausente deveria bloquear como indisponível, recebido %v", err)
+	}
+}
+
+func TestCheckCompanyRejeitaParametrosInvalidos(t *testing.T) {
+	checker := &Checker{}
+	ctx := db.WithTenant(context.Background(), uuid.New())
+	if err := checker.CheckCompany(ctx, ModuleFuneral, uuid.Nil, time.Now().UTC()); !errors.Is(err, ErrModuleDisabled) {
+		t.Fatalf("company nula deveria bloquear, recebido %v", err)
+	}
+	if err := checker.CheckCompany(ctx, "", uuid.New(), time.Now().UTC()); !errors.Is(err, ErrModuleDisabled) {
+		t.Fatalf("módulo vazio deveria bloquear, recebido %v", err)
+	}
+	if err := checker.CheckCompany(ctx, ModuleFuneral, uuid.New(), time.Time{}); !errors.Is(err, ErrModuleDisabled) {
+		t.Fatalf("instante zero deveria bloquear, recebido %v", err)
+	}
+}
+
+type staticCompanyResolver struct {
+	ok  bool
+	err error
+}
+
+func (r staticCompanyResolver) CompanyBelongsToTenant(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return r.ok, r.err
+}
+
+func TestValidateCompanyDefesaEmProfundidade(t *testing.T) {
+	tenantID, companyID := uuid.New(), uuid.New()
+	tests := []struct {
+		name    string
+		resolve staticCompanyResolver
+		want    error
+	}{
+		{name: "empresa do tenant", resolve: staticCompanyResolver{ok: true}},
+		{name: "empresa de outro tenant", resolve: staticCompanyResolver{ok: false}, want: ErrModuleDisabled},
+		{name: "falha de leitura", resolve: staticCompanyResolver{err: errors.New("timeout")}, want: ErrEntitlementUnavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checker := &Checker{companyResolver: tt.resolve}
+			err := checker.validateCompany(context.Background(), tenantID, companyID)
+			if tt.want == nil {
+				if err != nil {
+					t.Fatalf("esperado permitir, recebido %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("esperado %v, recebido %v", tt.want, err)
+			}
+		})
 	}
 }

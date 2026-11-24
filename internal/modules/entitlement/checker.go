@@ -39,31 +39,71 @@ var (
 	ErrEntitlementUnavailable = errors.New("entitlement indisponível")
 )
 
-// Checker consulta exclusivamente o PostgreSQL do control plane.
-// companyID deve vir do contexto autenticado/caso de uso; nunca do corpo HTTP.
-type Checker struct {
-	database *db.DB
+// CompanyResolver confirma que a empresa pertence ao tenant autenticado.
+//
+// É implementado pelo módulo identity contra o banco da célula (identity.company
+// sob RLS). O entitlement não importa identity: recebe apenas este contrato por
+// injeção, de modo que a fronteira entre módulos seja preservada.
+type CompanyResolver interface {
+	CompanyBelongsToTenant(ctx context.Context, tenantID, companyID uuid.UUID) (bool, error)
 }
 
-func NewChecker(database *db.DB) (*Checker, error) {
+// Option ajusta o Checker na construção.
+type Option func(*Checker)
+
+// WithCompanyResolver liga a verificação de que a empresa do contexto pertence
+// ao tenant. Sem ele, o Checker confia apenas no contexto autenticado; com ele,
+// uma empresa forjada no contexto falha mesmo que exista licença para o
+// company_id informado.
+func WithCompanyResolver(resolver CompanyResolver) Option {
+	return func(c *Checker) { c.companyResolver = resolver }
+}
+
+// Checker consulta exclusivamente o PostgreSQL do control plane.
+// O tenant e a empresa vêm do contexto autenticado; nunca do corpo HTTP.
+type Checker struct {
+	database        *db.DB
+	companyResolver CompanyResolver
+}
+
+func NewChecker(database *db.DB, opts ...Option) (*Checker, error) {
 	if database == nil {
 		return nil, errors.New("banco do control plane nulo")
 	}
-	return &Checker{database: database}, nil
+	checker := &Checker{database: database}
+	for _, opt := range opts {
+		opt(checker)
+	}
+	return checker, nil
 }
 
-// Check permite moduleCode para a empresa no instante at.
-// A ausência de tenant no contexto e qualquer falha de banco bloqueiam a operação.
-func (c *Checker) Check(ctx context.Context, moduleCode string, companyID uuid.UUID, at time.Time) error {
+// Check permite moduleCode para a empresa e o tenant fixados no contexto no
+// instante at. A ausência de tenant ou empresa no contexto bloqueia.
+func (c *Checker) Check(ctx context.Context, moduleCode string, at time.Time) error {
+	companyID, err := db.CompanyFromContext(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrEntitlementUnavailable, err)
+	}
+	return c.CheckCompany(ctx, moduleCode, companyID, at)
+}
+
+// CheckCompany é o caminho interno para quem já resolveu a empresa de forma
+// confiável (por exemplo, um worker que processa a empresa de um documento).
+// O tenant continua vindo do contexto. Nunca passe companyID vindo do corpo.
+func (c *Checker) CheckCompany(ctx context.Context, moduleCode string, companyID uuid.UUID, at time.Time) error {
 	if moduleCode == "" || companyID == uuid.Nil || at.IsZero() {
 		return fmt.Errorf("%w: parâmetros de enforcement inválidos", ErrModuleDisabled)
 	}
-	if _, err := db.TenantFromContext(ctx); err != nil {
+	tenantID, err := db.TenantFromContext(ctx)
+	if err != nil {
 		return fmt.Errorf("%w: %v", ErrEntitlementUnavailable, err)
+	}
+	if err := c.validateCompany(ctx, tenantID, companyID); err != nil {
+		return err
 	}
 
 	var result error
-	err := c.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+	err = c.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		var kind string
 		var active bool
 		err := tx.QueryRow(ctx, `
@@ -114,6 +154,23 @@ func (c *Checker) Check(ctx context.Context, moduleCode string, companyID uuid.U
 		return fmt.Errorf("%w: consultar entitlement: %v", ErrEntitlementUnavailable, err)
 	}
 	return result
+}
+
+// validateCompany aplica a defesa em profundidade: se houver resolver, a
+// empresa precisa pertencer ao tenant. Falha de leitura bloqueia como
+// indisponibilidade; empresa de outro tenant bloqueia como módulo negado.
+func (c *Checker) validateCompany(ctx context.Context, tenantID, companyID uuid.UUID) error {
+	if c.companyResolver == nil {
+		return nil
+	}
+	ok, err := c.companyResolver.CompanyBelongsToTenant(ctx, tenantID, companyID)
+	if err != nil {
+		return fmt.Errorf("%w: validar empresa do tenant: %v", ErrEntitlementUnavailable, err)
+	}
+	if !ok {
+		return fmt.Errorf("%w: empresa fora do tenant autenticado", ErrModuleDisabled)
+	}
+	return nil
 }
 
 // decide is the pure rule used by unit tests and documents the fail-closed rule.

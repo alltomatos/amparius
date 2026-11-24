@@ -1,7 +1,7 @@
-# NFS-e v1.01 — formato estrutural de `cTribMun`
+# NFS-e v1.01 — formato estrutural de `cTribMun` (bloqueio resolvido)
 
-Status: 24/11/2026 — análise estrutural bloqueada no contrato Go, sem
-transmissão, consulta a tabela fiscal ou inclusão de código municipal.
+Status: 24/11/2026 — análise estrutural concluída no contrato Go, sem
+transmissão, consulta a tabela fiscal ou inclusão de código municipal oficial.
 
 ## Regra comprovada no XSD
 
@@ -25,17 +25,22 @@ forma declarada pelo schema, mas não confirma existência, vigência,
 pertencimento ao município, aplicabilidade, alíquota, RTC ou qualquer outra
 validade fiscal.
 
-## Bloqueio do builder
+## Bloqueio do builder — resolvido
 
-`OfficialServico` não possui `CTribMun` e `BuildDPSOficial` não serializa
-`<cTribMun>`. Portanto esta fatia não adiciona validação, normalização,
-valor sintético ou teste do campo: fazer isso agora inventaria um contrato
-que não existe no builder.
+`OfficialServico` agora possui `CTribMun *string` opcional e
+`BuildDPSOficial` serializa `<cTribMun>` somente quando o ponteiro está presente,
+entre `<cTribNac>` e `<xDescServ>`. O valor é validado fail-closed como exatamente
+três dígitos ASCII, sem trim, padding, normalização ou inferência.
 
-Quando o campo for modelado no contrato correto, a próxima alteração deverá
-validar somente a forma comprovada acima, preservar whitespace e cobrir
-bordas, whitespace e Unicode com fixtures sintéticas. A validade fiscal deverá
-continuar sendo resolvida por fonte/tabela datada fora do builder.
+O teste positivo usa `123` em fixture SINTÉTICA e NÃO OFICIAL. A validade fiscal
+continua sendo resolvida por fonte/tabela datada fora do builder; `123` não é
+afirmado como código de Fortaleza ou de qualquer município.
+
+Os testes negativos cobrem ponteiro presente vazio, tamanho incorreto, bordas
+com whitespace, tabs, quebra de linha, letras e dígitos Unicode. O caminho
+público também bloqueia a entrada antes de adapter, persistência e contingência
+quando a integração PostgreSQL está disponível.
 
 O bloqueio conhecido de `serie=1` permanece inalterado e continua coberto por
-`scripts/validate-nfse-xsd-parity.ps1`.
+`scripts/validate-nfse-xsd-parity.ps1`. O detalhamento da implementação está em
+`docs/fiscal/2026-11-24-nfse-slice-04-ctribmun.md`.

@@ -113,6 +113,36 @@ func setupTenantOficial(t *testing.T, ctx context.Context, database *db.DB, admi
 	return tenant, company, establishment
 }
 
+type adapterSpy struct {
+	delegate *nfse.FakeAdapter
+	calls    int
+}
+
+func (s *adapterSpy) EmitDPS(ctx context.Context, request nfse.EmitRequest) (nfse.EmitResult, error) {
+	s.calls++
+	return s.delegate.EmitDPS(ctx, request)
+}
+
+func (s *adapterSpy) GetNFSByKey(ctx context.Context, accessKey string) (nfse.EmitResult, error) {
+	s.calls++
+	return s.delegate.GetNFSByKey(ctx, accessKey)
+}
+
+func (s *adapterSpy) GetDPSStatus(ctx context.Context, idDps string) (nfse.DPSStatus, error) {
+	s.calls++
+	return s.delegate.GetDPSStatus(ctx, idDps)
+}
+
+func (s *adapterSpy) ValidateDPS(ctx context.Context, dps nfse.DPS) (nfse.ValidationResult, error) {
+	s.calls++
+	return s.delegate.ValidateDPS(ctx, dps)
+}
+
+func (s *adapterSpy) MunicipalParameters(ctx context.Context, municipalityCode, serviceCode string, competence time.Time) (nfse.MunicipalParameter, error) {
+	s.calls++
+	return s.delegate.MunicipalParameters(ctx, municipalityCode, serviceCode, competence)
+}
+
 // O Service deve falhar fechado antes do adapter quando o XSD oficial rejeita
 // a serie semantica da fixture. Nao se registra tentativa nem se transmite.
 func TestServicoComDPSOficialBloqueiaSerieIncompativel(t *testing.T) {
@@ -217,5 +247,65 @@ func TestServicoComDPSOficialBloqueiaAntesDaContingencia(t *testing.T) {
 	}
 	if _, err := repository.GetEmissionAttempt(ctxTenant, "svc-oficial-timeout"); !errors.Is(err, fiscal.ErrAttemptNotFound) {
 		t.Fatalf("bloqueio XSD nao deveria persistir pendencia: %v", err)
+	}
+}
+
+// A entrada e SINTETICA e NAO OFICIAL. O teste prova que a forma invalida de
+// cTribMun falha antes de qualquer chamada ao adapter, persistencia ou fila de
+// contingencia.
+func TestServicoComCTribMunInvalidoBloqueiaAntesDoAdapter(t *testing.T) {
+	dsn, adminDSN := os.Getenv("AMPA_TEST_POSTGRES_DSN"), os.Getenv("AMPA_TEST_POSTGRES_ADMIN_DSN")
+	if dsn == "" || adminDSN == "" {
+		t.Skip("AMPA_TEST_POSTGRES_DSN e AMPA_TEST_POSTGRES_ADMIN_DSN sao necessarios")
+	}
+	ctx := context.Background()
+	database, err := db.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	admin, err := pgxpool.New(ctx, adminDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant, company, establishment := setupTenantOficial(t, ctx, database, admin)
+	ctxTenant := db.WithTenant(ctx, tenant)
+	repository, err := fiscal.NewRepository(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	competence := time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC)
+	document, err := repository.CreateDocument(ctxTenant, fiscal.Document{CompanyID: company, EstablishmentID: establishment, Competence: competence, Kind: "nfse", TotalCents: 100, ContingencyMode: "offline"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	official := carregarFixtureOficial(t)
+	valorInvalido := "12"
+	official.Servico.CTribMun = &valorInvalido
+	spy := &adapterSpy{delegate: nfse.NewFakeAdapter(nfse.FakeConfig{})}
+	servico, err := nfse.NewService(nfse.ServiceConfig{
+		Repository: repository, Adapter: spy, Validator: novoValidadorOficial(t),
+		AttemptStore: nfse.NewRepositoryAttemptStore(repository),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entrada := nfse.ServiceInput{
+		DocumentID: document.ID, Competence: competence,
+		TenantID: tenant, CompanyID: company, EstablishmentID: establishment,
+		IdempotencyKey: "svc-oficial-ctribmun-invalido", Official: &official,
+	}
+	resultado, err := servico.Emit(ctxTenant, entrada)
+	if !errors.Is(err, nfse.ErrInvalidDPS) {
+		t.Fatalf("cTribMun invalido deveria falhar fechado: %v", err)
+	}
+	if resultado != (nfse.ServiceResult{}) {
+		t.Fatalf("emissao bloqueada nao deveria produzir resultado: %+v", resultado)
+	}
+	if spy.calls != 0 {
+		t.Fatalf("entrada invalida chegou ao adapter: %d chamadas", spy.calls)
+	}
+	if _, err := repository.GetEmissionAttempt(ctxTenant, "svc-oficial-ctribmun-invalido"); !errors.Is(err, fiscal.ErrAttemptNotFound) {
+		t.Fatalf("entrada invalida nao deveria persistir tentativa: %v", err)
 	}
 }

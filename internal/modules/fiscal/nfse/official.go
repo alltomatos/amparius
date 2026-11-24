@@ -57,6 +57,7 @@ type OfficialPessoa struct {
 type OfficialServico struct {
 	CLocPrestacao string                    `json:"c_loc_prestacao"`
 	CTribNac      string                    `json:"c_trib_nac"`
+	CTribMun      *string                   `json:"c_trib_mun,omitempty"`
 	XDescServ     string                    `json:"x_desc_serv"`
 	InfoCompl     *OfficialInfoComplementar `json:"info_compl,omitempty"`
 }
@@ -151,6 +152,9 @@ func BuildDPSOficial(ctx context.Context, input OfficialDPSInput) (DPS, error) {
 	b.WriteString(`<locPrest>` + elem("cLocPrestacao", input.Servico.CLocPrestacao) + `</locPrest>`)
 	b.WriteString(`<cServ>`)
 	b.WriteString(elem("cTribNac", input.Servico.CTribNac))
+	if input.Servico.CTribMun != nil {
+		b.WriteString(elem("cTribMun", *input.Servico.CTribMun))
+	}
 	b.WriteString(elem("xDescServ", input.Servico.XDescServ))
 	b.WriteString(`</cServ>`)
 	if input.Servico.InfoCompl != nil {
@@ -250,6 +254,11 @@ func validateOfficialInput(input OfficialDPSInput) error {
 	if err := validateOfficialCTribNac(input.Servico.CTribNac); err != nil {
 		return err
 	}
+	if input.Servico.CTribMun != nil {
+		if err := validateOfficialCTribMun(*input.Servico.CTribMun); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -262,6 +271,20 @@ func validateOfficialCTribNac(value string) error {
 	for i := 0; i < len(value); i++ {
 		if value[i] < '0' || value[i] > '9' {
 			return fmt.Errorf("%w: serv.cTribNac deve conter exatamente 6 digitos ASCII", ErrInvalidDPS)
+		}
+	}
+	return nil
+}
+
+// validateOfficialCTribMun reproduz somente a forma de TCCodTribMun do XSD
+// oficial v1.01. Nao verifica existencia, vigencia ou aplicabilidade fiscal.
+func validateOfficialCTribMun(value string) error {
+	if len(value) != 3 {
+		return fmt.Errorf("%w: serv.cTribMun deve conter exatamente 3 digitos ASCII", ErrInvalidDPS)
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] < '0' || value[i] > '9' {
+			return fmt.Errorf("%w: serv.cTribMun deve conter exatamente 3 digitos ASCII", ErrInvalidDPS)
 		}
 	}
 	return nil

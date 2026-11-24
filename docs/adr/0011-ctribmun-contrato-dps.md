@@ -1,6 +1,6 @@
 # ADR 0011 — `cTribMun` opcional no contrato da DPS oficial
 
-Status: proposto · 24/11/2026 · referencia os ADRs 0002, 0004, 0006 e 0010, o DER v0.3 e o builder `internal/modules/fiscal/nfse/official.go`
+Status: aceito e implementado · 24/11/2026 · referencia os ADRs 0002, 0004, 0006 e 0010, o DER v0.3 e o builder `internal/modules/fiscal/nfse/official.go`
 
 ## Contexto
 
@@ -44,8 +44,7 @@ Há três tensões que precisam ficar explícitas antes de qualquer implementaç
 
 ### 1. Representação opcional no contrato Go
 
-Quando a implementação for autorizada, o contrato proposto para
-`OfficialServico` é:
+A implementação desta ADR usa o seguinte contrato em `OfficialServico`:
 
 ```go
 CTribMun *string `json:"c_trib_mun,omitempty"`
@@ -118,17 +117,17 @@ Ficam fora desta decisão:
 - resolução do bloqueio conhecido de `serie=1` no XSD v1.01;
 - declaração de conformidade oficial completa ou de prontidão para produção.
 
-Os gates para implementação futura são:
+Gates fiscais que permanecem fora desta implementação são:
 
 1. contrato de resolução fiscal definido, com fonte oficial datada e metadados
    de origem, sem regra literal no código;
 2. decisão do Engenheiro de Dados sobre a representação persistida, caso a
    resolução exija novo campo ou tabela;
-3. testes Go e XSD real cobrindo presença/ausência, pattern, preservação,
-   Unicode e rejeição fail-closed;
-4. prova de que o caminho inválido bloqueia antes do adapter, persistência e
-   qualquer estado de autorização;
-5. revisão das fixtures e golden sem promover dados sintéticos a dados fiscais;
+3. validação de produção por motor XSD completo e fontes fiscais oficiais;
+4. manutenção da prova de que o caminho inválido bloqueia antes do adapter,
+   persistência e qualquer estado de autorização;
+5. manutenção das fixtures e golden sem promover dados sintéticos a dados
+   fiscais;
 6. manutenção dos gates de assinatura, motor XSD completo, fontes municipais,
    certificado e transmissão já registrados no ADR 0010.
 
@@ -162,7 +161,7 @@ Os gates para implementação futura são:
 
 ## Mudanças decorrentes
 
-Nenhuma mudança de código, DER, PRD, migration, fixture ou tabela fiscal é
-autorizada por esta ADR. A implementação futura deverá atualizar, no mesmo
-slice, o contrato Go, os testes, a documentação do builder e os critérios de
-aceite correspondentes, mantendo os gates fiscais do ADR 0010.
+Esta implementação atualiza o contrato Go, os testes e a documentação da
+fatia, sem alterar DER, PRD, migrations ou tabelas fiscais. A fixture adicionada
+usa `123` somente como valor SINTÉTICO e NÃO OFICIAL. Os gates fiscais do ADR
+0010 permanecem mantidos.

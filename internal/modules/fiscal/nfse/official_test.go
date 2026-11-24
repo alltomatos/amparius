@@ -232,6 +232,92 @@ func TestBuildDPSOficialValidaFormatoDeCTribNac(t *testing.T) {
 	}
 }
 
+// A fixture e SINTETICA e NAO OFICIAL: cTribMun=123 exercita somente a forma
+// estrutural do XSD e nao representa codigo municipal real.
+func TestBuildDPSOficialCTribMunOpcionalEOrdenado(t *testing.T) {
+	validador := novoValidadorOficial(t)
+	input := carregarFixtureOficialArquivo(t, "dps-ctribmun-sintetico.json")
+	dps, err := nfse.BuildDPSOficial(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	xml := string(dps.XML)
+	if strings.Count(xml, "<cTribMun>123</cTribMun>") != 1 {
+		t.Fatalf("cTribMun sintetico deveria aparecer uma vez: %s", xml)
+	}
+	ordem := []string{"<cTribNac>", "<cTribMun>", "<xDescServ>"}
+	ultima := -1
+	for _, marcador := range ordem {
+		posicao := strings.Index(xml, marcador)
+		if posicao <= ultima {
+			t.Fatalf("ordem XSD divergente para %s: %d <= %d", marcador, posicao, ultima)
+		}
+		ultima = posicao
+	}
+
+	// Neutraliza somente o bloqueio conhecido de serie=1; o caso continua
+	// provando a aceitacao estrutural de cTribMun pelo XSD local.
+	xml = strings.Replace(xml, "<serie>1</serie>", "<serie>^1$</serie>", 1)
+	resultado, err := validador.ValidateDPS(context.Background(), nfse.DPS{XML: []byte(xml), IDDps: dps.IDDps})
+	if err != nil || !resultado.Valid {
+		t.Fatalf("cTribMun sintetico deveria passar no XSD: %+v err=%v", resultado, err)
+	}
+}
+
+func TestBuildDPSOficialCTribMunAusentePreservaGolden(t *testing.T) {
+	input := carregarFixtureOficial(t)
+	if input.Servico.CTribMun != nil {
+		t.Fatal("fixture base nao oficial nao deveria informar cTribMun")
+	}
+	dps, err := nfse.BuildDPSOficial(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(dps.XML), "<cTribMun>") {
+		t.Fatal("cTribMun ausente nao deveria ser serializado")
+	}
+	esperado, err := os.ReadFile(filepath.Join("testdata", "official", "dps-minima.xml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	golden := []byte(strings.TrimSpace(string(esperado)))
+	if string(dps.XML) != string(golden) {
+		t.Fatal("a ausencia de cTribMun alterou o golden existente")
+	}
+	if dps.XMLHash != nfse.SHA256Hex(golden) {
+		t.Fatal("a ausencia de cTribMun alterou o hash do golden existente")
+	}
+}
+
+func TestBuildDPSOficialRejeitaCTribMunForaDoPattern(t *testing.T) {
+	casos := []struct {
+		nome  string
+		valor string
+	}{
+		{"vazio", ""},
+		{"dois digitos", "12"},
+		{"quatro digitos", "1234"},
+		{"espaco na borda esquerda", " 123"},
+		{"espaco na borda direita", "123 "},
+		{"tab interno", "1\t3"},
+		{"quebra de linha", "12\n"},
+		{"letra ASCII", "12A"},
+		{"digitos Unicode", "١٢٣"},
+		{"digitos fullwidth", "１２３"},
+	}
+	for _, caso := range casos {
+		t.Run(caso.nome, func(t *testing.T) {
+			input := carregarFixtureOficial(t)
+			valor := caso.valor
+			input.Servico.CTribMun = &valor
+			_, err := nfse.BuildDPSOficial(context.Background(), input)
+			if !errors.Is(err, nfse.ErrInvalidDPS) {
+				t.Fatalf("cTribMun %q deveria falhar fechado: %v", caso.valor, err)
+			}
+		})
+	}
+}
+
 func TestBuildDPSOficialValidaFacetsTextuaisDeInfoCompl(t *testing.T) {
 	validador := novoValidadorOficial(t)
 	cases := []struct {

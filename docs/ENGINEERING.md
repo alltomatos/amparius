@@ -122,7 +122,8 @@ física já existente no tenant e `death_at` em RFC3339. `death_certificate` e
 limitados a 200 runas por segurança de transporte; o limite não representa
 regra legal. Pessoa inexistente ou de outro tenant responde `404` sem revelar
 qual caso ocorreu; pessoa jurídica responde `409`. O endpoint não cria party ou
-person implicitamente e não implementa familiares.
+person implicitamente nem cria vínculo familiar: o vínculo é uma fatia separada,
+descrita abaixo.
 
 O POST devolve `201` com cabeçalho `Location: /_dev/deceased/{id}` e envelope
 `{"status":"ok","deceased":{...}}`; o GET devolve `200` com o mesmo envelope.
@@ -155,8 +156,88 @@ remoção. Essa separação não altera RLS nem concede escrita adicional ao flu
 de falecido.
 
 Esta fatia cobre apenas parte do RF-004: o cadastro/consulta do falecido e a
-resolução de nomes. Familiares, consentimento, base legal e retenção definida
-não fazem parte deste slice; nenhuma política jurídica foi inferida ou criada.
+resolução de nomes. Familiares ficam na fatia de vínculo familiar descrita a
+seguir; consentimento, base legal e retenção definida não fazem parte deste
+slice, e nenhuma política jurídica foi inferida ou criada.
+
+### Vínculo familiar dev-only
+
+Com o mesmo opt-in (`APP_ENV=development` e `ENABLE_DEV_ONBOARDING=true`), a API
+registra `POST /_dev/family-links` e `GET /_dev/family-links/{id}` e grava em
+`party.family_link`. Sem o opt-in as duas rotas não são registradas e respondem
+`404`; nada abaixo vale em produção.
+
+Tenant e cabeçalhos. O tenant vem somente do cabeçalho
+`X-Amparius-Development-Tenant-ID`, validado como UUID não nulo e injetado no
+contexto antes do repositório; ausente ou inválido responde `400`. Nenhum
+endpoint aceita `tenant_id` no corpo. Todas as respostas, inclusive erros, têm
+`X-Amparius-Development-Only: true` e `Cache-Control: no-store`, e não há
+autenticação de produção.
+
+Contrato do POST. O corpo é exatamente um objeto JSON e aceita apenas
+`deceased_id`, `person_id` e `relation`; `tenant_id` e qualquer campo
+desconhecido são rejeitados com `400`, assim como corpo vazio, JSON inválido ou
+mais de um JSON. `deceased_id` e `person_id` são UUIDs obrigatórios e
+`relation` é texto obrigatório, aparado nas pontas e limitado a 40 runas — limite
+de transporte, não regra legal. Nem o falecido nem o familiar são criados
+implicitamente: `deceased_id` precisa apontar para `party.deceased` existente e
+`person_id` para `party.party` com `kind=person` e a linha companheira em
+`party.person`, ambos no mesmo tenant.
+
+Códigos. `deceased_id` inexistente ou de outro tenant responde `404`, assim como
+`person_id` inexistente ou de outro tenant — a resposta não revela qual caso
+ocorreu. `person_id` de pessoa jurídica responde `409`. `relation` é validada
+contra o domínio ativo `party_family_relation` em `identity.domain_value`; valor
+fora do domínio responde `400` antes de qualquer escrita. A validação fica no
+repositório, na mesma transação tenant-scoped do INSERT, e o trigger
+`party.validate_family_link_domains` continua como rede de segurança.
+
+Respostas. O POST devolve `201` com `Location: /_dev/family-links/{id}` e
+envelope `{"status":"ok","family_link":{...}}`; o GET devolve `200` com o mesmo
+envelope, `404` quando o vínculo não existe no tenant do cabeçalho e `400`
+quando o `id` da rota não é UUID válido. Erros usam
+`{"status":"error","error":"..."}`: `400` para cabeçalho/carga/relação/id
+inválidos, `404` para falecido, familiar ou vínculo não encontrado, `409` para
+pessoa jurídica, `405` com `Allow` para método não permitido, `500` para falha
+inesperada e `503` quando o serviço não está ligado. Apenas leitura e criação
+existem: não há `PATCH` nem `DELETE` nesta fatia.
+
+Nomes e persistência. A resposta resolve os nomes na origem e expõe, em cada
+lado do vínculo, `id`, `civil_name`, `social_name` e `display_name`;
+`party.family_link` guarda apenas `deceased_id`, `person_id` e `relation`, sem
+coluna de nome, e o teste de integração verifica isso em `information_schema`.
+O teste também confirma que o POST não cria `party` implícita.
+
+Migration 0013. A tabela já existe desde `0002_party_catalog.sql`, com FK
+composta por tenant, RLS e `UNIQUE (tenant_id, id)`;
+`migrations/0013_party_family_link_grants.sql` só ajusta permissões do papel de
+aplicação, sem alterar modelo, política ou dados. Concede ao papel `amparius_app`
+`SELECT/INSERT` em `party.family_link` — sem `UPDATE`/`DELETE`, porque a fatia
+não expõe alteração nem remoção — e `SELECT` em `identity.domain_value`, leitura
+global e somente leitura exigida tanto pela validação quanto pelo trigger na
+inserção. `USAGE` em `identity` vem de `0009`, por isso não é repetido nem
+revogado no Down, que revoga exatamente os dois `GRANT SELECT/INSERT` acima.
+
+Teste. O teste de integração usa uma role temporária
+`NOSUPERUSER/NOBYPASSRLS` com os grants da 0013 mais o mínimo que as queries do
+módulo exigem (`SELECT` em `party.party`, `party.person` e `party.deceased` e
+`EXECUTE` em `public.uuidv7()`), valida os privilégios por
+`has_table_privilege`/`has_function_privilege` e prova isolamento cruzado entre
+tenants.
+
+Sem idempotência. Não há `Idempotency-Key`, chave de idempotência persistida nem
+unicidade por (falecido, familiar, relação) nesta fatia: a única unicidade da
+tabela é `(tenant_id, id)`. Como no cadastro dev de falecido, cada POST válido
+cria um novo vínculo e a repetição não é deduplicada. A decisão acompanha o
+contrato dev existente e não inventa idempotência sem coluna, chave ou
+unicidade definidas no schema; a deduplicação de vínculos fica para um slice
+próprio, com regra de negócio e migração.
+
+RF-004 parcial. Com este vínculo, o RF-004 continua **parcial**: cadastro e
+consulta do falecido, vínculo com familiares existentes e resolução de nomes
+estão cobertos, mas consentimento, base legal e retenção definida seguem fora do
+escopo. Nenhuma política jurídica foi inferida ou criada, e o slice não registra
+consentimento nem prazo de guarda.
 
 `GET /readyz` continua um stub nesta fase: responde sucesso sem verificar
 PostgreSQL, Redis, RabbitMQ ou MinIO.

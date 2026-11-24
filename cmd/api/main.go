@@ -45,6 +45,7 @@ func run() error {
 	var onboardingHandler http.Handler
 	var partiesHandler http.Handler
 	var deceasedHandler http.Handler
+	var familyLinksHandler http.Handler
 	if devOnboardingEnabled {
 		database, err := db.New(ctx, cfg.PostgresDSN)
 		if err != nil {
@@ -64,15 +65,17 @@ func run() error {
 		}
 		partiesHandler = party.NewDevelopmentHTTPHandler(partyRepository)
 		deceasedHandler = party.NewDevelopmentDeceasedHTTPHandler(partyRepository)
+		familyLinksHandler = party.NewDevelopmentFamilyLinkHTTPHandler(partyRepository)
 	}
 
 	server := &http.Server{
 		Addr: cfg.HTTPAddr(),
 		Handler: httpserver.New(logger, httpserver.Options{
-			DevelopmentMode:       devOnboardingEnabled,
-			DevelopmentOnboarding: onboardingHandler,
-			DevelopmentParties:    partiesHandler,
-			DevelopmentDeceased:   deceasedHandler,
+			DevelopmentMode:        devOnboardingEnabled,
+			DevelopmentOnboarding:  onboardingHandler,
+			DevelopmentParties:     partiesHandler,
+			DevelopmentDeceased:    deceasedHandler,
+			DevelopmentFamilyLinks: familyLinksHandler,
 		}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

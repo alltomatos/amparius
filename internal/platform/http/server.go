@@ -23,6 +23,9 @@ type Options struct {
 	DevelopmentParties http.Handler
 	// DevelopmentDeceased é o handler de POST /_dev/deceased e GET /_dev/deceased/{id}.
 	DevelopmentDeceased http.Handler
+	// DevelopmentFamilyLinks é o handler de POST /_dev/family-links e
+	// GET /_dev/family-links/{id}.
+	DevelopmentFamilyLinks http.Handler
 }
 
 // New constrói o servidor com as dependências injetadas.
@@ -67,6 +70,10 @@ func (s *Server) routes(options Options) {
 	if options.DevelopmentMode && options.DevelopmentDeceased != nil {
 		s.mux.Handle("/_dev/deceased", options.DevelopmentDeceased)
 		s.mux.Handle("/_dev/deceased/{id}", options.DevelopmentDeceased)
+	}
+	if options.DevelopmentMode && options.DevelopmentFamilyLinks != nil {
+		s.mux.Handle("/_dev/family-links", options.DevelopmentFamilyLinks)
+		s.mux.Handle("/_dev/family-links/{id}", options.DevelopmentFamilyLinks)
 	}
 }
 

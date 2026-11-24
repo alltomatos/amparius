@@ -44,7 +44,8 @@ As fixtures `dps-opcionais.json` e `dps-opcionais.xml` cobrem os ramos
 opcionais que não exigem nova fonte fiscal nem certificado: `toma`, `interm` e
 `serv/infoCompl` (`idDocTec`, `docRef`, `xPed` e `xInfComp`). Os documentos, nomes e textos são
 explicitamente sintéticos; não representam pessoas, empresas ou regras reais.
-O builder valida documento/nome obrigatórios nesses grupos e rejeita
+O builder valida documento e `xNome` obrigatório nesses grupos conforme o
+`TSNomeRazaoSocial` do XSD v1.01 (1 a 300 caracteres) e rejeita
 `infoCompl` vazio antes da validação XSD. O XML opcional passa pelo mesmo
 `XSDValidator` local v1.01.
 
@@ -65,6 +66,7 @@ detecção de estrutura inválida continuam verdes.
 | `TestGoldenOficialContraXSD` | **0/1**; bloqueado honestamente por `serie=1` no facet oficial |
 | `TestBuildDPSOficialComRamosOpcionaisPreservaGapDeSerie` | XML opcional construido; bloqueado pelo mesmo facet (`toma` + `interm` + `infoCompl`) |
 | `TestBuildDPSOficialRejeitaRamosOpcionaisIncompletos` | 4 negativos fail-closed para grupos opcionais |
+| `TestBuildDPSOficialValidaNomeDeTomaEIntermNosLimitesXSD` | `toma`/`interm`: 1 e 300 aceitos; vazio e 301 rejeitados |
 | `TestBuildDPSOficialDetectaSerieIncompativelComXSD` | bloqueia `serie=1` com diagnostico do facet |
 | `TestBuildDPSOficialDeterministico` | mesmo XML + mesmo hash |
 | `TestBuildDPSOficialRejeitaEntradaIncompleta` | 22 negativos (21 campos obrigatórios + contexto cancelado) |

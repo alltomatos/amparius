@@ -92,6 +92,7 @@ const (
 	officialCNPJLen = 14
 	officialCPFLen  = 11
 	officialNIFMax  = 40
+	officialNomeMax = 300
 )
 
 // officialNaoNIFCodes e a enumeracao de TSCodNaoNIF (motivo da nao informacao
@@ -243,6 +244,9 @@ func validateOfficialPessoa(pessoa *OfficialPessoa, grupo string) error {
 	}
 	if strings.TrimSpace(pessoa.Nome) == "" {
 		return fmt.Errorf("%w: campo obrigatorio ausente: %s.nome", ErrInvalidDPS, grupo)
+	}
+	if tamanho := len([]rune(pessoa.Nome)); tamanho < 1 || tamanho > officialNomeMax {
+		return fmt.Errorf("%w: %s.nome deve ter de 1 a %d caracteres", ErrInvalidDPS, grupo, officialNomeMax)
 	}
 	if strings.TrimSpace(pessoa.Documento) == "" {
 		return fmt.Errorf("%w: campo obrigatorio ausente: %s.documento", ErrInvalidDPS, grupo)

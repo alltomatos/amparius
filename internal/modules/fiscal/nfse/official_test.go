@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,6 +86,68 @@ func TestBuildDPSOficialRejeitaRamosOpcionaisIncompletos(t *testing.T) {
 				t.Fatalf("erro fail-closed esperado: %v", err)
 			}
 		})
+	}
+}
+
+func TestBuildDPSOficialValidaNomeDeTomaEIntermNosLimitesXSD(t *testing.T) {
+	validador := novoValidadorOficial(t)
+	casos := []struct {
+		grupo  string
+		nome   string
+		aceita bool
+	}{
+		{"toma", strings.Repeat("A", 1), true},
+		{"toma", strings.Repeat("A", 300), true},
+		{"toma", strings.Repeat("A", 301), false},
+		{"toma", "", false},
+		{"interm", strings.Repeat("B", 1), true},
+		{"interm", strings.Repeat("B", 300), true},
+		{"interm", strings.Repeat("B", 301), false},
+		{"interm", "", false},
+	}
+	for _, caso := range casos {
+		t.Run(caso.grupo+"/"+nomeLimite(caso.nome), func(t *testing.T) {
+			input := carregarFixtureOficial(t)
+			pessoa := &nfse.OfficialPessoa{
+				DocumentoTipo: "CNPJ",
+				Documento:     "00000000000272",
+				Nome:          caso.nome,
+			}
+			if caso.grupo == "toma" {
+				input.Tomador = pessoa
+			} else {
+				input.Intermediario = pessoa
+			}
+
+			dps, err := nfse.BuildDPSOficial(context.Background(), input)
+			if caso.aceita {
+				if err != nil {
+					t.Fatalf("nome de %d caracteres deveria ser aceito: %v", len([]rune(caso.nome)), err)
+				}
+				// Neutraliza somente o bloqueio de serie documentado: assim o
+				// caso de borda tambem prova a aceitacao pelo XSD v1.01 local.
+				xml := strings.Replace(string(dps.XML), "<serie>1</serie>", "<serie>^1$</serie>", 1)
+				resultado, err := validador.ValidateDPS(context.Background(), nfse.DPS{XML: []byte(xml), IDDps: dps.IDDps})
+				if err != nil || !resultado.Valid {
+					t.Fatalf("nome de %d caracteres deveria passar no XSD: %+v err=%v", len([]rune(caso.nome)), resultado, err)
+				}
+				return
+			}
+			if !errors.Is(err, nfse.ErrInvalidDPS) {
+				t.Fatalf("nome de %d caracteres deveria falhar com ErrInvalidDPS: %v", len([]rune(caso.nome)), err)
+			}
+		})
+	}
+}
+
+func nomeLimite(nome string) string {
+	switch len([]rune(nome)) {
+	case 0:
+		return "vazio"
+	case 301:
+		return "301"
+	default:
+		return fmt.Sprintf("%d", len([]rune(nome)))
 	}
 }
 

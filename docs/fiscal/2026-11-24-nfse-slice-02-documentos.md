@@ -1,6 +1,6 @@
 # DPS oficial v1.01 — choices de documento (CNPJ, CPF, NIF, cNaoNIF)
 
-Status: 24/11/2026 — sem transmissão, sem rede, sem commit. Complementa a
+Status: 24/11/2026 — sem transmissão, sem rede. Complementa a
 fatia 01 (`2026-11-23-nfse-slice-01-oficial.md`) sem alterar migrations,
 relay ou client.
 
@@ -15,12 +15,17 @@ pessoa: `prest` (`TCInfoPrestador`), `toma` e `interm` (`TCInfoPessoa`).
 |---|---|---|
 | `CNPJ` | `TSCNPJ` `[0-9]{14}` | exatamente 14 dígitos |
 | `CPF` | `TSCPF` `[0-9]{11}` | exatamente 11 dígitos |
-| `NIF` | `TSNIF` minLength 1, maxLength 40 | até 40 caracteres |
+| `NIF` | `TSNIF` minLength 1, maxLength 40 | 1 a 40 caracteres |
 | `cNaoNIF` | `TSCodNaoNIF` enum `0\|1\|2` | somente 0, 1 ou 2 |
 
 Nenhum dígito verificador é calculado ou conferido: o XSD oficial não define
 essa regra e o builder não inventa regra fiscal. Presença de documento e nome
 continua obrigatória nos grupos `toma`/`interm`.
+
+O `DocumentoTipo` é normalizado (trim das bordas) uma única vez, antes de
+validar e serializar, nos três grupos. Assim o tipo aprovado no `xs:choice` é
+exatamente o que vira nome de elemento: um tipo como `" CNPJ "` não pode passar
+na validação trimada e gerar `< CNPJ >`, que é XML inválido.
 
 ## Fixtures sintéticas
 
@@ -46,6 +51,7 @@ sintético semanticamente correto do caso de teste.
 | `TestBuildDPSOficialChoiceAceitaBordas` | CNPJ 14, CPF 11, NIF 40 e cada código `cNaoNIF` |
 | `TestBuildDPSOficialChoiceRejeitaDocumentoInvalido` | 10 valores inválidos × 3 grupos (`ErrInvalidDPS`) |
 | `TestBuildDPSOficialChoiceRejeitaDocumentoVazio` | 4 tipos × 3 grupos sem documento |
+| `TestBuildDPSOficialChoiceNormalizaTipoComEspacos` | tipo com espaços/tabs/quebras nos 3 grupos: `<CNPJ>` bem-formado e XSD só acusa `serie` |
 
 Os 8 golden estruturais, o builder estrutural e o bloqueio do facet `serie`
 permanecem intactos; nenhum teste antigo foi relaxado.

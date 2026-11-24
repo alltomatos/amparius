@@ -107,6 +107,10 @@ func BuildDPSOficial(ctx context.Context, input OfficialDPSInput) (DPS, error) {
 	if err := ctx.Err(); err != nil {
 		return DPS{}, err
 	}
+	// Normaliza uma unica vez, antes de validar e serializar. Assim o
+	// DocumentoTipo que passa no xs:choice e o mesmo que vira nome de elemento:
+	// um tipo com espacos nao pode validar trimado e gerar "< CNPJ >" invalido.
+	input = normalizeOfficialInput(input)
 	if err := validateOfficialInput(input); err != nil {
 		return DPS{}, err
 	}
@@ -166,6 +170,25 @@ func BuildDPSOficial(ctx context.Context, input OfficialDPSInput) (DPS, error) {
 
 	raw := []byte(b.String())
 	return DPS{XML: raw, XMLHash: SHA256Hex(raw), IDDps: input.ID}, nil
+}
+
+// normalizeOfficialInput devolve uma copia do input com o DocumentoTipo de
+// cada grupo sem espacos nas bordas. Copia as pessoas opcionais para nao
+// alterar a struct do chamador. Normalizar uma vez e o que garante que a
+// validacao e a serializacao usem exatamente o mesmo tipo.
+func normalizeOfficialInput(input OfficialDPSInput) OfficialDPSInput {
+	input.Prestador.DocumentoTipo = strings.TrimSpace(input.Prestador.DocumentoTipo)
+	if input.Tomador != nil {
+		tomador := *input.Tomador
+		tomador.DocumentoTipo = strings.TrimSpace(tomador.DocumentoTipo)
+		input.Tomador = &tomador
+	}
+	if input.Intermediario != nil {
+		intermediario := *input.Intermediario
+		intermediario.DocumentoTipo = strings.TrimSpace(intermediario.DocumentoTipo)
+		input.Intermediario = &intermediario
+	}
+	return input
 }
 
 func validateOfficialInput(input OfficialDPSInput) error {
@@ -236,8 +259,10 @@ func validateOfficialPessoa(pessoa *OfficialPessoa, grupo string) error {
 //
 // O tipo fora do choice falha fechado, como antes. Um valor que nao casa com o
 // facet do proprio tipo tambem falha fechado, em vez de chegar ao XSD.
+//
+// O chamador normaliza o input antes; aqui o tipo e comparado como veio, sem
+// trim, para que um caminho nao normalizado falhe em vez de passar despercebido.
 func validateOfficialDocumento(tipo, valor, grupo string) error {
-	tipo = strings.TrimSpace(tipo)
 	if !officialDocumentKinds[tipo] {
 		return fmt.Errorf("%w: %s.documento_tipo fora do choice oficial: %s", ErrInvalidDPS, grupo, tipo)
 	}
@@ -252,8 +277,11 @@ func validateOfficialDocumento(tipo, valor, grupo string) error {
 			return fmt.Errorf("%w: %s (%s) deve ter exatamente %d digitos", ErrInvalidDPS, campo, tipo, officialCPFLen)
 		}
 	case "NIF":
-		if len([]rune(valor)) > officialNIFMax {
-			return fmt.Errorf("%w: %s (%s) excede %d caracteres", ErrInvalidDPS, campo, tipo, officialNIFMax)
+		// TSNIF: minLength=1, maxLength=40. O minimo ja e barrado antes pelo
+		// campo obrigatorio; aqui ele e reafirmado para o validador ser fechado
+		// por si so.
+		if tamanho := len([]rune(valor)); tamanho < 1 || tamanho > officialNIFMax {
+			return fmt.Errorf("%w: %s (%s) deve ter de 1 a %d caracteres", ErrInvalidDPS, campo, tipo, officialNIFMax)
 		}
 	case "cNaoNIF":
 		if !officialNaoNIFCodes[valor] {

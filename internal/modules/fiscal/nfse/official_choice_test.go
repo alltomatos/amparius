@@ -153,6 +153,56 @@ func TestBuildDPSOficialChoiceRejeitaDocumentoInvalido(t *testing.T) {
 	}
 }
 
+// Regressao: o tipo com espacos nas bordas precisa ser normalizado antes de
+// validar e serializar. Antes, " CNPJ " passava no trim da validacao mas virava
+// o elemento "< CNPJ >" (nome invalido), quebrando o XML. Cobre os tres grupos.
+func TestBuildDPSOficialChoiceNormalizaTipoComEspacos(t *testing.T) {
+	validador := novoValidadorOficial(t)
+	tipos := []struct {
+		nome, bruto, esperado, valor string
+	}{
+		{"CNPJ", " \tCNPJ\n ", "CNPJ", "99999999999999"},
+		{"CPF", "  CPF  ", "CPF", "99999999999"},
+		{"NIF", "\tNIF ", "NIF", "SINT-NIF-0001"},
+		{"cNaoNIF", " cNaoNIF\n", "cNaoNIF", "1"},
+	}
+	for _, caso := range tipos {
+		t.Run(caso.nome, func(t *testing.T) {
+			input := carregarFixtureOficialArquivo(t, "doc-cnpj.json")
+			input.Prestador = nfse.OfficialPrestador{
+				DocumentoTipo: caso.bruto,
+				Documento:     caso.valor,
+				OpSimpNac:     input.Prestador.OpSimpNac,
+				RegEspTrib:    input.Prestador.RegEspTrib,
+			}
+			input.Tomador = &nfse.OfficialPessoa{DocumentoTipo: caso.bruto, Documento: caso.valor, Nome: "Tomador sintetico"}
+			input.Intermediario = &nfse.OfficialPessoa{DocumentoTipo: caso.bruto, Documento: caso.valor, Nome: "Intermediario sintetico"}
+
+			dps, err := nfse.BuildDPSOficial(context.Background(), input)
+			if err != nil {
+				t.Fatalf("tipo %q com espacos deveria ser normalizado e aceito: %v", caso.bruto, err)
+			}
+			xml := string(dps.XML)
+			if ocorrencias := strings.Count(xml, "<"+caso.esperado+">"); ocorrencias != 3 {
+				t.Fatalf("esperava 3 elementos <%s> (um por grupo), achei %d: %s", caso.esperado, ocorrencias, xml)
+			}
+			if strings.Contains(xml, "< "+caso.esperado) || strings.Contains(xml, "<"+caso.esperado+" ") {
+				t.Fatalf("XML gerou nome de elemento com espacos: %s", xml)
+			}
+
+			resultado, err := validador.ValidateDPS(context.Background(), dps)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, problema := range resultado.Errors {
+				if !strings.Contains(problema, "serie") {
+					t.Fatalf("tipo normalizado %s gerou erro alem do bloqueio de serie: %v", caso.esperado, resultado.Errors)
+				}
+			}
+		})
+	}
+}
+
 // Ramo opcional continua exigindo documento: uma pessoa com tipo valido mas
 // sem valor nao pode passar como se o choice estivesse preenchido.
 func TestBuildDPSOficialChoiceRejeitaDocumentoVazio(t *testing.T) {

@@ -25,13 +25,13 @@ Data: 2026-11-23 Â· Escopo: builder oficial DPS v1.01, XSD v1.01, integraÃ§�
 
 Comando:
 ```
-go test -run '^$' -bench 'BenchmarkBuildDPSOficialValidaContraXSD' -benchmem ./internal/modules/fiscal/nfse/...
+go test -run '^$' -bench 'BenchmarkBuildDPSOficialDiagnostica' -benchmem ./internal/modules/fiscal/nfse/...
 ```
-Saida (2026-11-23, Windows/amd64, Intel i7-9750H 2.60GHz, Go 1.24):
+Saida (2026-11-24, Windows/amd64, Intel i7-9750H 2.60GHz, Go 1.24):
 ```
-BenchmarkBuildDPSOficialValidaContraXSD-12     13455     88101 ns/op   29009 B/op   462 allocs/op
+BenchmarkBuildDPSOficialDiagnostica-12         13590     88851 ns/op   29113 B/op   464 allocs/op
 ```
-Interpretacao: 88.101 ns/op = 0,088 ms/item (media), abaixo da meta < 100 ms/item. testing.B reporta media; a medicao estatistica anterior (p95 0,53 ms) nao e reproduzivel via go test e fica como historico.
+Interpretacao: 88.851 ns/op = 0,089 ms/item (media), abaixo da meta < 100 ms/item. testing.B reporta media; a medicao estatistica anterior (p95 0,53 ms) nao e reproduzivel via go test e fica como historico.
 
 ## Benchmark p95 (historico nao reproduzivel)
 

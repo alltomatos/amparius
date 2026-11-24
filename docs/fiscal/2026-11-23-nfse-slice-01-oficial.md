@@ -49,6 +49,12 @@ O builder valida documento e `xNome` obrigatório nesses grupos conforme o
 `infoCompl` vazio antes da validação XSD. O XML opcional passa pelo mesmo
 `XSDValidator` local v1.01.
 
+`serv/cServ/xDescServ` usa o tipo oficial `TSDesc2000`, derivado de
+`TSStringComQuebraDeLinha`. O builder agora falha fechado fora do intervalo de
+1 a 2000 runas, e o teste também comprova no `XSDValidator` local os limites de
+1 e 2000, texto Unicode, quebra de linha e a rejeição de 2001 runas. O limite
+é de forma do schema; nenhuma regra fiscal, alíquota ou `cTribNac` é inferida.
+
 ## Validador XSD — paridade e bloqueio do schema
 
 Para validar a DPS oficial, `validator.go` trata corretamente `xs:choice`
@@ -67,6 +73,7 @@ detecção de estrutura inválida continuam verdes.
 | `TestBuildDPSOficialComRamosOpcionaisPreservaGapDeSerie` | XML opcional construido; bloqueado pelo mesmo facet (`toma` + `interm` + `infoCompl`) |
 | `TestBuildDPSOficialRejeitaRamosOpcionaisIncompletos` | 4 negativos fail-closed para grupos opcionais |
 | `TestBuildDPSOficialValidaNomeDeTomaEIntermNosLimitesXSD` | `toma`/`interm`: 1 e 300 aceitos; vazio e 301 rejeitados |
+| `TestBuildDPSOficialValidaXDescServNosLimitesTSDesc2000` | `xDescServ`: 1 e 2000 runas aceitos; Unicode/quebra de linha cobertos; vazio e 2001 rejeitados |
 | `TestBuildDPSOficialDetectaSerieIncompativelComXSD` | bloqueia `serie=1` com diagnostico do facet |
 | `TestBuildDPSOficialDeterministico` | mesmo XML + mesmo hash |
 | `TestBuildDPSOficialRejeitaEntradaIncompleta` | 22 negativos (21 campos obrigatórios + contexto cancelado) |

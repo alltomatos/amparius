@@ -140,6 +140,48 @@ func TestBuildDPSOficialValidaNomeDeTomaEIntermNosLimitesXSD(t *testing.T) {
 	}
 }
 
+func TestBuildDPSOficialValidaXDescServNosLimitesTSDesc2000(t *testing.T) {
+	validador := novoValidadorOficial(t)
+	casos := []struct {
+		nome      string
+		descricao string
+		aceita    bool
+	}{
+		{"um rune", "A", true},
+		{"2000 runas", strings.Repeat("A", 2000), true},
+		{"2001 runas", strings.Repeat("A", 2001), false},
+		{"2000 runas unicode", strings.Repeat("á", 2000), true},
+		{"2001 runas unicode", strings.Repeat("á", 2001), false},
+		{"quebra de linha", "linha 1\nlinha 2", true},
+		{"vazio", "", false},
+	}
+
+	for _, caso := range casos {
+		t.Run(caso.nome, func(t *testing.T) {
+			input := carregarFixtureOficial(t)
+			input.Servico.XDescServ = caso.descricao
+			dps, err := nfse.BuildDPSOficial(context.Background(), input)
+			if !caso.aceita {
+				if !errors.Is(err, nfse.ErrInvalidDPS) {
+					t.Fatalf("xDescServ com %d runas deveria falhar com ErrInvalidDPS: %v", len([]rune(caso.descricao)), err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("xDescServ com %d runas deveria ser aceito: %v", len([]rune(caso.descricao)), err)
+			}
+
+			// Neutraliza somente o bloqueio conhecido de serie; o caso continua
+			// provando o facet TSDesc2000 no XSD v1.01 local.
+			xml := strings.Replace(string(dps.XML), "<serie>1</serie>", "<serie>^1$</serie>", 1)
+			resultado, err := validador.ValidateDPS(context.Background(), nfse.DPS{XML: []byte(xml), IDDps: dps.IDDps})
+			if err != nil || !resultado.Valid {
+				t.Fatalf("xDescServ com %d runas deveria passar no XSD: %+v err=%v", len([]rune(caso.descricao)), resultado, err)
+			}
+		})
+	}
+}
+
 func nomeLimite(nome string) string {
 	switch len([]rune(nome)) {
 	case 0:

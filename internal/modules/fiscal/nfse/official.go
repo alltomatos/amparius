@@ -89,10 +89,12 @@ var officialDocumentKinds = map[string]bool{
 // prest (TCInfoPrestador) e toma/interm (TCInfoPessoa). Nao ha regra fiscal
 // aqui: apenas os facets do pacote XSD oficial v1.01.
 const (
-	officialCNPJLen = 14
-	officialCPFLen  = 11
-	officialNIFMax  = 40
-	officialNomeMax = 300
+	officialCNPJLen     = 14
+	officialCPFLen      = 11
+	officialNIFMax      = 40
+	officialNomeMax     = 300
+	officialDesc2000Min = 1
+	officialDesc2000Max = 2000
 )
 
 // officialNaoNIFCodes e a enumeracao de TSCodNaoNIF (motivo da nao informacao
@@ -234,6 +236,9 @@ func validateOfficialInput(input OfficialDPSInput) error {
 			strings.TrimSpace(input.Servico.InfoCompl.XInfComp) == "" {
 			return fmt.Errorf("%w: infoCompl sem nenhum campo", ErrInvalidDPS)
 		}
+	}
+	if tamanho := len([]rune(input.Servico.XDescServ)); tamanho < officialDesc2000Min || tamanho > officialDesc2000Max {
+		return fmt.Errorf("%w: serv.xDescServ deve ter de %d a %d caracteres", ErrInvalidDPS, officialDesc2000Min, officialDesc2000Max)
 	}
 	return nil
 }

@@ -239,6 +239,103 @@ estão cobertos, mas consentimento, base legal e retenção definida seguem fora
 escopo. Nenhuma política jurídica foi inferida ou criada, e o slice não registra
 consentimento nem prazo de guarda.
 
+### Catálogo dev-only
+
+Com o mesmo opt-in (`APP_ENV=development` e `ENABLE_DEV_ONBOARDING=true`), a API
+registra a fatia vertical mínima de catálogo:
+
+- `POST /_dev/catalog/items`, `GET /_dev/catalog/items` e
+  `GET /_dev/catalog/items/{id}`;
+- `POST /_dev/catalog/price-lists`, `GET /_dev/catalog/price-lists` e
+  `GET /_dev/catalog/price-lists/{id}`;
+- `POST /_dev/catalog/prices`, `GET /_dev/catalog/prices` e
+  `GET /_dev/catalog/prices/{id}`.
+
+Sem o opt-in nenhuma dessas rotas é registrada e todas respondem `404`. A fatia
+usa as tabelas já existentes em `0002_party_catalog.sql`; `0002` não foi
+editada e `catalog.tax_classification` não é lida nem escrita.
+
+Tenant e contrato. O tenant vem somente do cabeçalho
+`X-Amparius-Development-Tenant-ID`, validado como UUID não nulo e injetado no
+contexto antes do repositório; ausente ou inválido responde `400`. Esse
+cabeçalho é checado antes do despacho por rota, então falta ou formato inválido
+devolve `400` mesmo quando o método ou o recurso também estariam errados.
+Nenhuma rota aceita `tenant_id` no corpo: o corpo é exatamente um objeto JSON,
+limitado a 16 KiB, e campos desconhecidos são rejeitados com `400`, assim como
+JSON inválido ou mais de um JSON. As respostas deste handler, inclusive erros,
+têm `Content-Type: application/json`, `X-Content-Type-Options: nosniff`,
+`X-Amparius-Development-Only: true` e `Cache-Control: no-store`; não há
+autenticação de produção, e a requisição não precisa declarar
+`Content-Type`.
+
+Itens. O POST exige `kind`, `name` e `unit`; `active` é opcional e assume
+`true`. `kind` e `unit` são validados contra os domínios ativos
+`catalog_item_kind` e `catalog_unit` de `identity.domain_value` na mesma
+transação tenant-scoped da escrita; valores fora do domínio respondem `400` e o
+trigger `catalog_item_validate_domains` continua como rede de segurança. `name`
+é aparado e limitado a 200 runas — limite de transporte, não regra legal. O POST
+devolve `201` com `Location: /_dev/catalog/items/{id}` e envelope
+`{"status":"ok","item":{...}}`.
+
+Listas de preços. O POST exige `name` (até 200 runas) e `valid_from` em ISO
+date (`AAAA-MM-DD`); devolve `201` com `Location:
+/_dev/catalog/price-lists/{id}` e envelope `{"status":"ok","price_list":{...}}`.
+
+Preços. O POST exige `item_id` e `list_id` (UUIDs) e `valid_from` em ISO date;
+`valid_to` é opcional e, quando presente, também precisa estar em ISO date e não
+pode ser anterior a `valid_from`; formato inválido responde `400`.
+`item_id` e `list_id` precisam existir no mesmo tenant; referência de outro
+tenant ou inexistente responde `404` sem revelar qual caso ocorreu, e a FK
+composta por tenant permanece como rede de segurança. `amount_cents` é
+obrigatório e aceita somente literal JSON inteiro: string, decimal, expoente,
+`null` e valor negativo respondem `400`. O valor é gravado como
+`NUMERIC(18,2)` a partir de centavos `int64`, sem `float`; a resposta devolve
+`amount_cents` como inteiro e `valid_to` como `null` quando ausente. O POST
+devolve `201` com `Location: /_dev/catalog/prices/{id}` e envelope
+`{"status":"ok","price":{...}}`.
+
+Listagens. As três listagens aceitam `?limit=` inteiro positivo, com padrão 50
+e teto efetivo de 100 linhas no repositório; `limit` ausente usa o padrão e
+valor não inteiro ou não positivo responde `400`. Listas vazias serializam como
+`[]`, nunca `null`.
+
+Códigos. `400` para cabeçalho, JSON, campo, domínio, data, valor ou `limit`
+inválidos; `404` para registro inexistente ou de outro tenant; `405` com
+`Allow` para método não permitido; `500` para falha inesperada; `503` quando o
+handler recebe serviço nulo — defesa do handler, já que o binário da API sempre
+injeta o repositório. Apenas criação e leitura existem: não há `PATCH` nem
+`DELETE` nesta fatia.
+
+Migration 0014. `migrations/0014_catalog_dev_grants.sql` concede ao papel
+`amparius_app` `USAGE` no schema `catalog` e `SELECT/INSERT` nas três tabelas,
+sem `UPDATE`/`DELETE`, porque a fatia não expõe alteração nem remoção. O
+`SELECT` em `identity.domain_value`, exigido pela validação e pelo trigger na
+inserção, já vem de `0013_party_family_link_grants.sql`; o `USAGE` em `party`,
+exigido pela chamada `party.assert_domain_value` do trigger, já vem de
+`0010_party_social_name.sql`. Nenhum dos dois é repetido em 0014 para que o
+Down não revogue permissão de outra fatia. RLS e políticas de `0002` não foram
+alteradas.
+
+Teste. O teste de integração usa uma role temporária
+`NOSUPERUSER/NOBYPASSRLS` com os grants da 0014 mais o mínimo que o trigger e as
+queries exigem (`SELECT` em `identity.domain_value`, `EXECUTE` em
+`public.uuidv7()` e `USAGE` em `party`), valida por
+`has_schema_privilege`/`has_table_privilege`/`has_function_privilege` que não há
+`UPDATE`/`DELETE` nem escrita em `identity.domain_value`, prova criação/consulta,
+isolamento cruzado entre tenants, rejeição de `tenant_id` no corpo e de
+`amount_cents` decimal, e confirma o cleanup administrativo com zero tenants
+residuais.
+
+Sem idempotência. Não há `Idempotency-Key`, chave persistida nem unicidade
+natural além de `(tenant_id, id)`: cada POST válido cria um novo registro e a
+repetição não é deduplicada. A fatia acompanha o contrato dev existente e não
+inventa idempotência sem coluna ou contrato no schema.
+
+RF-010 parcial. Esta entrega cobre apenas produto/serviço, unidade, lista de
+preços e vigência. `NCM`, `CST`, `cClassTrib`, código `LC 116` e a tabela
+`catalog.tax_classification` permanecem fora do escopo e o RF-010 continua
+**parcial**; nenhum código ou alíquota fiscal foi inferido, criado ou copiado.
+
 `GET /readyz` continua um stub nesta fase: responde sucesso sem verificar
 PostgreSQL, Redis, RabbitMQ ou MinIO.
 

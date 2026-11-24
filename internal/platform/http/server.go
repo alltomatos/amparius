@@ -26,6 +26,9 @@ type Options struct {
 	// DevelopmentFamilyLinks é o handler de POST /_dev/family-links e
 	// GET /_dev/family-links/{id}.
 	DevelopmentFamilyLinks http.Handler
+	// DevelopmentCatalog é o handler das rotas dev-only de catálogo:
+	// itens, listas de preços e preços.
+	DevelopmentCatalog http.Handler
 }
 
 // New constrói o servidor com as dependências injetadas.
@@ -74,6 +77,14 @@ func (s *Server) routes(options Options) {
 	if options.DevelopmentMode && options.DevelopmentFamilyLinks != nil {
 		s.mux.Handle("/_dev/family-links", options.DevelopmentFamilyLinks)
 		s.mux.Handle("/_dev/family-links/{id}", options.DevelopmentFamilyLinks)
+	}
+	if options.DevelopmentMode && options.DevelopmentCatalog != nil {
+		s.mux.Handle("/_dev/catalog/items", options.DevelopmentCatalog)
+		s.mux.Handle("/_dev/catalog/items/{id}", options.DevelopmentCatalog)
+		s.mux.Handle("/_dev/catalog/price-lists", options.DevelopmentCatalog)
+		s.mux.Handle("/_dev/catalog/price-lists/{id}", options.DevelopmentCatalog)
+		s.mux.Handle("/_dev/catalog/prices", options.DevelopmentCatalog)
+		s.mux.Handle("/_dev/catalog/prices/{id}", options.DevelopmentCatalog)
 	}
 }
 

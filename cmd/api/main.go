@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/alltomatos/amparius/internal/modules/catalog"
 	"github.com/alltomatos/amparius/internal/modules/identity"
 	"github.com/alltomatos/amparius/internal/modules/party"
 	"github.com/alltomatos/amparius/internal/platform/config"
@@ -46,6 +47,7 @@ func run() error {
 	var partiesHandler http.Handler
 	var deceasedHandler http.Handler
 	var familyLinksHandler http.Handler
+	var catalogHandler http.Handler
 	if devOnboardingEnabled {
 		database, err := db.New(ctx, cfg.PostgresDSN)
 		if err != nil {
@@ -66,6 +68,12 @@ func run() error {
 		partiesHandler = party.NewDevelopmentHTTPHandler(partyRepository)
 		deceasedHandler = party.NewDevelopmentDeceasedHTTPHandler(partyRepository)
 		familyLinksHandler = party.NewDevelopmentFamilyLinkHTTPHandler(partyRepository)
+
+		catalogRepository, err := catalog.NewRepository(database)
+		if err != nil {
+			return fmt.Errorf("criar repositório de catálogo: %w", err)
+		}
+		catalogHandler = catalog.NewDevelopmentHTTPHandler(catalogRepository)
 	}
 
 	server := &http.Server{
@@ -76,6 +84,7 @@ func run() error {
 			DevelopmentParties:     partiesHandler,
 			DevelopmentDeceased:    deceasedHandler,
 			DevelopmentFamilyLinks: familyLinksHandler,
+			DevelopmentCatalog:     catalogHandler,
 		}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

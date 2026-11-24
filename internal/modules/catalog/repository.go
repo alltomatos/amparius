@@ -19,9 +19,39 @@ const (
 	UnitHour    = "hour"
 	UnitMonth   = "month"
 	UnitService = "service"
+
+	// DefaultListLimit e MaxListLimit limitam as listagens dev-only. O
+	// repositório nunca devolve mais que MaxListLimit linhas.
+	DefaultListLimit = 50
+	MaxListLimit     = 100
 )
 
-var ErrNotFound = errors.New("registro de catálogo não encontrado")
+var (
+	ErrNotFound = errors.New("registro de catálogo não encontrado")
+	// ErrItemNotFound cobre item inexistente e item de outro tenant, sem
+	// revelar qual caso ocorreu.
+	ErrItemNotFound = errors.New("item de catálogo não encontrado")
+	// ErrPriceListNotFound cobre lista inexistente e lista de outro tenant.
+	ErrPriceListNotFound = errors.New("lista de preços não encontrada")
+	// ErrInvalidKind indica kind fora do domínio ativo catalog_item_kind.
+	ErrInvalidKind = errors.New("kind inválido para o catálogo")
+	// ErrInvalidUnit indica unit fora do domínio ativo catalog_unit.
+	ErrInvalidUnit = errors.New("unidade inválida para o catálogo")
+	// ErrInvalidAmount indica valor monetário negativo em centavos.
+	ErrInvalidAmount = errors.New("valor monetário não pode ser negativo")
+	// ErrInvalidName indica nome vazio depois de aparado.
+	ErrInvalidName = errors.New("nome do catálogo é obrigatório")
+)
+
+func clampListLimit(limit int) int {
+	if limit <= 0 {
+		return DefaultListLimit
+	}
+	if limit > MaxListLimit {
+		return MaxListLimit
+	}
+	return limit
+}
 
 type CatalogItem struct {
 	ID, TenantID     uuid.UUID
@@ -55,9 +85,28 @@ func (r *Repository) CreateItem(ctx context.Context, item CatalogItem) (CatalogI
 		return CatalogItem{}, errors.New("tenant do item diverge do contexto")
 	}
 	item.TenantID = tenantID
+	item.Kind = strings.TrimSpace(item.Kind)
+	item.Unit = strings.TrimSpace(item.Unit)
+	item.Name = strings.TrimSpace(item.Name)
+	if item.Name == "" {
+		return CatalogItem{}, ErrInvalidName
+	}
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		if ok, err := domainValueExists(ctx, tx, "catalog_item_kind", item.Kind); err != nil {
+			return err
+		} else if !ok {
+			return ErrInvalidKind
+		}
+		if ok, err := domainValueExists(ctx, tx, "catalog_unit", item.Unit); err != nil {
+			return err
+		} else if !ok {
+			return ErrInvalidUnit
+		}
 		return tx.QueryRow(ctx, `INSERT INTO catalog.catalog_item (tenant_id, kind, name, unit, active) VALUES ($1,$2,$3,$4,$5) RETURNING id`, tenantID, item.Kind, item.Name, item.Unit, item.Active).Scan(&item.ID)
 	})
+	if errors.Is(err, ErrInvalidKind) || errors.Is(err, ErrInvalidUnit) {
+		return CatalogItem{}, err
+	}
 	if err != nil {
 		return CatalogItem{}, fmt.Errorf("criar item: %w", err)
 	}
@@ -87,9 +136,7 @@ func (r *Repository) ListItems(ctx context.Context, limit int) ([]CatalogItem, e
 	if err != nil {
 		return nil, err
 	}
-	if limit <= 0 || limit > 1000 {
-		limit = 100
-	}
+	limit = clampListLimit(limit)
 	var items []CatalogItem
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT id, tenant_id, kind, name, unit, active FROM catalog.catalog_item WHERE tenant_id=$1 ORDER BY id LIMIT $2`, tenantID, limit)
@@ -160,6 +207,10 @@ func (r *Repository) CreatePriceList(ctx context.Context, list PriceList) (Price
 	if list.TenantID != uuid.Nil && list.TenantID != tenantID {
 		return PriceList{}, errors.New("tenant da lista diverge do contexto")
 	}
+	list.Name = strings.TrimSpace(list.Name)
+	if list.Name == "" {
+		return PriceList{}, ErrInvalidName
+	}
 	list.TenantID = tenantID
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `INSERT INTO catalog.price_list (tenant_id, name, valid_from) VALUES ($1,$2,$3) RETURNING id`, tenantID, list.Name, list.ValidFrom).Scan(&list.ID)
@@ -193,9 +244,7 @@ func (r *Repository) ListPriceLists(ctx context.Context, limit int) ([]PriceList
 	if err != nil {
 		return nil, err
 	}
-	if limit <= 0 || limit > 1000 {
-		limit = 100
-	}
+	limit = clampListLimit(limit)
 	var lists []PriceList
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT id, tenant_id, name, valid_from::text FROM catalog.price_list WHERE tenant_id=$1 ORDER BY id LIMIT $2`, tenantID, limit)
@@ -226,11 +275,37 @@ func (r *Repository) CreatePrice(ctx context.Context, price Price) (Price, error
 	if price.TenantID != uuid.Nil && price.TenantID != tenantID {
 		return Price{}, errors.New("tenant do preço diverge do contexto")
 	}
+	if price.AmountCents < 0 {
+		return Price{}, ErrInvalidAmount
+	}
 	price.TenantID = tenantID
 	amount := centsToDecimal(price.AmountCents)
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		if price.ItemID == uuid.Nil {
+			return ErrItemNotFound
+		}
+		itemExists, err := catalogItemExists(ctx, tx, tenantID, price.ItemID)
+		if err != nil {
+			return err
+		}
+		if !itemExists {
+			return ErrItemNotFound
+		}
+		if price.ListID == uuid.Nil {
+			return ErrPriceListNotFound
+		}
+		listExists, err := priceListExists(ctx, tx, tenantID, price.ListID)
+		if err != nil {
+			return err
+		}
+		if !listExists {
+			return ErrPriceListNotFound
+		}
 		return tx.QueryRow(ctx, `INSERT INTO catalog.price (tenant_id, item_id, list_id, amount, valid_from, valid_to) VALUES ($1,$2,$3,$4::numeric,$5,$6) RETURNING id`, tenantID, price.ItemID, price.ListID, amount, price.ValidFrom, nilIfEmpty(price.ValidTo)).Scan(&price.ID)
 	})
+	if errors.Is(err, ErrItemNotFound) || errors.Is(err, ErrPriceListNotFound) {
+		return Price{}, err
+	}
 	if err != nil {
 		return Price{}, fmt.Errorf("criar preço: %w", err)
 	}
@@ -281,14 +356,49 @@ func (r *Repository) GetPriceByID(ctx context.Context, id uuid.UUID) (Price, err
 	return price, nil
 }
 
+// domainValueExists consulta o domínio global (somente leitura) na mesma
+// transação tenant-scoped da escrita. O trigger catalog_item_validate_domains
+// continua como rede de segurança no banco.
+func domainValueExists(ctx context.Context, tx pgx.Tx, domainCode, code string) (bool, error) {
+	var exists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM identity.domain_value
+			WHERE domain_code = $1 AND code = $2 AND active
+		)`, domainCode, code).Scan(&exists); err != nil {
+		return false, fmt.Errorf("validar domínio %s: %w", domainCode, err)
+	}
+	return exists, nil
+}
+
+func catalogItemExists(ctx context.Context, tx pgx.Tx, tenantID, itemID uuid.UUID) (bool, error) {
+	var exists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM catalog.catalog_item WHERE tenant_id = $1 AND id = $2
+		)`, tenantID, itemID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("validar item do preço: %w", err)
+	}
+	return exists, nil
+}
+
+func priceListExists(ctx context.Context, tx pgx.Tx, tenantID, listID uuid.UUID) (bool, error) {
+	var exists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM catalog.price_list WHERE tenant_id = $1 AND id = $2
+		)`, tenantID, listID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("validar lista do preço: %w", err)
+	}
+	return exists, nil
+}
+
 func (r *Repository) ListPrices(ctx context.Context, limit int) ([]Price, error) {
 	tenantID, err := db.TenantFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if limit <= 0 || limit > 1000 {
-		limit = 100
-	}
+	limit = clampListLimit(limit)
 	var prices []Price
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT id,tenant_id,item_id,list_id,amount::text,valid_from::text,COALESCE(valid_to::text,'') FROM catalog.price WHERE tenant_id=$1 ORDER BY id LIMIT $2`, tenantID, limit)

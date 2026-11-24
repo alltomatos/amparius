@@ -197,3 +197,48 @@ usa `(tenant_id, idempotency_key)` como chave de replay e devolve a tentativa
 original sem atualizar a resposta. O histórico pode ser consultado por
 documento/competência e as respostas são apenas corpo, tipo, protocolo e hash;
 segredos não fazem parte do contrato.
+
+### Outbox transacional e dispatch
+
+`migrations/0007_outbox.sql` cria o schema `outbox` com `outbox.event` e a
+trilha append-only `outbox.event_attempt`. O evento carrega `tenant_id`,
+`aggregate_type`, `aggregate_id`, `event_type` (`<modulo>.<entidade>.<acao>`),
+`event_version`, `payload jsonb` objeto, `idempotency_key`, `status`,
+`attempts`, `max_attempts`, `next_attempt_at`, `last_error`, `created_at` e
+`processed_at`. Os estados são domínios em `identity.domain_value`
+(`outbox_event_status`, `outbox_attempt_outcome`), sem enum PostgreSQL. O `id`
+é `uuidv7` e todo tempo é `timestamptz`.
+
+A chave `(tenant_id, idempotency_key)` é única; reenviar a mesma chave com o
+mesmo conteúdo devolve o evento original, e com conteúdo diferente falha com
+`outbox.ErrIdempotencyConflict`. Um trigger rejeita `DELETE`, congela os campos
+de identidade e só aceita `pending -> processing` e
+`processing -> processing|processed|pending|failed`; `attempts` avança uma
+unidade por claim. `outbox.event_attempt` registra `claimed`, `succeeded`,
+`retry` e `failed` com unicidade por tentativa/resultado e também é append-only.
+
+O claim é por tenant e roda sob RLS: um único `UPDATE ... FROM (SELECT ... FOR
+UPDATE SKIP LOCKED)` incrementa `attempts`, marca `processing` e grava o lease
+em `next_attempt_at`. A única leitura cross-tenant do projeto é
+`outbox.pending_tenants(integer)`, função `SECURITY DEFINER` que devolve apenas
+`tenant_id` de quem tem evento elegível; ela é executada por
+`db.WithSystemTx`, a transação sem tenant reservada ao dispatcher. Nenhum
+payload atravessa essa função.
+
+`internal/modules/outbox` expõe `Append`, `GetByID`, `GetByIdempotencyKey`,
+`Claim`, `Succeed`, `Fail`, `ReapExpired` e `PendingTenants`, todos com
+`context.Context` primeiro e SQL explícito. `Fail` persiste `last_error`
+(limitado a 1000 runes), aplica backoff exponencial de 2s a 1h e, ao atingir
+`max_attempts`, fecha o evento como `failed`; `ReapExpired` cobre worker que
+morreu depois do último claim. O `Dispatcher` recebe um `Handler`, drena cada
+tenant em sua própria transação e nunca registra payload em log. Ele não é
+ligado ao `cmd/worker` neste slice porque ainda não existe handler de negócio:
+marcar eventos como processados sem efeito seria pior que não consumir.
+
+As permissões são explícitas: `amparius_app` recebe `SELECT/INSERT/UPDATE` em
+`outbox.event`, `SELECT/INSERT` em `outbox.event_attempt` e `EXECUTE` apenas em
+`outbox.pending_tenants`. O papel não tem `SUPERUSER` nem `BYPASSRLS`; o teste
+de integração usa `AMPA_TEST_POSTGRES_DSN` com `amparius_app` e
+`AMPA_TEST_POSTGRES_ADMIN_DSN` apenas no `t.Cleanup`. Retenção e expurgo de
+eventos processados ficam para um slice próprio, com política de auditoria e
+LGPD definida.

@@ -394,6 +394,7 @@ erDiagram
   RELAY_NODE ||--o{ SYNC_OPERATION : produces
   SYNC_OPERATION ||--o| SYNC_CONFLICT : may_raise
   TENANT ||--o{ OUTBOX_EVENT : publishes
+  OUTBOX_EVENT ||--o{ OUTBOX_EVENT_ATTEMPT : attempts
   TENANT ||--o{ AI_AGENT : configures
   AI_AGENT ||--o{ AI_RUN : executes
   AI_RUN ||--o{ AI_TOOL_CALL : calls
@@ -422,9 +423,26 @@ erDiagram
                   text status }
   OUTBOX_EVENT { uuid id PK
                  uuid tenant_id FK
-                 text topic
+                 text aggregate_type
+                 uuid aggregate_id
+                 text event_type
+                 integer event_version
                  jsonb payload
-                 timestamptz published_at }
+                 text idempotency_key
+                 text status
+                 integer attempts
+                 integer max_attempts
+                 timestamptz next_attempt_at
+                 text last_error
+                 timestamptz created_at
+                 timestamptz processed_at }
+  OUTBOX_EVENT_ATTEMPT { uuid id PK
+                         uuid tenant_id FK
+                         uuid event_id FK
+                         integer attempt
+                         text outcome
+                         text error
+                         timestamptz recorded_at }
   AI_AGENT { uuid id PK
              uuid tenant_id FK
              text name

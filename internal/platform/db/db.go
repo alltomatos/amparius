@@ -60,6 +60,26 @@ func NewFromPool(pool *pgxpool.Pool) (*DB, error) {
 
 func (db *DB) Close() { db.pool.Close() }
 
+// WithSystemTx abre uma transação sem app.tenant_id.
+//
+// Existe apenas para operações explicitamente cross-tenant da plataforma, como
+// o dispatcher da outbox consultando a função que devolve somente tenant_id.
+// Dados de módulo continuam obrigados a passar por WithTenantTx.
+func (db *DB) WithSystemTx(ctx context.Context, fn func(context.Context, pgx.Tx) error) error {
+	tx, err := db.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("iniciar transação de sistema: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := fn(ctx, tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("confirmar transação de sistema: %w", err)
+	}
+	return nil
+}
+
 func (db *DB) WithTenantTx(ctx context.Context, fn func(context.Context, pgx.Tx) error) error {
 	tenantID, err := TenantFromContext(ctx)
 	if err != nil {

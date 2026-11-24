@@ -25,9 +25,13 @@ O contrato atual do builder oficial não possui o campo:
 
 Há três tensões que precisam ficar explícitas antes de qualquer implementação:
 
-1. O ADR 0010 define que o adapter não calcula tributo, que o builder recebe
-   valores já resolvidos por `tax_calc`/`fiscal_config` e que `cTribMun` é gate
-   da fatia 02. Modelar o campo não pode fechar esse gate por conta própria.
+1. O ADR 0010 define que o adapter não calcula tributo e recebe a DPS já
+   montada/assinada. Os documentos do slice classificam `cTribMun` entre os
+   gates da fatia 02, dentro da classe de gates de fontes oficiais do ADR 0010
+   §6 (`docs/fiscal/2026-11-23-nfse-slice-01-xsd-gap.md` e
+   `docs/fiscal/2026-11-23-nfse-slice-01-oficial.md`). O builder, por sua vez,
+   serializa e valida a forma do contrato; modelar o campo não fecha esse gate
+   fiscal por conta própria.
 2. O DER registra `TAX_RULE.service_code` e `TAX_RULE.municipality_code`, mas
    não define uma propriedade chamada `cTribMun` nem o contrato de sua
    resolução (`docs/data/DER.md:219-246`). Adicionar um campo ao builder não

@@ -62,6 +62,105 @@ Fase 1 em andamento: `cmd/api` + `cmd/worker` (Go, health), `relay/` +
 acesso Go a `party` e `catalog` com tenant obrigatório por transação e teste
 real de isolamento PostgreSQL.
 
+### Onboarding inicial de identidade
+
+`migrations/0009_identity_onboarding.sql` adiciona `identity.app_user`,
+`identity.role`, `identity.user_role` e `identity.onboarding_request`, todos
+com `tenant_id` quando são tenant-scoped, índices iniciados por `tenant_id` e
+RLS. O repositório Go fica em `internal/modules/identity`.
+
+O método `identity.Repository.Onboard` não recebe `tenant_id`: chama a função
+transacional `identity.create_onboarding`, que gera o UUID, cria o grupo
+econômico, a empresa, o estabelecimento e o owner. A chave de onboarding é
+idempotente e o mesmo valor com payload diferente falha. A função é um
+bootstrap interno pré-autenticação; o usuário criado fica `pending_auth` e
+não há senha, sessão, MFA ou vínculo OIDC neste slice. Os dados de
+`DevelopmentRequest` (CNPJ e email `.invalid`) são sintéticos.
+
+O `cmd/api` registra `POST /_dev/onboarding` somente quando
+`APP_ENV=development` e `ENABLE_DEV_ONBOARDING=true`. Sem o opt-in, a API não
+abre conexão PostgreSQL no boot por causa desta rota e mantém somente as rotas
+base. Essa rota não tem autenticação de produção, exige `Idempotency-Key` e aceita
+somente sobreposições conhecidas da carga sintética no corpo JSON; `tenant_id`,
+`onboarding_key` e campos desconhecidos são rejeitados. Cidade, estado e CEP
+continuam fixos em Fortaleza/CE. A rota não deve ser publicada nem habilitada
+em ambiente de produção.
+
+Com o mesmo opt-in, `cmd/api` também registra `POST /_dev/parties` e
+`GET /_dev/parties/{id}`. O tenant vem exclusivamente do cabeçalho
+`X-Amparius-Development-Tenant-ID`, validado como UUID e injetado no contexto
+antes do repositório `party`; `tenant_id` no corpo e campos desconhecidos são
+rejeitados. Esta fatia aceita somente `kind=person`, com `name` obrigatório,
+`document` opcional e `status` restrito a `active`/`inactive` (padrão
+`active`). Toda resposta carrega `X-Amparius-Development-Only: true`. Não há
+autenticação de produção, então as rotas não devem ser publicadas.
+
+O cadastro de pessoa aceita `social_name` opcional (ADR 0013). O repositório
+persiste o valor em `party.person.social_name`; vazio ou só espaços é
+normalizado para ausência (`NULL`) e nunca copia o nome civil. `name` continua
+o nome civil e a resposta adiciona, sem remover campos, `civil_name`,
+`social_name` (nulo quando ausente) e `display_name` (nome social não vazio
+para pessoa; nome civil nos demais casos). Nenhum endpoint aceita
+`tenant_id`; o nome social não é usado em identificação, documento ou regra
+fiscal.
+
+`PATCH /_dev/parties/{id}` altera somente `social_name` da pessoa: exige o
+campo no corpo (texto ou `null`), rejeita `tenant_id` e campos desconhecidos,
+recusa pessoa jurídica com `409` e preserva nome civil, documento e
+identificadores. `null`, vazio ou só espaços limpam para `NULL`. A alteração
+avança `version` e `updated_at` de `party.person` e de `party.party` na mesma
+transação e continua restrita ao tenant do cabeçalho.
+
+### Cadastro dev-only de falecido
+
+Com o mesmo opt-in (`APP_ENV=development` e `ENABLE_DEV_ONBOARDING=true`), a API
+registra `POST /_dev/deceased` e `GET /_dev/deceased/{id}`. O tenant é aceito
+somente pelo cabeçalho `X-Amparius-Development-Tenant-ID`; `tenant_id` no corpo
+e campos desconhecidos são rejeitados. O POST exige `person_id` de uma pessoa
+física já existente no tenant e `death_at` em RFC3339. `death_certificate` e
+`burial_site` são opcionais, normalizados para ausência quando vazios e
+limitados a 200 runas por segurança de transporte; o limite não representa
+regra legal. Pessoa inexistente ou de outro tenant responde `404` sem revelar
+qual caso ocorreu; pessoa jurídica responde `409`. O endpoint não cria party ou
+person implicitamente e não implementa familiares.
+
+O POST devolve `201` com cabeçalho `Location: /_dev/deceased/{id}` e envelope
+`{"status":"ok","deceased":{...}}`; o GET devolve `200` com o mesmo envelope.
+Erros usam `{"status":"error","error":"..."}`: `400` para cabeçalho ou carga
+inválidos, `404` para pessoa/falecido não encontrado, `409` para pessoa
+jurídica, `405` para método não permitido, `500` para falha inesperada e `503`
+quando o serviço não está ligado. `death_at` entra em RFC3339 e sai em
+RFC3339Nano. A fatia não inventa dado sintético próprio: `person_id` precisa
+apontar para uma pessoa criada pelo fluxo dev de cadastro, e
+`death_certificate`/`burial_site` são textos livres fornecidos pelo chamador.
+
+A resposta resolve os nomes na origem e expõe `civil_name`, `social_name` e
+`display_name`; `party.deceased` guarda apenas a referência `person_id` e os
+dados do óbito, sem duplicar nome. Todas as respostas, inclusive erros, têm
+`X-Amparius-Development-Only: true` e `Cache-Control: no-store`. A tabela
+existente já possui FK composta e RLS; `migrations/0011_party_deceased_grants.sql`
+apenas acrescenta ao papel `amparius_app` os privilégios mínimos que faltavam
+para as queries do módulo; `USAGE` em `party` e a leitura de `party.person`
+continuam vindo de `0010_party_social_name.sql`. O teste de integração usa uma
+role temporária `NOSUPERUSER/NOBYPASSRLS` com somente esse conjunto efetivo e
+verifica que ela não pode inserir/atualizar party/person. O padrão dev existente
+não usa `Idempotency-Key` nem possui unicidade por pessoa, portanto cada POST
+válido cria um novo registro; não foi inventada idempotência sem
+coluna/contrato no schema atual.
+
+Os grants de escrita do cadastro base são independentes em
+`migrations/0012_party_core_grants.sql`: `SELECT/INSERT/UPDATE` em
+`party.party`, sem `DELETE`, porque os endpoints atuais não possuem caminho de
+remoção. Essa separação não altera RLS nem concede escrita adicional ao fluxo
+de falecido.
+
+Esta fatia cobre apenas parte do RF-004: o cadastro/consulta do falecido e a
+resolução de nomes. Familiares, consentimento, base legal e retenção definida
+não fazem parte deste slice; nenhuma política jurídica foi inferida ou criada.
+
+`GET /readyz` continua um stub nesta fase: responde sucesso sem verificar
+PostgreSQL, Redis, RabbitMQ ou MinIO.
+
 ## Regras que valem para todo mundo
 
 1. Fiscal não se estima.

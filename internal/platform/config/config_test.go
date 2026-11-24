@@ -28,6 +28,9 @@ func TestLoadFromUsaPadroesDeDesenvolvimento(t *testing.T) {
 	if cfg.Env != "development" {
 		t.Fatalf("Env = %q, quer %q", cfg.Env, "development")
 	}
+	if cfg.EnableDevOnboarding {
+		t.Fatal("EnableDevOnboarding deveria ser false por padrão")
+	}
 	if cfg.ShutdownTimeout != 15*time.Second {
 		t.Fatalf("ShutdownTimeout = %v, quer %v", cfg.ShutdownTimeout, 15*time.Second)
 	}
@@ -43,6 +46,7 @@ func TestLoadFromSobrescreveComAmbiente(t *testing.T) {
 		"LOG_LEVEL":             "debug",
 		"HTTP_SHUTDOWN_TIMEOUT": "30s",
 		"MINIO_USE_SSL":         "true",
+		"ENABLE_DEV_ONBOARDING": "true",
 	}))
 	if err != nil {
 		t.Fatalf("LoadFrom: %v", err)
@@ -59,6 +63,16 @@ func TestLoadFromSobrescreveComAmbiente(t *testing.T) {
 	}
 	if !cfg.MinIOUseSSL {
 		t.Fatal("MinIOUseSSL deveria ser true")
+	}
+	if !cfg.EnableDevOnboarding {
+		t.Fatal("EnableDevOnboarding deveria ser true")
+	}
+}
+
+func TestLoadFromRejeitaOptInDevInvalido(t *testing.T) {
+	_, err := LoadFrom(lookupFrom(map[string]string{"ENABLE_DEV_ONBOARDING": "talvez"}))
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("err = %v, quer ErrInvalidConfig", err)
 	}
 }
 

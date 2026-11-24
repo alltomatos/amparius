@@ -11,7 +11,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/alltomatos/amparius/internal/modules/identity"
+	"github.com/alltomatos/amparius/internal/modules/party"
 	"github.com/alltomatos/amparius/internal/platform/config"
+	"github.com/alltomatos/amparius/internal/platform/db"
 	httpserver "github.com/alltomatos/amparius/internal/platform/http"
 	"github.com/alltomatos/amparius/internal/platform/log"
 )
@@ -38,9 +41,39 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	devOnboardingEnabled := cfg.Env == "development" && cfg.EnableDevOnboarding
+	var onboardingHandler http.Handler
+	var partiesHandler http.Handler
+	var deceasedHandler http.Handler
+	if devOnboardingEnabled {
+		database, err := db.New(ctx, cfg.PostgresDSN)
+		if err != nil {
+			return fmt.Errorf("conectar PostgreSQL: %w", err)
+		}
+		defer database.Close()
+
+		repository, err := identity.NewRepository(database)
+		if err != nil {
+			return fmt.Errorf("criar repositório de identidade: %w", err)
+		}
+		onboardingHandler = identity.NewDevelopmentHTTPHandler(repository)
+
+		partyRepository, err := party.NewRepository(database)
+		if err != nil {
+			return fmt.Errorf("criar repositório de party: %w", err)
+		}
+		partiesHandler = party.NewDevelopmentHTTPHandler(partyRepository)
+		deceasedHandler = party.NewDevelopmentDeceasedHTTPHandler(partyRepository)
+	}
+
 	server := &http.Server{
-		Addr:              cfg.HTTPAddr(),
-		Handler:           httpserver.New(logger).Handler(),
+		Addr: cfg.HTTPAddr(),
+		Handler: httpserver.New(logger, httpserver.Options{
+			DevelopmentMode:       devOnboardingEnabled,
+			DevelopmentOnboarding: onboardingHandler,
+			DevelopmentParties:    partiesHandler,
+			DevelopmentDeceased:   deceasedHandler,
+		}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,

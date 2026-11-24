@@ -13,8 +13,20 @@ type Server struct {
 	handler http.Handler
 }
 
+// Options controla dependências opcionais do servidor HTTP.
+type Options struct {
+	// DevelopmentMode habilita rotas explicitamente marcadas como dev-only.
+	DevelopmentMode bool
+	// DevelopmentOnboarding é o handler de POST /_dev/onboarding.
+	DevelopmentOnboarding http.Handler
+	// DevelopmentParties é o handler de POST /_dev/parties e GET /_dev/parties/{id}.
+	DevelopmentParties http.Handler
+	// DevelopmentDeceased é o handler de POST /_dev/deceased e GET /_dev/deceased/{id}.
+	DevelopmentDeceased http.Handler
+}
+
 // New constrói o servidor com as dependências injetadas.
-func New(logger *slog.Logger) *Server {
+func New(logger *slog.Logger, options ...Options) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -23,7 +35,11 @@ func New(logger *slog.Logger) *Server {
 		logger: logger,
 		mux:    http.NewServeMux(),
 	}
-	s.routes()
+	var opts Options
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	s.routes(opts)
 	s.handler = chain(
 		s.mux,
 		requestID,
@@ -38,9 +54,20 @@ func (s *Server) Handler() http.Handler {
 	return s.handler
 }
 
-func (s *Server) routes() {
+func (s *Server) routes(options Options) {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
+	if options.DevelopmentMode && options.DevelopmentOnboarding != nil {
+		s.mux.Handle("/_dev/onboarding", options.DevelopmentOnboarding)
+	}
+	if options.DevelopmentMode && options.DevelopmentParties != nil {
+		s.mux.Handle("/_dev/parties", options.DevelopmentParties)
+		s.mux.Handle("/_dev/parties/{id}", options.DevelopmentParties)
+	}
+	if options.DevelopmentMode && options.DevelopmentDeceased != nil {
+		s.mux.Handle("/_dev/deceased", options.DevelopmentDeceased)
+		s.mux.Handle("/_dev/deceased/{id}", options.DevelopmentDeceased)
+	}
 }
 
 // handleHealthz é o liveness probe: processo vivo responde 200.

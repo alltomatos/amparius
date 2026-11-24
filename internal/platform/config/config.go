@@ -35,10 +35,11 @@ const (
 // Contém potenciais segredos (DSNs, chaves); não registre a struct inteira em
 // log. Logue apenas os campos não sensíveis que interessarem.
 type Config struct {
-	Env             string
-	HTTPPort        string
-	LogLevel        string
-	ShutdownTimeout time.Duration
+	Env                 string
+	HTTPPort            string
+	LogLevel            string
+	ShutdownTimeout     time.Duration
+	EnableDevOnboarding bool
 
 	// Dependências externas: carregadas, ainda não conectadas.
 	PostgresDSN string
@@ -76,11 +77,17 @@ func LoadFrom(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 
+	enableDevOnboarding, err := boolean(lookup, "ENABLE_DEV_ONBOARDING", false)
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
-		Env:             text(lookup, "APP_ENV", defaultEnv),
-		HTTPPort:        text(lookup, "HTTP_PORT", defaultHTTPPort),
-		LogLevel:        text(lookup, "LOG_LEVEL", defaultLogLevel),
-		ShutdownTimeout: shutdownTimeout,
+		Env:                 text(lookup, "APP_ENV", defaultEnv),
+		HTTPPort:            text(lookup, "HTTP_PORT", defaultHTTPPort),
+		LogLevel:            text(lookup, "LOG_LEVEL", defaultLogLevel),
+		ShutdownTimeout:     shutdownTimeout,
+		EnableDevOnboarding: enableDevOnboarding,
 
 		PostgresDSN: text(lookup, "POSTGRES_DSN", defaultPostgresDSN),
 		RedisAddr:   text(lookup, "REDIS_ADDR", defaultRedisAddr),

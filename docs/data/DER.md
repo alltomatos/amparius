@@ -1,6 +1,6 @@
 # DER — Amparius
 
-Versão 0.3 · modelo lógico inicial + entidade legal, estabelecimento, entitlement (ADR 0007) e provedores/modelos/cota de IA (ADR 0008). Diagramas em Mermaid; nomes em `snake_case`; toda tabela de negócio carrega `tenant_id`.
+Versão 0.5 · modelo lógico inicial + entidade legal, estabelecimento, onboarding, nome social (ADR 0013), entitlement (ADR 0007) e provedores/modelos/cota de IA (ADR 0008). Diagramas em Mermaid; nomes em `snake_case`; toda tabela de negócio carrega `tenant_id`.
 
 > **Decisão de nomes (ADR 0007 §7):** `COMPANY` é a **entidade legal operadora** (CNPJ raiz — a funerária, o cemitério, a floricultura). O subtipo de cadastro de PJ cliente/fornecedor, antes chamado `COMPANY`, passa a se chamar **`PARTY_COMPANY`**. Não existem duas entidades com o mesmo nome. `ESTABLISHMENT` substitui `BRANCH`.
 
@@ -10,8 +10,8 @@ Versão 0.3 · modelo lógico inicial + entidade legal, estabelecimento, entitle
 erDiagram
   TENANT ||--o{ COMPANY : operates
   COMPANY ||--o{ ESTABLISHMENT : has
-  TENANT ||--o{ USER : employs
-  USER }o--o{ ROLE : receives
+  TENANT ||--o{ APP_USER : employs
+  APP_USER }o--o{ ROLE : receives
   ROLE }o--o{ PERMISSION : grants
   TENANT ||--o{ PARTY : owns
   PARTY ||--o| PERSON : is
@@ -57,15 +57,19 @@ erDiagram
                   timestamptz created_at
                   timestamptz updated_at
                   timestamptz deleted_at }
-  USER { uuid id PK
+  APP_USER { uuid id PK
          uuid tenant_id FK
          text email
          text name
          text status
          bool mfa_enabled }
   ROLE { uuid id PK
+         uuid tenant_id FK
          text code
          text name }
+  USER_ROLE { uuid tenant_id FK
+              uuid user_id FK
+              uuid role_id FK }
   PERMISSION { uuid id PK
                text resource
                text action }
@@ -77,7 +81,8 @@ erDiagram
           text status }
   PERSON { uuid party_id PK
            date birth_date
-           text gender }
+           text gender
+           text social_name }
   PARTY_COMPANY { uuid party_id PK
                   text trade_name
                   text state_registration
@@ -128,6 +133,33 @@ erDiagram
                        text service_code
                        date valid_from }
 ```
+
+### Nome social e nome de exibição
+
+`party.party.name` permanece o nome civil obrigatório. `party.person.social_name`
+é opcional e anulável; ausência ou valor vazio é persistido como `NULL`, sem
+backfill dos cadastros existentes. A leitura operacional resolve
+`display_name`: usa `social_name` quando não vazio e, caso contrário, usa
+`party.party.name`. Pessoa jurídica usa sempre `party.party.name`.
+
+`display_name` é semântica de apresentação, não uma coluna persistida nem
+identificador fiscal, chave de deduplicação ou autorização. Contextos formal,
+fiscal e de auditoria selecionam explicitamente o nome civil. `DECEASED` e
+`FAMILY_LINK` continuam referenciando `PERSON` e não duplicam qualquer nome;
+suas leituras resolvem `display_name` na origem.
+
+### Onboarding inicial
+
+`identity.app_user` é o armazenamento mínimo do usuário do tenant. O vínculo
+do proprietário é `identity.user_role` com `role.code = 'owner'`. A migration
+`0009_identity_onboarding.sql` também cria `identity.onboarding_request`, cuja
+chave é global para garantir idempotência do bootstrap e cujo `tenant_id` é
+protegido por RLS.
+
+O caminho pré-autenticação chama `identity.create_onboarding` sem receber
+`tenant_id`; o banco gera o UUID e cria tenant, empresa, estabelecimento,
+usuário e papel na mesma transação. O usuário inicial fica `pending_auth`.
+Senha, sessão, MFA e vínculo OIDC não fazem parte deste contrato.
 
 ## 2. Espinha dorsal: financeiro e fiscal
 

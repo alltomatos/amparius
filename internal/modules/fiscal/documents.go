@@ -62,8 +62,17 @@ type EmissionAttempt struct {
 	ResponseBody             *string
 	ResponseHash             *string
 	ResponseContentType      *string
+	HTTPStatus               *int
+	Environment              *string
+	AccessKey                *string
+	DPSID                    *string
+	RequestHash              *string
 	AttemptedAt              time.Time
 }
+
+// Colunas de transporte da migration 0008. São lidas em toda consulta de
+// tentativa para que replay e histórico preservem a trilha completa.
+const emissionAttemptColumns = `id,tenant_id,document_id,competence,attempt,idempotency_key,mode,result,protocol,response_body,response_hash,response_content_type,http_status,ambiente,chave_acesso,dps_id,request_hash,attempted_at`
 
 type Repository struct{ database *db.DB }
 
@@ -105,7 +114,7 @@ func (r *Repository) GetEmissionAttempt(ctx context.Context, idempotencyKey stri
 		return result, err
 	}
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		return scanAttempt(tx.QueryRow(ctx, `SELECT id,tenant_id,document_id,competence,attempt,idempotency_key,mode,result,protocol,response_body,response_hash,response_content_type,attempted_at FROM fiscal.emission_attempt WHERE tenant_id=$1 AND idempotency_key=$2`, tenant, idempotencyKey), &result)
+		return scanAttempt(tx.QueryRow(ctx, `SELECT `+emissionAttemptColumns+` FROM fiscal.emission_attempt WHERE tenant_id=$1 AND idempotency_key=$2`, tenant, idempotencyKey), &result)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return EmissionAttempt{}, ErrAttemptNotFound
@@ -208,19 +217,21 @@ func (r *Repository) RegisterEmissionAttempt(ctx context.Context, attempt Emissi
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		row := tx.QueryRow(ctx, `
 INSERT INTO fiscal.emission_attempt
-	(tenant_id,document_id,competence,attempt,idempotency_key,mode,result,protocol,response_body,response_hash,response_content_type,attempted_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12,now()))
+	(tenant_id,document_id,competence,attempt,idempotency_key,mode,result,protocol,response_body,response_hash,response_content_type,http_status,ambiente,chave_acesso,dps_id,request_hash,attempted_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,COALESCE($17,now()))
 ON CONFLICT (tenant_id,idempotency_key) DO NOTHING
-RETURNING id,tenant_id,document_id,competence,attempt,idempotency_key,mode,result,protocol,response_body,response_hash,response_content_type,attempted_at`,
+RETURNING `+emissionAttemptColumns,
 			tenant, attempt.DocumentID, attempt.Competence.UTC(), attempt.Attempt, attempt.IdempotencyKey,
 			attempt.Mode, defaultString(attempt.Result, "pending"), nullStringPtr(attempt.Protocol),
-			nullStringPtr(attempt.ResponseBody), nullStringPtr(attempt.ResponseHash), nullStringPtr(attempt.ResponseContentType), timePtr(attempt.AttemptedAt))
+			nullStringPtr(attempt.ResponseBody), nullStringPtr(attempt.ResponseHash), nullStringPtr(attempt.ResponseContentType),
+			intPtr(attempt.HTTPStatus), nullStringPtr(attempt.Environment), nullStringPtr(attempt.AccessKey),
+			nullStringPtr(attempt.DPSID), nullStringPtr(attempt.RequestHash), timePtr(attempt.AttemptedAt))
 		if err := scanAttempt(row, &result); err == nil {
 			return nil
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		return scanAttempt(tx.QueryRow(ctx, `SELECT id,tenant_id,document_id,competence,attempt,idempotency_key,mode,result,protocol,response_body,response_hash,response_content_type,attempted_at FROM fiscal.emission_attempt WHERE tenant_id=$1 AND idempotency_key=$2`, tenant, attempt.IdempotencyKey), &result)
+		return scanAttempt(tx.QueryRow(ctx, `SELECT `+emissionAttemptColumns+` FROM fiscal.emission_attempt WHERE tenant_id=$1 AND idempotency_key=$2`, tenant, attempt.IdempotencyKey), &result)
 	})
 	if err != nil {
 		return EmissionAttempt{}, fmt.Errorf("registrar tentativa de emissao: %w", err)
@@ -235,7 +246,7 @@ func (r *Repository) ListEmissionAttempts(ctx context.Context, documentID uuid.U
 	}
 	var result []EmissionAttempt
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT id,tenant_id,document_id,competence,attempt,idempotency_key,mode,result,protocol,response_body,response_hash,response_content_type,attempted_at FROM fiscal.emission_attempt WHERE tenant_id=$1 AND document_id=$2 AND competence=$3 ORDER BY attempt`, tenant, documentID, competence.UTC())
+		rows, err := tx.Query(ctx, `SELECT `+emissionAttemptColumns+` FROM fiscal.emission_attempt WHERE tenant_id=$1 AND document_id=$2 AND competence=$3 ORDER BY attempt`, tenant, documentID, competence.UTC())
 		if err != nil {
 			return err
 		}
@@ -267,7 +278,14 @@ func scanCalculation(row rowScanner, c *TaxCalculation) error {
 	return row.Scan(&c.ID, &c.TenantID, &c.ItemID, &c.Competence, &c.TaxType, &c.BaseCents, &c.Rate, &c.AmountCents, &c.RuleID, &c.RuleSourceHash, &c.CalculationInput)
 }
 func scanAttempt(row rowScanner, a *EmissionAttempt) error {
-	return row.Scan(&a.ID, &a.TenantID, &a.DocumentID, &a.Competence, &a.Attempt, &a.IdempotencyKey, &a.Mode, &a.Result, &a.Protocol, &a.ResponseBody, &a.ResponseHash, &a.ResponseContentType, &a.AttemptedAt)
+	return row.Scan(&a.ID, &a.TenantID, &a.DocumentID, &a.Competence, &a.Attempt, &a.IdempotencyKey, &a.Mode, &a.Result, &a.Protocol, &a.ResponseBody, &a.ResponseHash, &a.ResponseContentType, &a.HTTPStatus, &a.Environment, &a.AccessKey, &a.DPSID, &a.RequestHash, &a.AttemptedAt)
+}
+
+func intPtr(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 func tenantFor(ctx context.Context, entity uuid.UUID) (uuid.UUID, error) {

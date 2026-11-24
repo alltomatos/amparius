@@ -1,0 +1,32 @@
+{
+  "expect_invalid": false,
+  "expected_hash": "47e6d64f3f31fe145e5c4138f3d4aa9b4249fb8c36d69c1d16d9e426c1a4bfe3",
+  "input": {
+    "competence": "2026-11-23",
+    "emitter_document": "00000000000191",
+    "environment": "producao_restrita",
+    "id_dps": "DPS-GOLDEN-08",
+    "items": [
+      {
+        "ServiceCode": "25.02",
+        "Description": "Timeout com reconciliação",
+        "Quantity": "1",
+        "UnitPriceCents": 15000,
+        "TotalCents": 15000
+      }
+    ],
+    "municipality_code": "2304400",
+    "number": 8,
+    "series": "1",
+    "tax_calculations": [
+      {
+        "TaxType": "iss",
+        "Rate": "",
+        "BaseCents": 12000,
+        "AmountCents": 0,
+        "RuleSourceHash": "hhh"
+      }
+    ]
+  },
+  "name": "08-timeout-status"
+}

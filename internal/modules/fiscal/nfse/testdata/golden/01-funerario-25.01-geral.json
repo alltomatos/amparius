@@ -1,0 +1,32 @@
+{
+  "expect_invalid": false,
+  "expected_hash": "8b07b9384af997d79ae6f749860d451b01651263253398f03bba8f573c193d5c",
+  "input": {
+    "competence": "2026-11-23",
+    "emitter_document": "00000000000191",
+    "environment": "producao_restrita",
+    "id_dps": "DPS-GOLDEN-01",
+    "items": [
+      {
+        "ServiceCode": "25.01",
+        "Description": "Serviço funerário",
+        "Quantity": "1",
+        "UnitPriceCents": 15000,
+        "TotalCents": 15000
+      }
+    ],
+    "municipality_code": "2304400",
+    "number": 1,
+    "series": "1",
+    "tax_calculations": [
+      {
+        "TaxType": "iss",
+        "Rate": "",
+        "BaseCents": 15000,
+        "AmountCents": 750,
+        "RuleSourceHash": "aaa"
+      }
+    ]
+  },
+  "name": "01-funerario-25.01-geral"
+}

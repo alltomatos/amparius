@@ -1,0 +1,32 @@
+{
+  "expect_invalid": false,
+  "expected_hash": "62e66721538e0220120d6f81ed88a4f25bf846fa8340f7a134e474ac1476f4b5",
+  "input": {
+    "competence": "2026-11-23",
+    "emitter_document": "00000000000191",
+    "environment": "producao_restrita",
+    "id_dps": "DPS-GOLDEN-05",
+    "items": [
+      {
+        "ServiceCode": "25.01",
+        "Description": "Tomador PJ com retenção",
+        "Quantity": "1",
+        "UnitPriceCents": 15000,
+        "TotalCents": 15000
+      }
+    ],
+    "municipality_code": "2304400",
+    "number": 5,
+    "series": "1",
+    "tax_calculations": [
+      {
+        "TaxType": "iss",
+        "Rate": "",
+        "BaseCents": 40000,
+        "AmountCents": 2000,
+        "RuleSourceHash": "eee"
+      }
+    ]
+  },
+  "name": "05-tomador-pj-retencao"
+}

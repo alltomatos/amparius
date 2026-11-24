@@ -1,0 +1,39 @@
+{
+  "expect_invalid": false,
+  "expected_hash": "ff6d3324f24593d6ed2b4dba0a96ff736f9680790327fd040712a3a938c6fe98",
+  "input": {
+    "competence": "2026-11-23",
+    "emitter_document": "00000000000191",
+    "environment": "producao_restrita",
+    "id_dps": "DPS-GOLDEN-06",
+    "items": [
+      {
+        "ServiceCode": "25.01",
+        "Description": "Competência 2026 RTC",
+        "Quantity": "1",
+        "UnitPriceCents": 15000,
+        "TotalCents": 15000
+      }
+    ],
+    "municipality_code": "2304400",
+    "number": 6,
+    "series": "1",
+    "tax_calculations": [
+      {
+        "TaxType": "ibs",
+        "Rate": "",
+        "BaseCents": 50000,
+        "AmountCents": 0,
+        "RuleSourceHash": "fff"
+      },
+      {
+        "TaxType": "cbs",
+        "Rate": "",
+        "BaseCents": 50000,
+        "AmountCents": 0,
+        "RuleSourceHash": "ggg"
+      }
+    ]
+  },
+  "name": "06-competencia-2026-rtc"
+}

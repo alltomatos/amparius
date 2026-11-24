@@ -1,0 +1,32 @@
+{
+  "expect_invalid": false,
+  "expected_hash": "40a6aaa33f91d9b23e0217365ff71cb4fa01fc599ebdea1404eb813bba7b9066",
+  "input": {
+    "competence": "2026-11-23",
+    "emitter_document": "00000000000191",
+    "environment": "producao_restrita",
+    "id_dps": "DPS-GOLDEN-02",
+    "items": [
+      {
+        "ServiceCode": "25.02",
+        "Description": "Cremação",
+        "Quantity": "1",
+        "UnitPriceCents": 15000,
+        "TotalCents": 15000
+      }
+    ],
+    "municipality_code": "2304400",
+    "number": 2,
+    "series": "1",
+    "tax_calculations": [
+      {
+        "TaxType": "iss",
+        "Rate": "",
+        "BaseCents": 10000,
+        "AmountCents": 500,
+        "RuleSourceHash": "bbb"
+      }
+    ]
+  },
+  "name": "02-cremacao-25.02-geral"
+}

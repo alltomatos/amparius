@@ -1,0 +1,32 @@
+{
+  "expect_invalid": false,
+  "expected_hash": "ae79899cc1874032176ce758676ddf3fe0de38e08c08ec71ddac23811a2e027b",
+  "input": {
+    "competence": "2026-11-23",
+    "emitter_document": "00000000000191",
+    "environment": "producao_restrita",
+    "id_dps": "DPS-GOLDEN-03",
+    "items": [
+      {
+        "ServiceCode": "25.03",
+        "Description": "Plano funerário",
+        "Quantity": "1",
+        "UnitPriceCents": 15000,
+        "TotalCents": 15000
+      }
+    ],
+    "municipality_code": "2304400",
+    "number": 3,
+    "series": "1",
+    "tax_calculations": [
+      {
+        "TaxType": "iss",
+        "Rate": "",
+        "BaseCents": 20000,
+        "AmountCents": 0,
+        "RuleSourceHash": "ccc"
+      }
+    ]
+  },
+  "name": "03-plano-25.03-simples"
+}

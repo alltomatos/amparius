@@ -1,0 +1,32 @@
+{
+  "expect_invalid": false,
+  "expected_hash": "2cc4de49fd84c4272ff014187605ca666bc7a9599368fd1025a9c0d72077e49d",
+  "input": {
+    "competence": "2026-11-23",
+    "emitter_document": "00000000000191",
+    "environment": "producao_restrita",
+    "id_dps": "DPS-GOLDEN-04",
+    "items": [
+      {
+        "ServiceCode": "25.04",
+        "Description": "Jazigo/cemitério",
+        "Quantity": "1",
+        "UnitPriceCents": 15000,
+        "TotalCents": 15000
+      }
+    ],
+    "municipality_code": "2304400",
+    "number": 4,
+    "series": "1",
+    "tax_calculations": [
+      {
+        "TaxType": "iss",
+        "Rate": "",
+        "BaseCents": 30000,
+        "AmountCents": 0,
+        "RuleSourceHash": "ddd"
+      }
+    ]
+  },
+  "name": "04-jazigo-25.04-simples"
+}

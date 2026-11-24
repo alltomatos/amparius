@@ -1,0 +1,24 @@
+{
+  "expect_invalid": false,
+  "expected_hash": "7b4d6f5c5c6c71900f29df4680d3aa112045bcb0f2fb67cb04cac765cd53bf57",
+  "input": {
+    "competence": "2026-11-23",
+    "emitter_document": "00000000000191",
+    "environment": "producao_restrita",
+    "id_dps": "DPS-GOLDEN-07",
+    "items": [
+      {
+        "ServiceCode": "25.01",
+        "Description": "Rejeição simulada",
+        "Quantity": "1",
+        "UnitPriceCents": 15000,
+        "TotalCents": 15000
+      }
+    ],
+    "municipality_code": "2304400",
+    "number": 7,
+    "series": "1",
+    "tax_calculations": null
+  },
+  "name": "07-rejeicao-400"
+}

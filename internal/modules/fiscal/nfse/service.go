@@ -42,6 +42,10 @@ type ServiceInput struct {
 	TenantID, CompanyID, EstablishmentID uuid.UUID
 	IdempotencyKey                       string
 	DPS                                  DPSInput
+	// Official, quando presente, seleciona o builder no leiaute oficial
+	// v1.01 (BuildDPSOficial) em vez do builder estrutural. O Validator
+	// injetado deve ser o XSDValidator para esse caminho.
+	Official *OfficialDPSInput
 }
 
 // ServiceResult resume o desfecho sem expor corpo cru nem XML.
@@ -104,7 +108,16 @@ func (s *Service) Emit(ctx context.Context, input ServiceInput) (ServiceResult, 
 		return result, err
 	}
 	input.DPS.IDDps = strings.TrimSpace(input.DPS.IDDps)
-	dps, err := BuildDPS(ctx, input.DPS)
+	var dps DPS
+	var err error
+	if input.Official != nil {
+		if input.DPS.Environment == "" {
+			input.DPS.Environment = EnvironmentProducaoRestrita
+		}
+		dps, err = BuildDPSOficial(ctx, *input.Official)
+	} else {
+		dps, err = BuildDPS(ctx, input.DPS)
+	}
 	if err != nil {
 		return result, err
 	}
@@ -214,8 +227,10 @@ func validateServiceInput(input ServiceInput) error {
 		strings.TrimSpace(input.IdempotencyKey) == "" {
 		return fmt.Errorf("%w: identificadores da emissao ausentes", ErrInvalidDPS)
 	}
-	if input.DPS.IDDps == "" || input.DPS.Competence.IsZero() || len(input.DPS.Items) == 0 {
-		return fmt.Errorf("%w: DPS incompleta", ErrInvalidDPS)
+	if input.Official == nil {
+		if input.DPS.IDDps == "" || input.DPS.Competence.IsZero() || len(input.DPS.Items) == 0 {
+			return fmt.Errorf("%w: DPS incompleta", ErrInvalidDPS)
+		}
 	}
 	return nil
 }

@@ -306,7 +306,7 @@ func (s *xsdSchemaSet) load(rel string) error {
 				st.restriction.enumerations = make(map[string]bool)
 				stack = append(stack, frame{kind: "simpleType", st: st})
 			case "sequence", "choice":
-				if len(stack) > 0 && stack[len(stack)-1].kind == "complexType" {
+				if len(stack) > 0 && (stack[len(stack)-1].kind == "complexType" || stack[len(stack)-1].kind == "sequence") {
 					stack = append(stack, frame{kind: "sequence", ct: stack[len(stack)-1].ct, choice: t.Name.Local == "choice"})
 				}
 			case "attribute":
@@ -439,49 +439,71 @@ func (s *xsdSchemaSet) validateNode(n *xmlNode, typeName, path string, problemas
 	s.validateText(strings.TrimSpace(n.text), typeName, path, problemas)
 }
 
+// validateSequence casa os filhos da instancia com as particulas do schema,
+// na ordem. Particulas consecutivas marcadas como choice formam um grupo de
+// alternativas: exatamente uma delas precisa casar (respeitando minOccurs).
 func (s *xsdSchemaSet) validateSequence(n *xmlNode, particles []xsdParticle, path string, problemas *[]string) {
-	seq := []xsdParticle{}
-	choices := map[int][]xsdParticle{}
-	for i, p := range particles {
-		if p.choice {
-			choices[i] = append(choices[i], p)
-		} else {
-			seq = append(seq, p)
-		}
-	}
-	// Choice: agrupa particulas consecutivas e exige ao menos uma ocorrencia.
-	idx := 0
 	childIdx := 0
-	for _, p := range particles {
-		if p.choice {
+	for i := 0; i < len(particles); {
+		group := []xsdParticle{particles[i]}
+		if particles[i].choice {
+			j := i + 1
+			for j < len(particles) && particles[j].choice {
+				group = append(group, particles[j])
+				j++
+			}
+			i = j
+		} else {
+			i++
+		}
+		matched := 0
+		chosen := -1
+		for k, p := range group {
+			found := 0
+			for childIdx+found < len(n.children) && n.children[childIdx+found].name == p.name {
+				found++
+			}
+			if found >= p.minOccurs && (p.maxOccurs < 0 || found <= p.maxOccurs) && found > matched {
+				matched, chosen = found, k
+			}
+		}
+		if chosen < 0 {
+			// Nenhuma alternativa satisfez: reporta o grupo. Elementos
+			// opcionais do choice (todos minOccurs=0) casam zero sem erro.
+			optional := true
+			for _, g := range group {
+				if g.minOccurs > 0 {
+					optional = false
+					break
+				}
+			}
+			if !optional {
+				*problemas = append(*problemas, fmt.Sprintf("%s: nenhuma alternativa de choice satisfeita (esperado uma de %s)", path, choiceNames(group)))
+			}
 			continue
 		}
-		found := 0
-		for childIdx < len(n.children) && n.children[childIdx].name == p.name {
-			found++
-			childIdx++
-		}
-		if found < p.minOccurs {
-			*problemas = append(*problemas, fmt.Sprintf("%s: elemento %s ocorre %d vez(es), minimo %d", path, p.name, found, p.minOccurs))
-		}
-		if p.maxOccurs >= 0 && found > p.maxOccurs {
-			*problemas = append(*problemas, fmt.Sprintf("%s: elemento %s excede maxOccurs %d", path, p.name, p.maxOccurs))
-		}
-		if found > 0 && p.typeName != "" {
-			for j := childIdx - found; j < childIdx; j++ {
+		p := group[chosen]
+		if matched > 0 && p.typeName != "" {
+			for j := childIdx; j < childIdx+matched; j++ {
 				c := n.children[j]
 				s.validateNode(&c, p.typeName, path+"/"+p.name, problemas)
 			}
 		}
-		idx++
+		childIdx += matched
 	}
-	_ = seq
-	_ = choices
 	if childIdx < len(n.children) {
 		for _, extra := range n.children[childIdx:] {
 			*problemas = append(*problemas, path+": elemento nao previsto no schema: "+extra.name)
 		}
 	}
+}
+
+func choiceNames(group []xsdParticle) string {
+	names := make([]string, 0, len(group))
+	for _, p := range group {
+		names = append(names, p.name)
+	}
+	return strings.Join(names, "|")
 }
 
 func (s *xsdSchemaSet) validateText(text, typeName, path string, problemas *[]string) {

@@ -1,6 +1,10 @@
 # Gap — DPS da fatia 01 x XSD oficial NFS-e v1.01
 
-Status: registrado em 23/11/2026 · sem código novo além do validador, sem commit.
+Status: registrado em 23/11/2026 · **atualizado**: o builder oficial separado
+(`BuildDPSOficial`) foi adicionado em seguida; ver
+`docs/fiscal/2026-11-23-nfse-slice-01-oficial.md`. Este documento continua
+descrevendo os 8 golden **estruturais** (que permanecem 0/8 no XSD) e as
+limitações do compilador XSD.
 Referências: ADR 0010, `docs/fiscal/2026-11-23-nfse-slice-01-fortaleza.md`,
 `docs/fiscal/xsd-nfse-v1.01/MANIFEST.md`.
 

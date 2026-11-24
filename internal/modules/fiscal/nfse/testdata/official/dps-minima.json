@@ -1,0 +1,30 @@
+{
+  "_comment": "Fixture documental SINTETICA para o builder oficial DPS v1.01. Nenhum dado real, nenhuma aliquota, nenhum codigo fiscal oficial: todos os valores sao entradas de teste ja resolvidas por tax_calc/config em producao. Ver docs/fiscal/2026-11-23-nfse-slice-01-oficial.md.",
+  "id": "DPS000000000000000000000000000000000000000000",
+  "versao": "1.01",
+  "tp_amb": "2",
+  "dh_emi": "2026-11-23T12:00:00-03:00",
+  "ver_aplic": "amparius-teste-1",
+  "serie": "1",
+  "n_dps": "1",
+  "d_compet": "2026-11-23",
+  "tp_emit": "1",
+  "c_loc_emi": "2304400",
+  "prestador": {
+    "documento_tipo": "CNPJ",
+    "documento": "00000000000191",
+    "op_simp_nac": "1",
+    "reg_esp_trib": "0"
+  },
+  "servico": {
+    "c_loc_prestacao": "2304400",
+    "c_trib_nac": "000000",
+    "x_desc_serv": "Servico de teste sintetico"
+  },
+  "valores": {
+    "v_serv": "1.00",
+    "trib_issqn": "1",
+    "tp_ret_issqn": "1",
+    "ind_tot_trib": "0"
+  }
+}

@@ -40,3 +40,6 @@ __pycache__/
 
 # node (docs/tooling)
 node_modules/
+
+# resultados locais do ambiente de agentes
+mcp-results/

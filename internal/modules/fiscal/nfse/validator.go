@@ -323,7 +323,7 @@ func (s *xsdSchemaSet) load(rel string) error {
 				}
 			case "pattern":
 				if len(stack) > 0 && stack[len(stack)-1].kind == "simpleType" {
-					if re, err := regexp.Compile("^(?:" + attrValue(t, "value") + ")$"); err == nil {
+					if re, err := compileXSDPattern(attrValue(t, "value")); err == nil {
 						stack[len(stack)-1].st.restriction.patterns = append(stack[len(stack)-1].st.restriction.patterns, re)
 					}
 				}
@@ -363,6 +363,34 @@ func (s *xsdSchemaSet) load(rel string) error {
 		}
 	}
 	return nil
+}
+
+// compileXSDPattern compila o subconjunto de pattern usado pelo pacote oficial.
+// Ao contrario de regexp de Go, o regex de XML Schema nao possui ancoras ^/$:
+// esses caracteres sao literais. O schema oficial v1.01 usa ambos no pattern
+// de TSSerieDPS; preserva-los como literais reproduz o comportamento do
+// libxml2, enquanto as ancoras externas preservam a semantica de valor inteiro
+// do facet pattern.
+func compileXSDPattern(pattern string) (*regexp.Regexp, error) {
+	var translated strings.Builder
+	escaped := false
+	for _, r := range pattern {
+		if escaped {
+			translated.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			translated.WriteRune(r)
+			escaped = true
+			continue
+		}
+		if r == '^' || r == '$' {
+			translated.WriteByte('\\')
+		}
+		translated.WriteRune(r)
+	}
+	return regexp.Compile("^(?:" + translated.String() + ")$")
 }
 
 // ---------------------------------------------------------------------------

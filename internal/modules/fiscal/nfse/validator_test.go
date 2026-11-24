@@ -127,6 +127,36 @@ func TestXSDOficialVersaoDosSchemas(t *testing.T) {
 	}
 }
 
+func TestXSDOficialParidadeDoFacetSerie(t *testing.T) {
+	validador := novoValidadorOficial(t)
+	input := carregarFixtureOficial(t)
+	dps, err := nfse.BuildDPSOficial(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resultado, err := validador.ValidateDPS(context.Background(), dps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resultado.Valid || !strings.Contains(strings.Join(resultado.Errors, " "), "serie") {
+		t.Fatalf("serie=1 deveria reproduzir a rejeicao do motor XSD: %+v", resultado)
+	}
+
+	// Em XML Schema, ^ e $ sao literais. O proprio facet oficial, portanto,
+	// aceita ^1$ (ate 5 caracteres), embora isso nao seja uma serie semantica
+	// valida. O caso prova que o validador Go nao trata esses caracteres como
+	// ancoras de regexp Go.
+	xmlComFacetLiteral := strings.Replace(string(dps.XML), "<serie>1</serie>", "<serie>^1$</serie>", 1)
+	resultado, err = validador.ValidateDPS(context.Background(), nfse.DPS{XML: []byte(xmlComFacetLiteral), IDDps: dps.IDDps})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resultado.Valid {
+		t.Fatalf("facet oficial deveria aceitar ^1$ como literal: %v", resultado.Errors)
+	}
+}
+
 // Prova que o compilador XSD realmente desce em TCDPS -> TCInfDPS e aplica
 // as restricoes de TSIdDPS/TSData, em vez de rejeitar tudo cegamente. Nao
 // montamos uma DPS completa: tributos/codigos oficiais sao gate da fatia 02.

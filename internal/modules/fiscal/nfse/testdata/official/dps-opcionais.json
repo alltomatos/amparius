@@ -31,6 +31,8 @@
     "c_trib_nac": "000000",
     "x_desc_serv": "Servico de teste sintetico com ramos opcionais",
     "info_compl": {
+      "id_doc_tec": "DOC-TEC-SINT-002",
+      "doc_ref": "REF-SINT-002",
       "x_ped": "PED-SINT-002",
       "x_inf_comp": "Informacao complementar sintetica"
     }

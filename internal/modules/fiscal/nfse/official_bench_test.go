@@ -23,11 +23,12 @@ func carregarFixtureOficialBench(b *testing.B) nfse.OfficialDPSInput {
 	return input
 }
 
-// BenchmarkBuildDPSOficialValidaContraXSD mede, por item, BuildDPSOficial +
-// XSDValidator.ValidateDPS sobre a fixture minima oficial. Reproduzivel com:
+// BenchmarkBuildDPSOficialDiagnostica mede, por item, BuildDPSOficial +
+// XSDValidator.ValidateDPS sobre a fixture minima oficial. A fixture e
+// deliberadamente bloqueada pelo facet oficial de serie. Reproduzivel com:
 //
-//	go test -run '^$' -bench 'BenchmarkBuildDPSOficialValidaContraXSD' -benchmem ./internal/modules/fiscal/nfse/...
-func BenchmarkBuildDPSOficialValidaContraXSD(b *testing.B) {
+//	go test -run '^$' -bench 'BenchmarkBuildDPSOficialDiagnostica' -benchmem ./internal/modules/fiscal/nfse/...
+func BenchmarkBuildDPSOficialDiagnostica(b *testing.B) {
 	validador, err := nfse.NewXSDValidator(xsdRootRel, xsdEntry)
 	if err != nil {
 		b.Fatalf("carregar DPS_v1.01.xsd: %v", err)
@@ -46,8 +47,8 @@ func BenchmarkBuildDPSOficialValidaContraXSD(b *testing.B) {
 		if err != nil {
 			b.Fatalf("ValidateDPS: %v", err)
 		}
-		if !res.Valid {
-			b.Fatalf("DPS invalida contra XSD: %v", res.Errors)
+		if res.Valid {
+			b.Fatal("DPS com serie=1 foi aceita apesar do facet oficial")
 		}
 	}
 }

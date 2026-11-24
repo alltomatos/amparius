@@ -6,13 +6,13 @@ Data: 2026-11-23 Â· Escopo: builder oficial DPS v1.01, XSD v1.01, integraÃ§�
 
 | # | CritÃ©rio | EvidÃªncia | Status |
 |---|---|---|---|
-| 1 | XSD: DPS gerada valida contra DPS_v1.01.xsd com zero erros | `TestGoldenOficialContraXSD`: 1/1 caso oficial passa; `TestBuildDPSOficialValidaContraXSD` PASS | PASS |
+| 1 | XSD: DPS gerada valida contra DPS_v1.01.xsd com zero erros | Bloqueado: libxml2 e o validador Go rejeitam `serie=1` pelo facet oficial; paridade reproduzível em `scripts/validate-nfse-xsd-parity.ps1` | BLOCKED |
 | 2 | Determinismo: mesmo XML + mesmo hash | `TestBuildDPSOficialDeterministico` PASS | PASS |
 | 3 | Regra datada / fail-closed: 22 negativos (21 campos + contexto cancelado) | `TestBuildDPSOficialRejeitaEntradaIncompleta`: 23 subcasos PASS | PASS |
 | 4 | Adapter fake: 201, 400 com erros, timeout+GetDPSStatus, replay sem duplicar | `TestFakeAdapter*` todos PASS | PASS |
 | 5 | PersistÃªncia crua: bytes/content_type/status/idDps/SHA-256 | `TestServicoEmissaoPersisteEIdempotente` PASS (com DSN local) â€” ver gaps) | PASS (verificado localmente) |
-| 6 | ContingÃªncia: sem adapter â†’ pending, nunca authorized; reconexÃ£o decide | `TestServicoComDPSOficialTimeoutPendente` PASS (com DSN local) | PASS (verificado localmente) |
-| 7 | Golden: 8 casos oficiais passam XSD | `TestGoldenOficialContraXSD`: 1/1 oficial; `TestGoldenContraXSDOficial`: 0/8 estruturais incompatÃ­veis com ErrXSDIncompatible (esperado) | PASS (1/1 + 0/8 honesto) |
+| 6 | ContingÃªncia: sem adapter â†’ pending, nunca authorized; reconexÃ£o decide | Fluxo estrutural continua coberto por `TestServicoTimeoutFicaPendente`; caminho oficial bloqueia antes da contingência por `serie` | PASS (estrutural) / BLOCKED (oficial) |
+| 7 | Golden: casos oficiais passam XSD | `TestGoldenOficialContraXSD`: 0/1 por `serie`; `TestGoldenContraXSDOficial`: 0/8 estruturais incompatíveis com ErrXSDIncompatible | BLOCKED (schema oficial) |
 | 8 | LGPD/logs: nenhum XML/PII/segredo em log | varredura: logs apenas document_id, id_dps, http_status, erro. Sem XML/PII/segredo | PASS |
 | 9 | OrÃ§amento p95 montagem+validaÃ§Ã£o < 100 ms/item | mediÃ§Ã£o: p95 = 0,53 ms (N=2000, min 0, p50 0, p99 3,1 ms, max 6,8 ms) | PASS |
 | 10 | Nenhum commit de cÃ³digo/alÃ­quota | sem commits novos; relatorio e benchmark aditivos nao commitados (working tree com arquivos untracked) | PASS |
@@ -50,7 +50,7 @@ Interpretacao: 88.101 ns/op = 0,088 ms/item (media), abaixo da meta < 100 ms/ite
 
 ## Gaps / gates restantes
 
-1. Testes de integracao real (persistencia + idempotencia + contingencia) VERIFICADOS LOCALMENTE com Postgres (AMPA_TEST_POSTGRES_DSN=postgres://amparius_app:amparius@localhost:5432/amparius?sslmode=disable, AMPA_TEST_POSTGRES_ADMIN_DSN=postgres://amparius:amparius@localhost:5432/amparius?sslmode=disable): TestServicoComDPSOficialMantemFluxo, TestServicoComDPSOficialTimeoutPendente, TestServicoEmissaoPersisteEIdempotente e TestServicoTimeoutFicaPendente PASS; go test ./... -count=1 PASS. Ressalva: depende de Postgres local disponivel; em CI sem DSN os testes SKIP.
+1. Testes de integracao real com Postgres nao foram executados nesta revalidacao: os DSNs `AMPA_TEST_POSTGRES_DSN` e `AMPA_TEST_POSTGRES_ADMIN_DSN` estavam ausentes. A compilacao e a suite sem DSN passam; os testes com banco fazem SKIP ate o ambiente estar disponivel.
    (DSN local; reproduzir: AMPA_TEST_POSTGRES_DSN=... AMPA_TEST_POSTGRES_ADMIN_DSN=... go test -count=1 -v ./internal/modules/fiscal/nfse/... -run "TestServicoComDPSOficial")
 2. ValidaÃ§Ã£o XSD via motor completo (libxml2/Xerces) pendente â€” compilador Go cobre subconjunto XSD 1.0 (sem xs:group, union, facets numÃ©ricos, key/keyref).
 3. Fixture mÃ­nima: nÃ£o cobre toma, interm, IBSCBS, pAliq, tribFed, comExt, obra, atvEvento, infoCompl, vDescCondIncond, vDedRed, subst, ds:Signature (gates fatia 02).
@@ -59,4 +59,4 @@ Interpretacao: 88.101 ns/op = 0,088 ms/item (media), abaixo da meta < 100 ms/ite
 
 ## ConclusÃ£o
 
-Fatia NFS-e 01/official atende os criterios verificaveis (XSD 1/1, determinismo, fail-closed 23/23, 8/8 incompatíveis honestos, p95 0,088 ms/item via benchmark reproduzivel, LGPD/logs OK, 0 transmissao/aliquota/segredo). Integracao Postgres verificada localmente (4 testes service + go test ./... -count=1). Gates restantes: XSD engine completo e fixture ampliada (fatia 02).
+Fatia NFS-e 01/official atende os criterios verificaveis fora do bloqueio do schema: determinismo, fail-closed, 8/8 incompatibilidades estruturais honestas, LGPD/logs e 0 transmissao/aliquota/segredo. A paridade Go/libxml2 confirma que `serie=1` e rejeitada pelo XSD oficial; a emissao oficial permanece bloqueada ate correcao ou esclarecimento da fonte. Integracao Postgres deve ser reproduzida com `go test ./... -count=1` quando o banco estiver disponivel.

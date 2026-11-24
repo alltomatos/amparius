@@ -29,7 +29,7 @@ func carregarFixtureOficialArquivo(t *testing.T, nome string) nfse.OfficialDPSIn
 	return input
 }
 
-func TestBuildDPSOficialComRamosOpcionaisValidaContraXSD(t *testing.T) {
+func TestBuildDPSOficialComRamosOpcionaisPreservaGapDeSerie(t *testing.T) {
 	validador := novoValidadorOficial(t)
 	input := carregarFixtureOficialArquivo(t, "dps-opcionais.json")
 	esperado, err := os.ReadFile(filepath.Join("testdata", "official", "dps-opcionais.xml"))
@@ -47,10 +47,10 @@ func TestBuildDPSOficialComRamosOpcionaisValidaContraXSD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !resultado.Valid {
-		t.Fatalf("DPS oficial com toma/interm/infoCompl deveria validar: %v", resultado.Errors)
+	if resultado.Valid || !strings.Contains(strings.Join(resultado.Errors, " "), "serie") {
+		t.Fatalf("gap de serie do XSD deveria ser diagnosticado sem mascarar os ramos opcionais: %v", resultado.Errors)
 	}
-	for _, elemento := range []string{"<toma>", "<interm>", "<infoCompl>", "<xPed>", "<xInfComp>"} {
+	for _, elemento := range []string{"<toma>", "<interm>", "<infoCompl>", "<idDocTec>", "<docRef>", "<xPed>", "<xInfComp>"} {
 		if !strings.Contains(string(dps.XML), elemento) {
 			t.Fatalf("ramo opcional ausente: %s", elemento)
 		}
@@ -58,7 +58,7 @@ func TestBuildDPSOficialComRamosOpcionaisValidaContraXSD(t *testing.T) {
 }
 
 func TestBuildDPSOficialRejeitaRamosOpcionaisIncompletos(t *testing.T) {
-	input := carregarFixtureOficial(t)
+	input := carregarFixtureOficialArquivo(t, "dps-opcionais.json")
 	testes := []struct {
 		nome  string
 		mutar func(*nfse.OfficialDPSInput)
@@ -78,7 +78,7 @@ func TestBuildDPSOficialRejeitaRamosOpcionaisIncompletos(t *testing.T) {
 	}
 	for _, teste := range testes {
 		t.Run(teste.nome, func(t *testing.T) {
-			copia := input
+			copia := clonarOfficialDPSInput(t, input)
 			teste.mutar(&copia)
 			_, err := nfse.BuildDPSOficial(context.Background(), copia)
 			if !errors.Is(err, nfse.ErrInvalidDPS) {
@@ -88,7 +88,20 @@ func TestBuildDPSOficialRejeitaRamosOpcionaisIncompletos(t *testing.T) {
 	}
 }
 
-func TestBuildDPSOficialValidaContraXSD(t *testing.T) {
+func clonarOfficialDPSInput(t *testing.T, input nfse.OfficialDPSInput) nfse.OfficialDPSInput {
+	t.Helper()
+	raw, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var copia nfse.OfficialDPSInput
+	if err := json.Unmarshal(raw, &copia); err != nil {
+		t.Fatal(err)
+	}
+	return copia
+}
+
+func TestBuildDPSOficialDetectaSerieIncompativelComXSD(t *testing.T) {
 	validador := novoValidadorOficial(t)
 	input := carregarFixtureOficial(t)
 	dps, err := nfse.BuildDPSOficial(context.Background(), input)
@@ -105,8 +118,8 @@ func TestBuildDPSOficialValidaContraXSD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !resultado.Valid {
-		t.Fatalf("DPS oficial minima deveria validar contra v1.01: %v", resultado.Errors)
+	if resultado.Valid || !strings.Contains(strings.Join(resultado.Errors, " "), "serie") {
+		t.Fatalf("serie=1 deveria ser rejeitada pelo facet oficial: %v", resultado.Errors)
 	}
 	if !strings.Contains(string(dps.XML), `<infDPS Id="`) {
 		t.Fatal("XML oficial deve usar infDPS com Id")
@@ -132,10 +145,13 @@ func TestGoldenOficialContraXSD(t *testing.T) {
 		t.Fatal("hash do golden oficial divergente")
 	}
 	resultado, err := validador.ValidateDPS(context.Background(), dps)
-	if err != nil || !resultado.Valid {
-		t.Fatalf("golden oficial deveria validar: %+v err=%v", resultado, err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Logf("casos oficiais que passam no XSD v1.01: 1/1 (fixture minima documental)")
+	if resultado.Valid || !strings.Contains(strings.Join(resultado.Errors, " "), "serie") {
+		t.Fatalf("golden oficial deveria manter o bloqueio do facet de serie: %+v", resultado)
+	}
+	t.Logf("casos oficiais aceitos pelo XSD v1.01: 0/1; bloqueio documentado no facet TSSerieDPS")
 }
 
 func TestBuildDPSOficialDeterministico(t *testing.T) {
@@ -185,7 +201,7 @@ func TestBuildDPSOficialRejeitaEntradaIncompleta(t *testing.T) {
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
-			copia := input
+			copia := clonarOfficialDPSInput(t, input)
 			if c.mutar != nil {
 				c.mutar(&copia)
 			}

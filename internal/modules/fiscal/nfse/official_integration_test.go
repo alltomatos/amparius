@@ -1,10 +1,8 @@
 package nfse_test
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -18,8 +16,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Negativos de XSD sobre a DPS oficial VALIDA: mutacoes no XML devem ser
-// rejeitadas pelo schema local, provando que o teste positivo nao e frouxo.
+// Negativos de XSD sobre a DPS oficial: mutacoes no XML continuam rejeitadas
+// pelo schema local, inclusive quando a fixture base ja esta bloqueada pelo
+// facet oficial de serie.
 func TestDPSOficialNegativosDeXSD(t *testing.T) {
 	validador := novoValidadorOficial(t)
 	input := carregarFixtureOficial(t)
@@ -114,9 +113,9 @@ func setupTenantOficial(t *testing.T, ctx context.Context, database *db.DB, admi
 	return tenant, company, establishment
 }
 
-// Integra o builder oficial ao Service: XSDValidator + FakeAdapter +
-// idempotencia + persistencia + timeout/pendencia continuam funcionando.
-func TestServicoComDPSOficialMantemFluxo(t *testing.T) {
+// O Service deve falhar fechado antes do adapter quando o XSD oficial rejeita
+// a serie semantica da fixture. Nao se registra tentativa nem se transmite.
+func TestServicoComDPSOficialBloqueiaSerieIncompativel(t *testing.T) {
 	dsn, adminDSN := os.Getenv("AMPA_TEST_POSTGRES_DSN"), os.Getenv("AMPA_TEST_POSTGRES_ADMIN_DSN")
 	if dsn == "" || adminDSN == "" {
 		t.Skip("AMPA_TEST_POSTGRES_DSN e AMPA_TEST_POSTGRES_ADMIN_DSN sao necessarios")
@@ -143,10 +142,9 @@ func TestServicoComDPSOficialMantemFluxo(t *testing.T) {
 		t.Fatal(err)
 	}
 	official := carregarFixtureOficial(t)
-	var logBuf bytes.Buffer
 	servico, err := nfse.NewService(nfse.ServiceConfig{
 		Repository: repository, Adapter: nfse.NewFakeAdapter(nfse.FakeConfig{}),
-		Validator: novoValidadorOficial(t), Logger: slog.New(slog.NewJSONHandler(&logBuf, nil)),
+		Validator:    novoValidadorOficial(t),
 		AttemptStore: nfse.NewRepositoryAttemptStore(repository),
 	})
 	if err != nil {
@@ -158,38 +156,18 @@ func TestServicoComDPSOficialMantemFluxo(t *testing.T) {
 		IdempotencyKey: "svc-oficial-201", Official: &official,
 	}
 	resultado, err := servico.Emit(ctxTenant, entrada)
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, nfse.ErrInvalidDPS) {
+		t.Fatalf("serie incompativel deveria bloquear a emissao: %v", err)
 	}
-	if resultado.Status != "authorized" || resultado.AccessKey == "" {
-		t.Fatalf("201 oficial: %+v", resultado)
+	if resultado != (nfse.ServiceResult{}) {
+		t.Fatalf("emissao bloqueada nao deveria produzir resultado: %+v", resultado)
 	}
-	attempt, err := repository.GetEmissionAttempt(ctxTenant, "svc-oficial-201")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if attempt.HTTPStatus == nil || *attempt.HTTPStatus != 201 || attempt.DPSID == nil || *attempt.DPSID != official.ID {
-		t.Fatalf("persistencia oficial: %+v", attempt)
-	}
-	if attempt.RequestHash == nil || len(*attempt.RequestHash) != 64 {
-		t.Fatal("request_hash da DPS oficial ausente ou invalido")
-	}
-	replay, err := servico.Emit(ctxTenant, entrada)
-	if err != nil || replay.AccessKey != resultado.AccessKey {
-		t.Fatalf("replay oficial: %+v err=%v", replay, err)
-	}
-	historico, err := repository.ListEmissionAttempts(ctxTenant, document.ID, competence)
-	if err != nil || len(historico) != 1 {
-		t.Fatalf("idempotencia oficial: %d err=%v", len(historico), err)
-	}
-	for _, proibido := range []string{"Servico de teste sintetico", "00000000000191", "<infDPS", resultado.AccessKey} {
-		if bytes.Contains(logBuf.Bytes(), []byte(proibido)) {
-			t.Fatalf("log contem dado proibido (%q)", proibido)
-		}
+	if _, err := repository.GetEmissionAttempt(ctxTenant, "svc-oficial-201"); !errors.Is(err, fiscal.ErrAttemptNotFound) {
+		t.Fatalf("emissao bloqueada nao deveria persistir tentativa: %v", err)
 	}
 }
 
-func TestServicoComDPSOficialTimeoutPendente(t *testing.T) {
+func TestServicoComDPSOficialBloqueiaAntesDaContingencia(t *testing.T) {
 	dsn, adminDSN := os.Getenv("AMPA_TEST_POSTGRES_DSN"), os.Getenv("AMPA_TEST_POSTGRES_ADMIN_DSN")
 	if dsn == "" || adminDSN == "" {
 		t.Skip("AMPA_TEST_POSTGRES_DSN e AMPA_TEST_POSTGRES_ADMIN_DSN sao necessarios")
@@ -231,14 +209,13 @@ func TestServicoComDPSOficialTimeoutPendente(t *testing.T) {
 		IdempotencyKey: "svc-oficial-timeout", Official: &official,
 	}
 	resultado, err := servico.Emit(ctxTenant, entrada)
-	if !errors.Is(err, nfse.ErrAdapterUnavailable) {
-		t.Fatalf("timeout oficial: %v", err)
+	if !errors.Is(err, nfse.ErrInvalidDPS) {
+		t.Fatalf("serie incompativel deveria bloquear antes do timeout: %v", err)
 	}
-	if resultado.Status != "pending" {
-		t.Fatalf("contingencia nunca autoriza: %+v", resultado)
+	if resultado != (nfse.ServiceResult{}) {
+		t.Fatalf("emissao bloqueada nao deveria entrar em contingencia: %+v", resultado)
 	}
-	attempt, err := repository.GetEmissionAttempt(ctxTenant, "svc-oficial-timeout")
-	if err != nil || attempt.Result != "pending" {
-		t.Fatalf("tentativa pendente: %+v err=%v", attempt, err)
+	if _, err := repository.GetEmissionAttempt(ctxTenant, "svc-oficial-timeout"); !errors.Is(err, fiscal.ErrAttemptNotFound) {
+		t.Fatalf("bloqueio XSD nao deveria persistir pendencia: %v", err)
 	}
 }

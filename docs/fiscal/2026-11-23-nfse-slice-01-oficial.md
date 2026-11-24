@@ -42,16 +42,17 @@ registra essa natureza. São valores de *forma*, não de *regra*.
 
 As fixtures `dps-opcionais.json` e `dps-opcionais.xml` cobrem os ramos
 opcionais que não exigem nova fonte fiscal nem certificado: `toma`, `interm` e
-`serv/infoCompl` (`xPed` e `xInfComp`). Os documentos, nomes e textos são
+`serv/infoCompl` (`idDocTec`, `docRef`, `xPed` e `xInfComp`). Os documentos, nomes e textos são
 explicitamente sintéticos; não representam pessoas, empresas ou regras reais.
 O builder valida documento/nome obrigatórios nesses grupos e rejeita
 `infoCompl` vazio antes da validação XSD. O XML opcional passa pelo mesmo
 `XSDValidator` local v1.01.
 
-## Validador XSD — correção incluída
+## Validador XSD — paridade e bloqueio do schema
 
-Para validar a DPS oficial, `validator.go` passou a tratar corretamente
-`xs:choice` aninhado em `xs:sequence` (casos `prest`, `locPrest`, `totTrib`)
+Para validar a DPS oficial, `validator.go` trata corretamente `xs:choice`
+aninhado em `xs:sequence` (casos `prest`, `locPrest`, `totTrib`) e interpreta
+`^`/`$` como literais do regex XML Schema, em paridade com libxml2.
 e a casar grupos de alternativas com `minOccurs`/`maxOccurs`. Antes, as
 alternativas eram tratadas como partículas sequenciais isoladas e a DPS oficial
 falhava por erro do compilador, não por erro de XML. Os testes antigos de
@@ -61,19 +62,19 @@ detecção de estrutura inválida continuam verdes.
 
 | Caso | Resultado |
 |---|---|
-| `TestGoldenOficialContraXSD` | **1/1 caso oficial mínimo passa** no XSD v1.01 |
-| `TestBuildDPSOficialComRamosOpcionaisValidaContraXSD` | **1/1 fixture opcional passa** no XSD v1.01 (`toma` + `interm` + `infoCompl`) |
+| `TestGoldenOficialContraXSD` | **0/1**; bloqueado honestamente por `serie=1` no facet oficial |
+| `TestBuildDPSOficialComRamosOpcionaisPreservaGapDeSerie` | XML opcional construido; bloqueado pelo mesmo facet (`toma` + `interm` + `infoCompl`) |
 | `TestBuildDPSOficialRejeitaRamosOpcionaisIncompletos` | 4 negativos fail-closed para grupos opcionais |
-| `TestBuildDPSOficialValidaContraXSD` | positivo, com `infDPS@Id` e namespace |
+| `TestBuildDPSOficialDetectaSerieIncompativelComXSD` | bloqueia `serie=1` com diagnostico do facet |
 | `TestBuildDPSOficialDeterministico` | mesmo XML + mesmo hash |
 | `TestBuildDPSOficialRejeitaEntradaIncompleta` | 22 negativos (21 campos obrigatórios + contexto cancelado) |
 | `TestDPSOficialNegativosDeXSD` | 8 mutações do XML oficial rejeitadas (versao, Id, infDPS, tpAmb, CNPJ, elemento extra, vServ, namespace) |
-| `TestServicoComDPSOficialMantemFluxo` | integração real: XSDValidator + FakeAdapter + 201 + persistência 0008 + replay sem duplicar + log sem PII |
-| `TestServicoComDPSOficialTimeoutPendente` | timeout → `pending`, nunca `authorized` |
+| `TestServicoComDPSOficialBloqueiaSerieIncompativel` | bloqueio fail-closed antes do adapter/transmissao e sem persistencia |
+| `TestServicoComDPSOficialBloqueiaAntesDaContingencia` | serie incompatível não vira `pending` nem `authorized` |
 | `TestBuildDPSOficialNaoMascaraBuilderEstrutural` | 8 golden antigos **continuam** incompatíveis (0/8) |
 | `TestGoldenContraXSDOficial` | 0/8 mantido, com `ErrXSDIncompatible` |
 
-**Casos oficiais que passam: 1/1.** Golden estruturais antigos: **0/8**, sem
+**Casos oficiais que passam: 0/1** por causa do facet de `serie`. Golden estruturais antigos: **0/8**, sem
 mascaramento — `ServiceInput.Official` seleciona o caminho novo; sem ele, o
 `Service` continua usando `BuildDPS` + `LocalValidator` exatamente como antes.
 
@@ -114,5 +115,5 @@ $env:AMPA_CONTROL_POSTGRES_DSN="postgres://amparius_control_app:amparius@127.0.0
 go test -count=1 -v ./internal/modules/fiscal/nfse/... -run "TestGoldenOficial|TestBuildDPSOficial|TestDPSOficial|TestServicoComDPSOficial"
 ```
 
-Saída esperada: `casos oficiais que passam no XSD v1.01: 1/1` e
+Saída esperada: `casos oficiais aceitos pelo XSD v1.01: 0/1` e
 `golden validos contra XSD oficial v1.01: 0/8 (incompativeis: 8)`.

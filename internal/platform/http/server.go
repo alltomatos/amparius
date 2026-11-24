@@ -29,6 +29,8 @@ type Options struct {
 	// DevelopmentCatalog é o handler das rotas dev-only de catálogo:
 	// itens, listas de preços e preços.
 	DevelopmentCatalog http.Handler
+	// DevelopmentFinance é o handler da jornada financeira mínima dev-only.
+	DevelopmentFinance http.Handler
 }
 
 // New constrói o servidor com as dependências injetadas.
@@ -85,6 +87,24 @@ func (s *Server) routes(options Options) {
 		s.mux.Handle("/_dev/catalog/price-lists/{id}", options.DevelopmentCatalog)
 		s.mux.Handle("/_dev/catalog/prices", options.DevelopmentCatalog)
 		s.mux.Handle("/_dev/catalog/prices/{id}", options.DevelopmentCatalog)
+	}
+	if options.DevelopmentMode && options.DevelopmentFinance != nil {
+		for _, pattern := range []string{
+			"/_dev/finance/accounts",
+			"/_dev/finance/accounts/{id}",
+			"/_dev/finance/titles",
+			"/_dev/finance/titles/{id}",
+			"/_dev/finance/titles/{id}/installments",
+			"/_dev/finance/installments",
+			"/_dev/finance/installments/{id}",
+			"/_dev/finance/payments",
+			"/_dev/finance/cash-sessions",
+			"/_dev/finance/cash-sessions/{id}",
+			"/_dev/finance/cash-movements",
+			"/_dev/finance/ledger-entries",
+		} {
+			s.mux.Handle(pattern, options.DevelopmentFinance)
+		}
 	}
 }
 

@@ -441,7 +441,53 @@ original sem exigir UPDATE em tabelas append-only. Os metodos
 `CreatePaymentIdempotent` e `CreateCashMovementIdempotent` rejeitam chave vazia
 ou acima de 200 runas; os metodos legados geram uma chave interna de
 compatibilidade. A migration `0018_finance_idempotency.sql` e forward-only.
-Casos de uso HTTP, autenticação de produção e jornada continuam na #18.
+Autenticação de produção permanece fora desta superfície dev-only.
+
+### API Finance dev-only (#18 / FIN-01C)
+
+Com `APP_ENV=development` e `ENABLE_DEV_ONBOARDING=true`, `cmd/api` registra
+somente a superfície HTTP dev-only do Finance. Sem os dois valores, as rotas não
+existem e respondem `404`. O tenant é aceito exclusivamente em
+`X-Amparius-Development-Tenant-ID` e imediatamente colocado no contexto com
+`db.WithTenant`; `tenant_id` no JSON é campo desconhecido e é rejeitado.
+
+As rotas mínimas são:
+
+- `POST/GET /_dev/finance/accounts` e `GET /_dev/finance/accounts/{id}`;
+- `POST/GET /_dev/finance/titles` e `GET /_dev/finance/titles/{id}`;
+- `POST/GET /_dev/finance/installments`, `GET /_dev/finance/installments/{id}`
+  e `POST/GET /_dev/finance/titles/{id}/installments`;
+- `POST /_dev/finance/payments` para baixa;
+- `POST /_dev/finance/cash-sessions` e `GET /_dev/finance/cash-sessions/{id}`;
+- `POST/GET /_dev/finance/cash-movements` (a consulta exige `session_id`);
+- `POST/GET /_dev/finance/ledger-entries` (a consulta aceita `account_id`).
+
+Os corpos são objetos JSON estritos, limitados a 16 KiB, com datas em
+`AAAA-MM-DD`, instantes em RFC3339 e valores somente como inteiros
+`*_cents` (`int64`). Campos desconhecidos, JSON duplicado, referências inválidas
+e valores monetários em decimal/string são rejeitados. Baixas e movimentos de
+caixa exigem `Idempotency-Key`; a chave é encaminhada ao repositório persistente
+e um replay devolve o registro original sem duplicação. As FKs compostas do
+Finance e o RLS recusam referências de outro tenant.
+
+Toda resposta dessas rotas traz `X-Amparius-Development-Only: true`,
+`Cache-Control: no-store`, `Content-Type: application/json` e não expõe a
+mensagem SQL ou dados pessoais em erros. O middleware HTTP mantém o
+`X-Request-Id` e registra método, rota, status, bytes e duração; não registra
+query string nem IP. Nenhuma regra fiscal é criada ou inferida nessa jornada.
+
+Os testes unitários de contrato estão em
+`internal/modules/finance/http_test.go`. A prova HTTP PostgreSQL real está em
+`internal/modules/finance/http_integration_test.go`: exige
+`AMPA_TEST_POSTGRES_DSN` com `amparius_app` (`NOSUPERUSER NOBYPASSRLS`) e
+`AMPA_TEST_POSTGRES_ADMIN_DSN` somente para cleanup. Sem essas variáveis o teste
+faz `SKIP` antes de criar dados. Com as variáveis, reproduza com:
+
+```powershell
+$env:AMPA_TEST_POSTGRES_DSN = 'postgres://...'
+$env:AMPA_TEST_POSTGRES_ADMIN_DSN = 'postgres://...'
+go test ./internal/modules/finance -run 'TestDevelopmentFinanceHTTPPostgresTenantIsolationAndCleanup' -v -count=1
+```
 
 ### Migration Fiscal
 

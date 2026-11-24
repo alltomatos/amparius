@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/alltomatos/amparius/internal/modules/catalog"
+	"github.com/alltomatos/amparius/internal/modules/finance"
 	"github.com/alltomatos/amparius/internal/modules/identity"
 	"github.com/alltomatos/amparius/internal/modules/party"
 	"github.com/alltomatos/amparius/internal/platform/config"
@@ -48,6 +49,7 @@ func run() error {
 	var deceasedHandler http.Handler
 	var familyLinksHandler http.Handler
 	var catalogHandler http.Handler
+	var financeHandler http.Handler
 	if devOnboardingEnabled {
 		database, err := db.New(ctx, cfg.PostgresDSN)
 		if err != nil {
@@ -74,6 +76,12 @@ func run() error {
 			return fmt.Errorf("criar repositório de catálogo: %w", err)
 		}
 		catalogHandler = catalog.NewDevelopmentHTTPHandler(catalogRepository)
+
+		financeRepository, err := finance.NewRepository(database)
+		if err != nil {
+			return fmt.Errorf("criar repositório financeiro: %w", err)
+		}
+		financeHandler = finance.NewDevelopmentHTTPHandler(financeRepository)
 	}
 
 	server := &http.Server{
@@ -85,6 +93,7 @@ func run() error {
 			DevelopmentDeceased:    deceasedHandler,
 			DevelopmentFamilyLinks: familyLinksHandler,
 			DevelopmentCatalog:     catalogHandler,
+			DevelopmentFinance:     financeHandler,
 		}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

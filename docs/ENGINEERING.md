@@ -155,6 +155,16 @@ Regras oficiais são append-only; novas publicações devem ser novas linhas com
 fonte, versão, data e hash SHA-256. O motor fiscal futuro deve falhar fechado
 com `ErrTaxRuleNotFound` quando não encontrar regra oficial datada.
 
+O checker Go consulta somente linhas vigentes em `valid_from <= competência <
+valid_to` (ou sem `valid_to`). Se houver regra do tenant, ela tem precedência
+explícita sobre a global; uma única candidata é obrigatória e ausência ou
+ambiguidade falha fechada. Erros de banco retornam `ErrTaxRuleUnavailable`,
+distinto de `ErrTaxRuleNotFound`. O tenant é obrigatório no contexto via
+`db.WithTenant`, e a transação configura `app.tenant_id` antes da consulta.
+Company/establishment e município devem ser resolvidos pela sessão autenticada
+e pelo caso de uso, nunca confiados diretamente ao corpo HTTP. Este slice não
+importa nem insere dados tributários oficiais.
+
 As combinações de `tax_type`, escopo e códigos fiscais são validadas no banco;
 as formas de cálculo exigem os campos próprios de `basis_kind` (inclusive
 faixa do Simples e valor por unidade). Hashes de certificado e regra são

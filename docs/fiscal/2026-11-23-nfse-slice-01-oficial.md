@@ -38,6 +38,16 @@ real e sem dado fiscal oficial: `CNPJ` de teste, `cTribNac` `000000`,
 `vServ` `1.00`, `indTotTrib` `0`, `tpAmb` `2`. O comentário `_comment` no JSON
 registra essa natureza. São valores de *forma*, não de *regra*.
 
+## Ramos opcionais cobertos nesta fatia
+
+As fixtures `dps-opcionais.json` e `dps-opcionais.xml` cobrem os ramos
+opcionais que não exigem nova fonte fiscal nem certificado: `toma`, `interm` e
+`serv/infoCompl` (`xPed` e `xInfComp`). Os documentos, nomes e textos são
+explicitamente sintéticos; não representam pessoas, empresas ou regras reais.
+O builder valida documento/nome obrigatórios nesses grupos e rejeita
+`infoCompl` vazio antes da validação XSD. O XML opcional passa pelo mesmo
+`XSDValidator` local v1.01.
+
 ## Validador XSD — correção incluída
 
 Para validar a DPS oficial, `validator.go` passou a tratar corretamente
@@ -51,7 +61,9 @@ detecção de estrutura inválida continuam verdes.
 
 | Caso | Resultado |
 |---|---|
-| `TestGoldenOficialContraXSD` | **1/1 caso oficial passa** no XSD v1.01 (fixture mínima) |
+| `TestGoldenOficialContraXSD` | **1/1 caso oficial mínimo passa** no XSD v1.01 |
+| `TestBuildDPSOficialComRamosOpcionaisValidaContraXSD` | **1/1 fixture opcional passa** no XSD v1.01 (`toma` + `interm` + `infoCompl`) |
+| `TestBuildDPSOficialRejeitaRamosOpcionaisIncompletos` | 4 negativos fail-closed para grupos opcionais |
 | `TestBuildDPSOficialValidaContraXSD` | positivo, com `infDPS@Id` e namespace |
 | `TestBuildDPSOficialDeterministico` | mesmo XML + mesmo hash |
 | `TestBuildDPSOficialRejeitaEntradaIncompleta` | 22 negativos (21 campos obrigatórios + contexto cancelado) |
@@ -80,10 +92,12 @@ da migration 0008) permanecem intactos. Nenhuma migration foi alterada.
 - O compilador XSD é Go puro e cobre subconjunto XSD 1.0 (sem `xs:group`,
   `union`, facets numéricos, `key/keyref`). Validação de produção deve usar
   motor XSD 1.0 completo (libxml2/Xerces) com o mesmo pacote oficial.
-- A fixture é **mínima**: não cobre `toma`, `interm`, `IBSCBS`, `pAliq`,
-  `tribFed`, `comExt`, `obra`, `atvEvento`, `infoCompl`, `vDescCondIncond`,
+- A fixture mínima não cobre `IBSCBS`, `pAliq`,
+  `tribFed`, `comExt`, `obra`, `atvEvento`, `vDescCondIncond`,
   `vDedRed`, `subst`, `ds:Signature`. Cada um entra por campo de entrada
   quando a fonte oficial datada existir.
+- A fixture opcional cobre somente `toma`, `interm` e `infoCompl` com campos
+  livres. Os demais ramos opcionais permanecem fora desta fatia.
 - Fontes de Fortaleza (LC 159/2013 art. 245 e alterações), `cTribNac`
   real, `cTribMun`, RTC IBS/CBS com oráculo da RFB e certificado ICP-Brasil
   continuam sendo gates da fatia 02 (ADR 0010 §6). Nada foi importado.

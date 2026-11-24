@@ -13,8 +13,12 @@ import (
 )
 
 func carregarFixtureOficial(t *testing.T) nfse.OfficialDPSInput {
+	return carregarFixtureOficialArquivo(t, "dps-minima.json")
+}
+
+func carregarFixtureOficialArquivo(t *testing.T, nome string) nfse.OfficialDPSInput {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("testdata", "official", "dps-minima.json"))
+	raw, err := os.ReadFile(filepath.Join("testdata", "official", nome))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,6 +27,65 @@ func carregarFixtureOficial(t *testing.T) nfse.OfficialDPSInput {
 		t.Fatal(err)
 	}
 	return input
+}
+
+func TestBuildDPSOficialComRamosOpcionaisValidaContraXSD(t *testing.T) {
+	validador := novoValidadorOficial(t)
+	input := carregarFixtureOficialArquivo(t, "dps-opcionais.json")
+	esperado, err := os.ReadFile(filepath.Join("testdata", "official", "dps-opcionais.xml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dps, err := nfse.BuildDPSOficial(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(dps.XML) != strings.TrimSpace(string(esperado)) {
+		t.Fatalf("XML oficial opcional divergiu do golden:\ngot:  %s\nwant: %s", dps.XML, esperado)
+	}
+	resultado, err := validador.ValidateDPS(context.Background(), dps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resultado.Valid {
+		t.Fatalf("DPS oficial com toma/interm/infoCompl deveria validar: %v", resultado.Errors)
+	}
+	for _, elemento := range []string{"<toma>", "<interm>", "<infoCompl>", "<xPed>", "<xInfComp>"} {
+		if !strings.Contains(string(dps.XML), elemento) {
+			t.Fatalf("ramo opcional ausente: %s", elemento)
+		}
+	}
+}
+
+func TestBuildDPSOficialRejeitaRamosOpcionaisIncompletos(t *testing.T) {
+	input := carregarFixtureOficial(t)
+	testes := []struct {
+		nome  string
+		mutar func(*nfse.OfficialDPSInput)
+	}{
+		{"tomador sem documento", func(i *nfse.OfficialDPSInput) {
+			i.Tomador = &nfse.OfficialPessoa{DocumentoTipo: "CNPJ", Nome: "Tomador sintetico"}
+		}},
+		{"tomador sem nome", func(i *nfse.OfficialDPSInput) {
+			i.Tomador = &nfse.OfficialPessoa{DocumentoTipo: "CNPJ", Documento: "00000000000272"}
+		}},
+		{"intermediario com choice invalido", func(i *nfse.OfficialDPSInput) {
+			i.Intermediario = &nfse.OfficialPessoa{DocumentoTipo: "RG", Documento: "sintetico", Nome: "Intermediario sintetico"}
+		}},
+		{"infoCompl vazio", func(i *nfse.OfficialDPSInput) {
+			i.Servico.InfoCompl = &nfse.OfficialInfoComplementar{}
+		}},
+	}
+	for _, teste := range testes {
+		t.Run(teste.nome, func(t *testing.T) {
+			copia := input
+			teste.mutar(&copia)
+			_, err := nfse.BuildDPSOficial(context.Background(), copia)
+			if !errors.Is(err, nfse.ErrInvalidDPS) {
+				t.Fatalf("erro fail-closed esperado: %v", err)
+			}
+		})
+	}
 }
 
 func TestBuildDPSOficialValidaContraXSD(t *testing.T) {

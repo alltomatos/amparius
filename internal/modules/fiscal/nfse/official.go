@@ -27,9 +27,11 @@ type OfficialDPSInput struct {
 	TpEmit   string `json:"tp_emit"`
 	CLocEmi  string `json:"c_loc_emi"`
 
-	Prestador OfficialPrestador `json:"prestador"`
-	Servico   OfficialServico   `json:"servico"`
-	Valores   OfficialValores   `json:"valores"`
+	Prestador     OfficialPrestador `json:"prestador"`
+	Tomador       *OfficialPessoa   `json:"tomador,omitempty"`
+	Intermediario *OfficialPessoa   `json:"intermediario,omitempty"`
+	Servico       OfficialServico   `json:"servico"`
+	Valores       OfficialValores   `json:"valores"`
 }
 
 // OfficialPrestador e o minimo de TCInfoPrestador + TCRegTrib.
@@ -41,11 +43,31 @@ type OfficialPrestador struct {
 	RegEspTrib    string `json:"reg_esp_trib"`
 }
 
+// OfficialPessoa representa os ramos opcionais toma/interm. O nome e
+// obrigatorio pelo TCInfoPessoa; o documento seleciona o xs:choice oficial.
+// Os valores continuam sendo entradas resolvidas pelo caso de uso e podem
+// ser sinteticos apenas em fixtures de teste.
+type OfficialPessoa struct {
+	DocumentoTipo string `json:"documento_tipo"`
+	Documento     string `json:"documento"`
+	Nome          string `json:"nome"`
+}
+
 // OfficialServico e o minimo de TCServ (TCLocPrest + TCCServ).
 type OfficialServico struct {
-	CLocPrestacao string `json:"c_loc_prestacao"`
-	CTribNac      string `json:"c_trib_nac"`
-	XDescServ     string `json:"x_desc_serv"`
+	CLocPrestacao string                    `json:"c_loc_prestacao"`
+	CTribNac      string                    `json:"c_trib_nac"`
+	XDescServ     string                    `json:"x_desc_serv"`
+	InfoCompl     *OfficialInfoComplementar `json:"info_compl,omitempty"`
+}
+
+// OfficialInfoComplementar cobre apenas os campos livres de TCInfoCompl.
+// Nao introduz codigo fiscal, aliquota ou regra legal.
+type OfficialInfoComplementar struct {
+	IDDocTec string `json:"id_doc_tec,omitempty"`
+	DocRef   string `json:"doc_ref,omitempty"`
+	XPed     string `json:"x_ped,omitempty"`
+	XInfComp string `json:"x_inf_comp,omitempty"`
 }
 
 // OfficialValores e o minimo de TCInfoValores: TCVServPrest (vServ),
@@ -94,12 +116,26 @@ func BuildDPSOficial(ctx context.Context, input OfficialDPSInput) (DPS, error) {
 	b.WriteString(elem("regEspTrib", input.Prestador.RegEspTrib))
 	b.WriteString(`</regTrib>`)
 	b.WriteString(`</prest>`)
+	if input.Tomador != nil {
+		writeOfficialPessoa(&b, "toma", *input.Tomador)
+	}
+	if input.Intermediario != nil {
+		writeOfficialPessoa(&b, "interm", *input.Intermediario)
+	}
 	b.WriteString(`<serv>`)
 	b.WriteString(`<locPrest>` + elem("cLocPrestacao", input.Servico.CLocPrestacao) + `</locPrest>`)
 	b.WriteString(`<cServ>`)
 	b.WriteString(elem("cTribNac", input.Servico.CTribNac))
 	b.WriteString(elem("xDescServ", input.Servico.XDescServ))
 	b.WriteString(`</cServ>`)
+	if input.Servico.InfoCompl != nil {
+		b.WriteString(`<infoCompl>`)
+		b.WriteString(elemIf("idDocTec", input.Servico.InfoCompl.IDDocTec))
+		b.WriteString(elemIf("docRef", input.Servico.InfoCompl.DocRef))
+		b.WriteString(elemIf("xPed", input.Servico.InfoCompl.XPed))
+		b.WriteString(elemIf("xInfComp", input.Servico.InfoCompl.XInfComp))
+		b.WriteString(`</infoCompl>`)
+	}
 	b.WriteString(`</serv>`)
 	b.WriteString(`<valores>`)
 	b.WriteString(`<vServPrest>` + elem("vServ", input.Valores.VServ) + `</vServPrest>`)
@@ -147,9 +183,55 @@ func validateOfficialInput(input OfficialDPSInput) error {
 	if _, err := time.Parse("2006-01-02", input.DCompet); err != nil {
 		return fmt.Errorf("%w: dCompet invalido: %v", ErrInvalidDPS, err)
 	}
+	if err := validateOfficialPessoa(input.Tomador, "toma"); err != nil {
+		return err
+	}
+	if err := validateOfficialPessoa(input.Intermediario, "interm"); err != nil {
+		return err
+	}
+	if input.Servico.InfoCompl != nil {
+		if strings.TrimSpace(input.Servico.InfoCompl.IDDocTec) == "" &&
+			strings.TrimSpace(input.Servico.InfoCompl.DocRef) == "" &&
+			strings.TrimSpace(input.Servico.InfoCompl.XPed) == "" &&
+			strings.TrimSpace(input.Servico.InfoCompl.XInfComp) == "" {
+			return fmt.Errorf("%w: infoCompl sem nenhum campo", ErrInvalidDPS)
+		}
+	}
 	return nil
+}
+
+func validateOfficialPessoa(pessoa *OfficialPessoa, grupo string) error {
+	if pessoa == nil {
+		return nil
+	}
+	if !officialDocumentKinds[pessoa.DocumentoTipo] {
+		return fmt.Errorf("%w: %s.documento_tipo fora do choice oficial: %s", ErrInvalidDPS, grupo, pessoa.DocumentoTipo)
+	}
+	for _, campo := range []struct{ nome, valor string }{
+		{grupo + ".documento", pessoa.Documento},
+		{grupo + ".nome", pessoa.Nome},
+	} {
+		if strings.TrimSpace(campo.valor) == "" {
+			return fmt.Errorf("%w: campo obrigatorio ausente: %s", ErrInvalidDPS, campo.nome)
+		}
+	}
+	return nil
+}
+
+func writeOfficialPessoa(b *strings.Builder, grupo string, pessoa OfficialPessoa) {
+	b.WriteString("<" + grupo + ">")
+	b.WriteString(elem(pessoa.DocumentoTipo, pessoa.Documento))
+	b.WriteString(elem("xNome", pessoa.Nome))
+	b.WriteString("</" + grupo + ">")
 }
 
 func elem(name, value string) string {
 	return `<` + name + `>` + escape(value) + `</` + name + `>`
+}
+
+func elemIf(name, value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return elem(name, value)
 }

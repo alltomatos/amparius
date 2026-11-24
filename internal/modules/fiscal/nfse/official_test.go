@@ -183,6 +183,55 @@ func TestBuildDPSOficialValidaXDescServNosLimitesTSDesc2000(t *testing.T) {
 	}
 }
 
+func TestBuildDPSOficialValidaFormatoDeCTribNac(t *testing.T) {
+	validador := novoValidadorOficial(t)
+	cases := []struct {
+		nome   string
+		valor  string
+		aceita bool
+	}{
+		{"seis digitos", "123456", true},
+		{"zeros a esquerda", "000001", true},
+		{"cinco digitos", "12345", false},
+		{"sete digitos", "1234567", false},
+		{"espaco na borda esquerda", " 12345", false},
+		{"espaco na borda direita", "12345 ", false},
+		{"tab interno", "123\t56", false},
+		{"quebra de linha", "12345\n", false},
+		{"letra ASCII", "12345A", false},
+		{"digito unicode", "12345٦", false},
+		{"digito fullwidth", "12345６", false},
+	}
+
+	for _, caso := range cases {
+		t.Run(caso.nome, func(t *testing.T) {
+			input := carregarFixtureOficial(t)
+			input.Servico.CTribNac = caso.valor
+			dps, err := nfse.BuildDPSOficial(context.Background(), input)
+			if !caso.aceita {
+				if !errors.Is(err, nfse.ErrInvalidDPS) {
+					t.Fatalf("cTribNac %q deveria falhar fechado: %v", caso.valor, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("cTribNac %q deveria ser aceito: %v", caso.valor, err)
+			}
+			if !strings.Contains(string(dps.XML), "<cTribNac>"+caso.valor+"</cTribNac>") {
+				t.Fatalf("cTribNac %q nao foi preservado no XML", caso.valor)
+			}
+
+			// Neutraliza somente o bloqueio conhecido de serie; o caso continua
+			// provando o pattern TSCodTribNac no XSD v1.01 local.
+			xml := strings.Replace(string(dps.XML), "<serie>1</serie>", "<serie>^1$</serie>", 1)
+			resultado, err := validador.ValidateDPS(context.Background(), nfse.DPS{XML: []byte(xml), IDDps: dps.IDDps})
+			if err != nil || !resultado.Valid {
+				t.Fatalf("cTribNac %q deveria passar no XSD: %+v err=%v", caso.valor, resultado, err)
+			}
+		})
+	}
+}
+
 func TestBuildDPSOficialValidaFacetsTextuaisDeInfoCompl(t *testing.T) {
 	validador := novoValidadorOficial(t)
 	cases := []struct {

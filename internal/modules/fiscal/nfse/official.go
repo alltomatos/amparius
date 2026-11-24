@@ -247,6 +247,23 @@ func validateOfficialInput(input OfficialDPSInput) error {
 	if tamanho := len([]rune(input.Servico.XDescServ)); tamanho < officialDesc2000Min || tamanho > officialDesc2000Max {
 		return fmt.Errorf("%w: serv.xDescServ deve ter de %d a %d caracteres", ErrInvalidDPS, officialDesc2000Min, officialDesc2000Max)
 	}
+	if err := validateOfficialCTribNac(input.Servico.CTribNac); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateOfficialCTribNac reproduz somente a forma de TSCodTribNac do XSD
+// oficial v1.01. Nao verifica existencia, vigencia ou aplicabilidade fiscal.
+func validateOfficialCTribNac(value string) error {
+	if len(value) != 6 {
+		return fmt.Errorf("%w: serv.cTribNac deve conter exatamente 6 digitos ASCII", ErrInvalidDPS)
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] < '0' || value[i] > '9' {
+			return fmt.Errorf("%w: serv.cTribNac deve conter exatamente 6 digitos ASCII", ErrInvalidDPS)
+		}
+	}
 	return nil
 }
 

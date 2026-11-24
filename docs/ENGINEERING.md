@@ -173,3 +173,12 @@ origem obrigatória de cada regra.
 
 Certificados nunca armazenam senha, PIN, chave privada, PFX, token ou bytes
 criptográficos: apenas metadados e uma referência opaca ao Vault/KMS.
+
+`0005_fiscal_documents.sql` acrescenta a trilha operacional fiscal: `fiscal_document`
+e `fiscal_item` particionados por competência mensal, `tax_calc` com entrada e
+hash da regra usada no snapshot, e `emission_attempt` com chave de idempotência
+por tenant e resposta bruta/hash por tentativa. As tabelas têm RLS, chaves
+compostas tenant/documento/competência para impedir referências cruzadas e
+histórico append-only onde aplicável; nenhum dado tributário ou seed de alíquota
+é inserido. A emissão guarda apenas a referência do XML em object storage e seu
+hash no documento.

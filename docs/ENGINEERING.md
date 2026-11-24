@@ -381,13 +381,24 @@ relatório deve registrar a ausência claramente.
 ### Migration Finance
 
 `migrations/0003_finance.sql` cria o schema `finance` para contas, centros de
-custo, contas bancarias, titulos, parcelas, pagamentos e caixa. Os codigos de
-dominio continuam em `identity.domain_value`; a migration nao cria enums PG.
-Todas as tabelas carregam `tenant_id` e RLS. `finance.ledger_entry` e
+custo, contas bancarias, titulos, parcelas, pagamentos, caixa e ledger. Os
+codigos de dominio continuam em `identity.domain_value`; a migration nao cria
+enums PG. Todas as tabelas carregam `tenant_id` e RLS. `finance.ledger_entry` e
 particionado por competencia mensal e, assim como pagamentos e movimentos de
 caixa, e append-only. O limite de pagamento e validado no banco em trigger,
 bloqueando a parcela durante a soma dos pagamentos para evitar sobrepagamento
 por corrida.
+
+Como `0003` ja foi aplicada, `migrations/0015_finance_grants.sql` corrige os
+privilegios sem editar a migration original: `amparius_app` recebe `USAGE` em
+`finance` e `SELECT, INSERT` nas nove tabelas do modelo. A `0016` remove
+`UPDATE, DELETE` que existiam fora do contrato; a `0017` concede somente
+`UPDATE` em `finance.installment`, exigido pelo `SELECT ... FOR UPDATE` do
+trigger de sobrepagamento. Nao ha `DELETE` para o modelo, e pagamentos,
+movimentos, ledger e historico continuam protegidos tambem pelos triggers
+append-only/historicos de `0003`. Centros de custo e contas bancarias ja
+possuem grants para o modelo, embora o repositorio Go atual ainda nao exponha
+casos de uso para eles.
 
 Os repositórios Go de `party`, `catalog` e `finance` usam `internal/platform/db`.
 O repositório Finance expõe valores monetários como centavos `int64` e converte
@@ -407,15 +418,22 @@ administrativo `amparius` do Compose é superusuário e não serve para provar R
 mas pode ser usado exclusivamente no cleanup. Em ambiente local, após as
 migrações, o papel de aplicação pode ser preparado com:
 
-```sql
-CREATE ROLE amparius_app LOGIN PASSWORD 'defina-localmente' NOSUPERUSER NOBYPASSRLS;
-GRANT USAGE ON SCHEMA identity, party, catalog, finance TO amparius_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA identity, party, catalog, finance TO amparius_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA identity, party, catalog, finance TO amparius_app;
-GRANT EXECUTE ON FUNCTION public.uuidv7() TO amparius_app;
-```
+As grants do Finance sao aplicadas por `0015`; a criacao da role e os grants de
+`identity`, `party` e `catalog` continuam sendo responsabilidade das
+migrations respectivas. O papel deve permanecer `NOSUPERUSER NOBYPASSRLS`.
 
 O segredo não deve ser versionado; o DSN é somente variável de ambiente.
+
+O teste de integração Finance agora comprova os grants efetivos, isolamento
+cruzado em todas as tabelas do schema, ledger balanceado, rejeicao de mutacoes,
+sobrepagamento concorrente e cleanup administrativo sem residuos. Sem os dois
+DSNs, o teste faz `SKIP` antes de criar dados.
+
+Esta subissue (#16 / FIN-01A) entrega o modelo, RLS, grants e invariantes de
+banco. A #17 (FIN-01B) ainda precisa implementar casos de uso e idempotencia
+persistida para replay de baixa/caixa, alem de transicoes de estado. A #18
+(FIN-01C) ainda precisa expor o contrato HTTP dev-only, jornada, JSON estrito,
+headers/no-store e observabilidade minima.
 
 ### Migration Fiscal
 

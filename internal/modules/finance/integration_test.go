@@ -228,6 +228,14 @@ func TestRepositoryFinanceTenantIsolationAndPaymentBalance(t *testing.T) {
 	if _, err := repository.CreatePayment(ctxA, finance.Payment{InstallmentID: installment.ID, BankAccountID: bankAccountID, AmountCents: 6000, Method: "pix"}); err != nil {
 		t.Fatal(err)
 	}
+	replayed, err := repository.CreatePaymentIdempotent(ctxA, "payment-replay-001", finance.Payment{InstallmentID: installment.ID, BankAccountID: bankAccountID, AmountCents: 1000, Method: "pix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayedAgain, err := repository.CreatePaymentIdempotent(ctxA, "payment-replay-001", finance.Payment{InstallmentID: installment.ID, AmountCents: 1000, Method: "pix"})
+	if err != nil || replayedAgain.ID != replayed.ID || replayedAgain.AmountCents != replayed.AmountCents {
+		t.Fatalf("replay de pagamento duplicou ou alterou o registro: first=%+v again=%+v err=%v", replayed, replayedAgain, err)
+	}
 	if _, err := repository.CreatePayment(ctxA, finance.Payment{InstallmentID: installment.ID, AmountCents: 5000, Method: "pix"}); err == nil {
 		t.Fatal("pagamento acima do saldo deveria falhar")
 	}
@@ -238,8 +246,12 @@ func TestRepositoryFinanceTenantIsolationAndPaymentBalance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("criar sessao de caixa: %v", err)
 	}
-	if _, err := repository.CreateCashMovement(ctxA, finance.CashMovement{SessionID: cashSession.ID, Kind: "in", AmountCents: 1000, Reason: "suprimento"}); err != nil {
+	if _, err := repository.CreateCashMovementIdempotent(ctxA, "cash-replay-001", finance.CashMovement{SessionID: cashSession.ID, Kind: "in", AmountCents: 1000, Reason: "suprimento"}); err != nil {
 		t.Fatalf("criar movimento de caixa: %v", err)
+	}
+	cashAgain, err := repository.CreateCashMovementIdempotent(ctxA, "cash-replay-001", finance.CashMovement{SessionID: cashSession.ID, Kind: "in", AmountCents: 900, Reason: "alterado"})
+	if err != nil || cashAgain.AmountCents != 1000 || cashAgain.Reason != "suprimento" {
+		t.Fatalf("replay de caixa duplicou ou alterou o registro: %+v err=%v", cashAgain, err)
 	}
 	if _, err := repository.CreateLedgerEntry(ctxA, finance.LedgerEntry{AccountID: account.ID, Competence: time.Date(2026, 11, 23, 0, 0, 0, 0, time.UTC), DebitCents: 10000, Source: "test"}); err != nil {
 		t.Fatalf("criar debito no ledger: %v", err)

@@ -430,10 +430,18 @@ sobrepagamento concorrente e cleanup administrativo sem residuos. Sem os dois
 DSNs, o teste faz `SKIP` antes de criar dados.
 
 Esta subissue (#16 / FIN-01A) entrega o modelo, RLS, grants e invariantes de
-banco. A #17 (FIN-01B) ainda precisa implementar casos de uso e idempotencia
-persistida para replay de baixa/caixa, alem de transicoes de estado. A #18
-(FIN-01C) ainda precisa expor o contrato HTTP dev-only, jornada, JSON estrito,
-headers/no-store e observabilidade minima.
+banco. A #17 (FIN-01B) entrega a idempotencia persistida e os casos de uso
+transacionais de pagamento e caixa. A #18 (FIN-01C) ainda precisa expor o
+contrato HTTP dev-only, jornada, JSON estrito, headers/no-store e
+observabilidade minima.
+
+Na #17, `finance.payment` e `finance.cash_movement` passam a aceitar uma chave
+de idempotencia por tenant, com indice unico e replay que devolve o registro
+original sem exigir UPDATE em tabelas append-only. Os metodos
+`CreatePaymentIdempotent` e `CreateCashMovementIdempotent` rejeitam chave vazia
+ou acima de 200 runas; os metodos legados geram uma chave interna de
+compatibilidade. A migration `0018_finance_idempotency.sql` e forward-only.
+Casos de uso HTTP, autenticação de produção e jornada continuam na #18.
 
 ### Migration Fiscal
 

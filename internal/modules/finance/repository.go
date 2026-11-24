@@ -16,9 +16,10 @@ import (
 )
 
 var (
-	ErrNotFound       = errors.New("registro financeiro não encontrado")
-	ErrInvalidAmount  = errors.New("valor monetário inválido")
-	ErrTenantMismatch = errors.New("tenant da entidade diverge do contexto")
+	ErrNotFound              = errors.New("registro financeiro não encontrado")
+	ErrInvalidAmount         = errors.New("valor monetário inválido")
+	ErrTenantMismatch        = errors.New("tenant da entidade diverge do contexto")
+	ErrInvalidIdempotencyKey = errors.New("chave de idempotencia invalida")
 )
 
 type Account struct {
@@ -43,7 +44,7 @@ type Payment struct {
 	ID, TenantID, InstallmentID, BankAccountID uuid.UUID
 	AmountCents                                int64
 	PaidAt                                     time.Time
-	Method, Reference                          string
+	Method, Reference, IdempotencyKey          string
 }
 type CashSession struct {
 	ID, TenantID, UserID uuid.UUID
@@ -55,7 +56,7 @@ type CashMovement struct {
 	ID, TenantID, SessionID uuid.UUID
 	Kind                    string
 	AmountCents             int64
-	Reason                  string
+	Reason, IdempotencyKey  string
 	OccurredAt              time.Time
 }
 type LedgerEntry struct {
@@ -161,6 +162,13 @@ func optionalString(value string) any {
 		return nil
 	}
 	return value
+}
+func idempotencyKey(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || len([]rune(value)) > 200 {
+		return "", ErrInvalidIdempotencyKey
+	}
+	return value, nil
 }
 func listLimit(limit int) int {
 	if limit <= 0 || limit > 1000 {
@@ -378,6 +386,13 @@ func (r *Repository) ListInstallments(ctx context.Context, titleID uuid.UUID, li
 }
 
 func (r *Repository) CreatePayment(ctx context.Context, payment Payment) (Payment, error) {
+	if payment.IdempotencyKey == "" {
+		payment.IdempotencyKey = "legacy:" + uuid.NewString()
+	}
+	return r.CreatePaymentIdempotent(ctx, payment.IdempotencyKey, payment)
+}
+
+func (r *Repository) CreatePaymentIdempotent(ctx context.Context, key string, payment Payment) (Payment, error) {
 	tenantID, err := tenantFor(ctx, payment.TenantID)
 	if err != nil {
 		return Payment{}, err
@@ -385,18 +400,57 @@ func (r *Repository) CreatePayment(ctx context.Context, payment Payment) (Paymen
 	if err := validateAmount(payment.AmountCents, true); err != nil {
 		return Payment{}, err
 	}
+	key, err = idempotencyKey(key)
+	if err != nil {
+		return Payment{}, err
+	}
 	amount, err := centsToNumeric(payment.AmountCents)
 	if err != nil {
 		return Payment{}, err
 	}
 	payment.TenantID = tenantID
+	payment.IdempotencyKey = key
+	var returnedAmount string
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `INSERT INTO finance.payment (tenant_id,installment_id,bank_account_id,amount,paid_at,method,reference) VALUES ($1,$2,$3,$4::numeric,COALESCE(NULLIF($5::timestamptz,'0001-01-01 00:00:00+00'::timestamptz),now()),$6,$7) RETURNING id,paid_at`, tenantID, payment.InstallmentID, optionalUUID(payment.BankAccountID), amount, payment.PaidAt, payment.Method, optionalString(payment.Reference)).Scan(&payment.ID, &payment.PaidAt)
+		err := tx.QueryRow(ctx, `INSERT INTO finance.payment (tenant_id,installment_id,bank_account_id,amount,paid_at,method,reference,idempotency_key) VALUES ($1,$2,$3,$4::numeric,COALESCE(NULLIF($5::timestamptz,'0001-01-01 00:00:00+00'::timestamptz),now()),$6,$7,$8) ON CONFLICT (tenant_id,idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING RETURNING id,tenant_id,installment_id,COALESCE(bank_account_id,'00000000-0000-0000-0000-000000000000'::uuid),amount::text,paid_at,method,COALESCE(reference,''),idempotency_key`, tenantID, payment.InstallmentID, optionalUUID(payment.BankAccountID), amount, payment.PaidAt, payment.Method, optionalString(payment.Reference), key).Scan(&payment.ID, &payment.TenantID, &payment.InstallmentID, &payment.BankAccountID, &returnedAmount, &payment.PaidAt, &payment.Method, &payment.Reference, &payment.IdempotencyKey)
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		return tx.QueryRow(ctx, `SELECT id,tenant_id,installment_id,COALESCE(bank_account_id,'00000000-0000-0000-0000-000000000000'::uuid),amount::text,paid_at,method,COALESCE(reference,''),idempotency_key FROM finance.payment WHERE tenant_id=$1 AND idempotency_key=$2`, tenantID, key).Scan(&payment.ID, &payment.TenantID, &payment.InstallmentID, &payment.BankAccountID, &returnedAmount, &payment.PaidAt, &payment.Method, &payment.Reference, &payment.IdempotencyKey)
 	})
 	if err != nil {
 		return Payment{}, fmt.Errorf("criar pagamento: %w", err)
 	}
+	payment.AmountCents, err = numericToCents(returnedAmount)
+	if err != nil {
+		return Payment{}, fmt.Errorf("converter pagamento: %w", err)
+	}
 	return payment, nil
+}
+
+func (r *Repository) GetPaymentByIdempotencyKey(ctx context.Context, key string) (Payment, error) {
+	tenantID, err := db.TenantFromContext(ctx)
+	if err != nil {
+		return Payment{}, err
+	}
+	key, err = idempotencyKey(key)
+	if err != nil {
+		return Payment{}, err
+	}
+	var payment Payment
+	var amount string
+	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT id,tenant_id,installment_id,COALESCE(bank_account_id,'00000000-0000-0000-0000-000000000000'::uuid),amount::text,paid_at,method,COALESCE(reference,''),idempotency_key FROM finance.payment WHERE tenant_id=$1 AND idempotency_key=$2`, tenantID, key).
+			Scan(&payment.ID, &payment.TenantID, &payment.InstallmentID, &payment.BankAccountID, &amount, &payment.PaidAt, &payment.Method, &payment.Reference, &payment.IdempotencyKey)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Payment{}, ErrNotFound
+	}
+	if err != nil {
+		return Payment{}, fmt.Errorf("buscar pagamento: %w", err)
+	}
+	payment.AmountCents, err = numericToCents(amount)
+	return payment, err
 }
 
 func (r *Repository) CreateCashSession(ctx context.Context, item CashSession) (CashSession, error) {
@@ -437,6 +491,13 @@ func (r *Repository) GetCashSessionByID(ctx context.Context, id uuid.UUID) (Cash
 	return item, err
 }
 func (r *Repository) CreateCashMovement(ctx context.Context, item CashMovement) (CashMovement, error) {
+	if item.IdempotencyKey == "" {
+		item.IdempotencyKey = "legacy:" + uuid.NewString()
+	}
+	return r.CreateCashMovementIdempotent(ctx, item.IdempotencyKey, item)
+}
+
+func (r *Repository) CreateCashMovementIdempotent(ctx context.Context, key string, item CashMovement) (CashMovement, error) {
 	tenantID, err := tenantFor(ctx, item.TenantID)
 	if err != nil {
 		return CashMovement{}, err
@@ -444,18 +505,57 @@ func (r *Repository) CreateCashMovement(ctx context.Context, item CashMovement) 
 	if err := validateAmount(item.AmountCents, true); err != nil {
 		return CashMovement{}, err
 	}
+	key, err = idempotencyKey(key)
+	if err != nil {
+		return CashMovement{}, err
+	}
 	amount, err := centsToNumeric(item.AmountCents)
 	if err != nil {
 		return CashMovement{}, err
 	}
 	item.TenantID = tenantID
+	item.IdempotencyKey = key
+	var returnedAmount string
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `INSERT INTO finance.cash_movement (tenant_id,session_id,kind,amount,reason,occurred_at) VALUES ($1,$2,$3,$4::numeric,$5,COALESCE(NULLIF($6::timestamptz,'0001-01-01 00:00:00+00'::timestamptz),now())) RETURNING id,occurred_at`, tenantID, item.SessionID, item.Kind, amount, item.Reason, item.OccurredAt).Scan(&item.ID, &item.OccurredAt)
+		err := tx.QueryRow(ctx, `INSERT INTO finance.cash_movement (tenant_id,session_id,kind,amount,reason,occurred_at,idempotency_key) VALUES ($1,$2,$3,$4::numeric,$5,COALESCE(NULLIF($6::timestamptz,'0001-01-01 00:00:00+00'::timestamptz),now()),$7) ON CONFLICT (tenant_id,idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING RETURNING id,tenant_id,session_id,kind,amount::text,reason,occurred_at,idempotency_key`, tenantID, item.SessionID, item.Kind, amount, item.Reason, item.OccurredAt, key).Scan(&item.ID, &item.TenantID, &item.SessionID, &item.Kind, &returnedAmount, &item.Reason, &item.OccurredAt, &item.IdempotencyKey)
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		return tx.QueryRow(ctx, `SELECT id,tenant_id,session_id,kind,amount::text,reason,occurred_at,idempotency_key FROM finance.cash_movement WHERE tenant_id=$1 AND idempotency_key=$2`, tenantID, key).Scan(&item.ID, &item.TenantID, &item.SessionID, &item.Kind, &returnedAmount, &item.Reason, &item.OccurredAt, &item.IdempotencyKey)
 	})
 	if err != nil {
 		return CashMovement{}, fmt.Errorf("criar movimento de caixa: %w", err)
 	}
+	item.AmountCents, err = numericToCents(returnedAmount)
+	if err != nil {
+		return CashMovement{}, fmt.Errorf("converter movimento de caixa: %w", err)
+	}
 	return item, nil
+}
+
+func (r *Repository) GetCashMovementByIdempotencyKey(ctx context.Context, key string) (CashMovement, error) {
+	tenantID, err := db.TenantFromContext(ctx)
+	if err != nil {
+		return CashMovement{}, err
+	}
+	key, err = idempotencyKey(key)
+	if err != nil {
+		return CashMovement{}, err
+	}
+	var item CashMovement
+	var amount string
+	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT id,tenant_id,session_id,kind,amount::text,reason,occurred_at,idempotency_key FROM finance.cash_movement WHERE tenant_id=$1 AND idempotency_key=$2`, tenantID, key).
+			Scan(&item.ID, &item.TenantID, &item.SessionID, &item.Kind, &amount, &item.Reason, &item.OccurredAt, &item.IdempotencyKey)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CashMovement{}, ErrNotFound
+	}
+	if err != nil {
+		return CashMovement{}, fmt.Errorf("buscar movimento de caixa: %w", err)
+	}
+	item.AmountCents, err = numericToCents(amount)
+	return item, err
 }
 func (r *Repository) ListCashMovements(ctx context.Context, sessionID uuid.UUID, limit int) ([]CashMovement, error) {
 	tenantID, err := db.TenantFromContext(ctx)

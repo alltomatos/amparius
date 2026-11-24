@@ -182,3 +182,18 @@ compostas tenant/documento/competência para impedir referências cruzadas e
 histórico append-only onde aplicável; nenhum dado tributário ou seed de alíquota
 é inserido. A emissão guarda apenas a referência do XML em object storage e seu
 hash no documento.
+
+### Contrato Go de documentos fiscais
+
+`internal/modules/fiscal/documents.go` concentra o acesso às tabelas da
+migração 0005. Todas as operações recebem `context.Context` primeiro e usam
+`db.WithTenantTx`; sem tenant no contexto a operação falha fechada. O contrato
+expõe documentos, itens, snapshots `tax_calc` e tentativas de emissão. Valores
+monetários chegam e saem como centavos `int64`, convertidos para `numeric` no
+SQL; quantidade e alíquota permanecem textuais para não usar `float`.
+
+Snapshots, itens e tentativas são somente inclusão. `RegisterEmissionAttempt`
+usa `(tenant_id, idempotency_key)` como chave de replay e devolve a tentativa
+original sem atualizar a resposta. O histórico pode ser consultado por
+documento/competência e as respostas são apenas corpo, tipo, protocolo e hash;
+segredos não fazem parte do contrato.

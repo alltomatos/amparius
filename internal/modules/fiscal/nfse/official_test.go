@@ -3,6 +3,7 @@ package nfse_test
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"os"
@@ -194,9 +195,9 @@ func TestBuildDPSOficialValidaFacetsTextuaisDeInfoCompl(t *testing.T) {
 		{"idDocTec minimo", "idDocTec", "A", true, false},
 		{"idDocTec maximo em runas", "idDocTec", strings.Repeat("\u00e1", 40), true, false},
 		{"idDocTec acima do maximo", "idDocTec", strings.Repeat("A", 41), false, false},
-		{"idDocTec borda esquerda", "idDocTec", " A", false, false},
-		{"idDocTec borda direita", "idDocTec", "A ", false, false},
-		{"idDocTec quebra de linha", "idDocTec", "A\nB", false, false},
+		{"idDocTec borda esquerda", "idDocTec", " A", true, false},
+		{"idDocTec borda direita", "idDocTec", "A ", true, false},
+		{"idDocTec tab e quebra de linha", "idDocTec", "A\tB\nC", true, false},
 		{"docRef minimo", "docRef", "A", true, false},
 		{"docRef maximo em runas", "docRef", strings.Repeat("\u00e1", 255), true, false},
 		{"docRef acima do maximo", "docRef", strings.Repeat("A", 256), false, false},
@@ -239,7 +240,11 @@ func TestBuildDPSOficialValidaFacetsTextuaisDeInfoCompl(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s com %d runas deveria ser aceito: %v", caso.campo, len([]rune(caso.valor)), err)
 			}
-			marcador := "<" + caso.campo + ">" + caso.valor + "</" + caso.campo + ">"
+			var valorXML strings.Builder
+			if err := xml.EscapeText(&valorXML, []byte(caso.valor)); err != nil {
+				t.Fatalf("falha ao escapar valor de %s: %v", caso.campo, err)
+			}
+			marcador := "<" + caso.campo + ">" + valorXML.String() + "</" + caso.campo + ">"
 			if !strings.Contains(string(dps.XML), marcador) {
 				t.Fatalf("valor de %s nao foi preservado no XML", caso.campo)
 			}

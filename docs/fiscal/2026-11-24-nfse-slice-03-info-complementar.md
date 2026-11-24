@@ -11,17 +11,20 @@ valores incompatíveis com os tipos simples oficiais:
 
 | Campo | Tipo XSD | Limite em runas | Regra de texto |
 |---|---|---:|---|
-| `serv/infoCompl/idDocTec` | `TSDRT` | 1..40 | `TSString`; sem borda whitespace, tab ou quebra de linha |
+| `serv/infoCompl/idDocTec` | `TSDRT` | 1..40 | `xs:string` com `whiteSpace=preserve`; sem pattern |
 | `serv/infoCompl/docRef` | `TSDesc255` | 1..255 | `TSString`; sem borda whitespace, tab ou quebra de linha |
 | `serv/infoCompl/xInfComp` | `TSDescInfCompl` | 1..2000 | `TSString`; whitespace interno preservado, quebra de linha rejeitada |
 | `serv/infoCompl/xPed` | `TSNumeroEndereco` | 1..60 | `TSString`; validado porque já é serializado pelo builder |
 
-A validação conta runas (`len([]rune(...))`), não bytes. Para `TSString`, o
-primeiro e o último caractere precisam estar no intervalo `!`..`ÿ`; somente
-espaço..`ÿ` é permitido no interior. O builder não faz trim dos valores
-válidos: dois espaços internos permanecem no XML. Campos opcionais compostos
-apenas por whitespace continuam omitidos pelo `elemIf`; se todos os campos de
-`infoCompl` forem assim, o grupo é rejeitado como vazio.
+A validação conta runas (`len([]rune(...))`), não bytes. `idDocTec` usa
+diretamente `xs:string` com `whiteSpace=preserve`: espaços nas bordas, tabs e
+quebras de linha são aceitos e preservados, e somente vazio ou mais de 40
+runas é rejeitado. Para `TSString`, aplicado aos demais campos indicados na
+tabela, o primeiro e o último caractere precisam estar no intervalo `!`..`ÿ`;
+somente espaço..`ÿ` é permitido no interior. O builder não faz trim dos
+valores válidos: dois espaços internos permanecem no XML. Campos opcionais
+compostos apenas por whitespace continuam omitidos pelo `elemIf`; se todos os
+campos de `infoCompl` forem assim, o grupo é rejeitado como vazio.
 
 `xDescServ` permanece no tipo `TSDesc2000`, que permite quebra de linha e segue
 validado separadamente. Nenhuma regra de RTC, alíquota ou `cTribNac` foi
@@ -33,7 +36,7 @@ introduzida.
 
 - mínimos e máximos em runas para os quatro campos modelados;
 - excesso de comprimento;
-- bordas com whitespace, tab e quebra de linha;
+- bordas com whitespace, tab e quebra de linha em `idDocTec`;
 - preservação de dois espaços internos em `xInfComp`;
 - validação XSD local dos casos aceitos, neutralizando somente `serie=1` para
   manter explícito o gap já documentado.

@@ -251,7 +251,7 @@ func validateOfficialInput(input OfficialDPSInput) error {
 }
 
 func validateOfficialInfoComplementar(info OfficialInfoComplementar) error {
-	if err := validateOfficialTSStringOptional(info.IDDocTec, "serv.infoCompl.idDocTec", officialDRTMax); err != nil {
+	if err := validateOfficialXSStringOptional(info.IDDocTec, "serv.infoCompl.idDocTec", officialDRTMax); err != nil {
 		return err
 	}
 	if err := validateOfficialTSStringOptional(info.DocRef, "serv.infoCompl.docRef", officialDesc255Max); err != nil {
@@ -262,6 +262,20 @@ func validateOfficialInfoComplementar(info OfficialInfoComplementar) error {
 	}
 	if err := validateOfficialTSStringOptional(info.XInfComp, "serv.infoCompl.xInfComp", officialDescInfComplMax); err != nil {
 		return err
+	}
+	return nil
+}
+
+// validateOfficialXSStringOptional reproduz um xs:string opcional com
+// whiteSpace=preserve e limite de comprimento. Diferentemente de TSString,
+// nao aplica pattern nem normaliza whitespace.
+func validateOfficialXSStringOptional(value, field string, max int) error {
+	if value == "" {
+		return nil
+	}
+	runes := []rune(value)
+	if len(runes) > max {
+		return fmt.Errorf("%w: %s deve ter no maximo %d caracteres", ErrInvalidDPS, field, max)
 	}
 	return nil
 }

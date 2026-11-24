@@ -182,6 +182,82 @@ func TestBuildDPSOficialValidaXDescServNosLimitesTSDesc2000(t *testing.T) {
 	}
 }
 
+func TestBuildDPSOficialValidaFacetsTextuaisDeInfoCompl(t *testing.T) {
+	validador := novoValidadorOficial(t)
+	cases := []struct {
+		nome     string
+		campo    string
+		valor    string
+		aceita   bool
+		preserva bool
+	}{
+		{"idDocTec minimo", "idDocTec", "A", true, false},
+		{"idDocTec maximo em runas", "idDocTec", strings.Repeat("\u00e1", 40), true, false},
+		{"idDocTec acima do maximo", "idDocTec", strings.Repeat("A", 41), false, false},
+		{"idDocTec borda esquerda", "idDocTec", " A", false, false},
+		{"idDocTec borda direita", "idDocTec", "A ", false, false},
+		{"idDocTec quebra de linha", "idDocTec", "A\nB", false, false},
+		{"docRef minimo", "docRef", "A", true, false},
+		{"docRef maximo em runas", "docRef", strings.Repeat("\u00e1", 255), true, false},
+		{"docRef acima do maximo", "docRef", strings.Repeat("A", 256), false, false},
+		{"docRef tab interno", "docRef", "A\tB", false, false},
+		{"xInfComp minimo", "xInfComp", "A", true, false},
+		{"xInfComp maximo em runas", "xInfComp", strings.Repeat("\u00e1", 2000), true, false},
+		{"xInfComp acima do maximo", "xInfComp", strings.Repeat("A", 2001), false, false},
+		{"xInfComp espacos internos preservados", "xInfComp", "A  B", true, true},
+		{"xInfComp quebra de linha proibida", "xInfComp", "A\nB", false, false},
+		{"xInfComp borda esquerda", "xInfComp", " A", false, false},
+		{"xInfComp borda direita", "xInfComp", "A ", false, false},
+		{"xPed maximo em runas", "xPed", strings.Repeat("\u00e1", 60), true, false},
+		{"xPed acima do maximo", "xPed", strings.Repeat("A", 61), false, false},
+	}
+
+	for _, caso := range cases {
+		t.Run(caso.nome, func(t *testing.T) {
+			input := carregarFixtureOficial(t)
+			input.Servico.InfoCompl = &nfse.OfficialInfoComplementar{}
+			switch caso.campo {
+			case "idDocTec":
+				input.Servico.InfoCompl.IDDocTec = caso.valor
+			case "docRef":
+				input.Servico.InfoCompl.DocRef = caso.valor
+			case "xPed":
+				input.Servico.InfoCompl.XPed = caso.valor
+			case "xInfComp":
+				input.Servico.InfoCompl.XInfComp = caso.valor
+			default:
+				t.Fatalf("campo de teste desconhecido: %s", caso.campo)
+			}
+
+			dps, err := nfse.BuildDPSOficial(context.Background(), input)
+			if !caso.aceita {
+				if !errors.Is(err, nfse.ErrInvalidDPS) {
+					t.Fatalf("%s com %d runas deveria falhar fechado: %v", caso.campo, len([]rune(caso.valor)), err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("%s com %d runas deveria ser aceito: %v", caso.campo, len([]rune(caso.valor)), err)
+			}
+			marcador := "<" + caso.campo + ">" + caso.valor + "</" + caso.campo + ">"
+			if !strings.Contains(string(dps.XML), marcador) {
+				t.Fatalf("valor de %s nao foi preservado no XML", caso.campo)
+			}
+			if caso.preserva && !strings.Contains(string(dps.XML), "<xInfComp>A  B</xInfComp>") {
+				t.Fatal("whitespace interno de xInfComp foi normalizado")
+			}
+
+			// Neutraliza somente o bloqueio conhecido de serie; o caso continua
+			// provando o facet textual correspondente no XSD v1.01 local.
+			xml := strings.Replace(string(dps.XML), "<serie>1</serie>", "<serie>^1$</serie>", 1)
+			resultado, err := validador.ValidateDPS(context.Background(), nfse.DPS{XML: []byte(xml), IDDps: dps.IDDps})
+			if err != nil || !resultado.Valid {
+				t.Fatalf("%s com %d runas deveria passar no XSD: %+v err=%v", caso.campo, len([]rune(caso.valor)), resultado, err)
+			}
+		})
+	}
+}
+
 func nomeLimite(nome string) string {
 	switch len([]rune(nome)) {
 	case 0:

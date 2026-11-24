@@ -89,12 +89,16 @@ var officialDocumentKinds = map[string]bool{
 // prest (TCInfoPrestador) e toma/interm (TCInfoPessoa). Nao ha regra fiscal
 // aqui: apenas os facets do pacote XSD oficial v1.01.
 const (
-	officialCNPJLen     = 14
-	officialCPFLen      = 11
-	officialNIFMax      = 40
-	officialNomeMax     = 300
-	officialDesc2000Min = 1
-	officialDesc2000Max = 2000
+	officialCNPJLen           = 14
+	officialCPFLen            = 11
+	officialNIFMax            = 40
+	officialNomeMax           = 300
+	officialDRTMax            = 40
+	officialDesc255Max        = 255
+	officialDesc2000Min       = 1
+	officialDesc2000Max       = 2000
+	officialDescInfComplMax   = 2000
+	officialNumeroEnderecoMax = 60
 )
 
 // officialNaoNIFCodes e a enumeracao de TSCodNaoNIF (motivo da nao informacao
@@ -236,11 +240,61 @@ func validateOfficialInput(input OfficialDPSInput) error {
 			strings.TrimSpace(input.Servico.InfoCompl.XInfComp) == "" {
 			return fmt.Errorf("%w: infoCompl sem nenhum campo", ErrInvalidDPS)
 		}
+		if err := validateOfficialInfoComplementar(*input.Servico.InfoCompl); err != nil {
+			return err
+		}
 	}
 	if tamanho := len([]rune(input.Servico.XDescServ)); tamanho < officialDesc2000Min || tamanho > officialDesc2000Max {
 		return fmt.Errorf("%w: serv.xDescServ deve ter de %d a %d caracteres", ErrInvalidDPS, officialDesc2000Min, officialDesc2000Max)
 	}
 	return nil
+}
+
+func validateOfficialInfoComplementar(info OfficialInfoComplementar) error {
+	if err := validateOfficialTSStringOptional(info.IDDocTec, "serv.infoCompl.idDocTec", officialDRTMax); err != nil {
+		return err
+	}
+	if err := validateOfficialTSStringOptional(info.DocRef, "serv.infoCompl.docRef", officialDesc255Max); err != nil {
+		return err
+	}
+	if err := validateOfficialTSStringOptional(info.XPed, "serv.infoCompl.xPed", officialNumeroEnderecoMax); err != nil {
+		return err
+	}
+	if err := validateOfficialTSStringOptional(info.XInfComp, "serv.infoCompl.xInfComp", officialDescInfComplMax); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateOfficialTSStringOptional reproduz TSString do XSD v1.01 para um
+// elemento opcional. Valores somente com whitespace sao omitidos pelo
+// elemIf, portanto nao recebem o facet; valores presentes preservam cada rune
+// e precisam ter primeiro/ultimo caractere entre ! e ÿ e apenas espaco a
+// ÿ no interior. Isso rejeita bordas, tabs e quebras de linha como faz o
+// pattern oficial, sem normalizar o texto.
+func validateOfficialTSStringOptional(value, field string, max int) error {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	runes := []rune(value)
+	if len(runes) < 1 || len(runes) > max {
+		return fmt.Errorf("%w: %s deve ter de 1 a %d caracteres", ErrInvalidDPS, field, max)
+	}
+	if !officialTSStringBoundaryRune(runes[0]) || !officialTSStringBoundaryRune(runes[len(runes)-1]) {
+		return fmt.Errorf("%w: %s fora do pattern TSString", ErrInvalidDPS, field)
+	}
+	if len(runes) > 2 {
+		for _, r := range runes[1 : len(runes)-1] {
+			if r < ' ' || r > '\u00ff' {
+				return fmt.Errorf("%w: %s fora do pattern TSString", ErrInvalidDPS, field)
+			}
+		}
+	}
+	return nil
+}
+
+func officialTSStringBoundaryRune(r rune) bool {
+	return r >= '!' && r <= '\u00ff'
 }
 
 func validateOfficialPessoa(pessoa *OfficialPessoa, grupo string) error {

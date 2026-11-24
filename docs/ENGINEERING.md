@@ -198,6 +198,11 @@ original sem atualizar a resposta. O histórico pode ser consultado por
 documento/competência e as respostas são apenas corpo, tipo, protocolo e hash;
 segredos não fazem parte do contrato.
 
+A migration 0008 adiciona à tentativa os metadados de transporte necessários
+à NFS-e (`http_status`, `ambiente`, `chave_acesso`, `dps_id` e
+`request_hash`). Hashes são SHA-256 hexadecimais minúsculos; ambiente é domínio
+versionado (`producao_restrita` ou `producao`) e nenhuma coluna guarda segredo.
+
 ### Outbox transacional e dispatch
 
 `migrations/0007_outbox.sql` cria o schema `outbox` com `outbox.event` e a

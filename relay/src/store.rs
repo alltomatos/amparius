@@ -1,9 +1,9 @@
 use crate::ReconciliationDomain;
 use crate::auth::{AuthCache, AuthError, AuthenticatedSubject, CachedCredential};
 use crate::queue::{
-    DeviceSequencer, OperationDraft, OperationKind, OperationStatus, QueueError, QueueStatus,
-    QueuedOperation, RelayMode, RelayStatus, content_hash, operation_id, validate_draft,
-    verify_operation,
+    DeviceSequencer, FiscalStatus, OperationDraft, OperationKind, OperationStatus, QueueError,
+    QueueStatus, QueuedOperation, RelayMode, RelayStatus, content_hash, operation_id,
+    validate_draft, verify_operation,
 };
 use crate::snapshot::{SignedSnapshot, SnapshotError, VerifiedSnapshot};
 use ed25519_dalek::VerifyingKey;
@@ -19,6 +19,7 @@ use thiserror::Error;
 const STORE_SCHEMA_VERSION: u16 = 2;
 const PREVIOUS_STORE_SCHEMA_VERSION: u16 = 1;
 const MAX_SYNC_ERROR_LEN: usize = 500;
+pub const DEFAULT_SYNC_RETRY_LIMIT: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TemporaryRecord {
@@ -32,6 +33,7 @@ pub struct TemporaryRecord {
 #[serde(rename_all = "snake_case")]
 pub enum ReviewTaskKind {
     FiscalFailure,
+    SyncFailure,
     MasterConflict,
     MoneyConflict,
     FiscalConflict,
@@ -41,6 +43,12 @@ pub enum ReviewTaskKind {
 #[serde(rename_all = "snake_case")]
 pub enum ReviewTaskStatus {
     Open,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetryDisposition {
+    Retried,
+    Exhausted,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -411,13 +419,24 @@ impl LocalStore {
             synced: 0,
             failed: 0,
             conflict: 0,
+            retrying: 0,
             total: 0,
             oldest_pending_at: None,
             oldest_pending_age_secs: 0,
             last_seq: 0,
             last_error: None,
         };
+        let mut fiscal = FiscalStatus {
+            total: 0,
+            pending: 0,
+            synced: 0,
+            failed: 0,
+            conflict: 0,
+            retrying: 0,
+            last_error: None,
+        };
         let mut latest_error_at = 0;
+        let mut latest_fiscal_error_at = 0;
         for operation in self
             .data
             .queue
@@ -427,9 +446,15 @@ impl LocalStore {
         {
             status.total += 1;
             status.last_seq = status.last_seq.max(operation.seq);
+            if operation.kind == OperationKind::FiscalEmission {
+                fiscal.total += 1;
+            }
             match operation.status {
                 OperationStatus::Pending => {
                     status.pending += 1;
+                    if operation.attempts > 0 {
+                        status.retrying += 1;
+                    }
                     status.oldest_pending_at = Some(
                         status
                             .oldest_pending_at
@@ -442,6 +467,24 @@ impl LocalStore {
                 OperationStatus::Failed => status.failed += 1,
                 OperationStatus::Conflict => status.conflict += 1,
             }
+            if operation.kind == OperationKind::FiscalEmission {
+                match operation.status {
+                    OperationStatus::Pending => {
+                        fiscal.pending += 1;
+                        if operation.attempts > 0 {
+                            fiscal.retrying += 1;
+                        }
+                    }
+                    OperationStatus::Synced => fiscal.synced += 1,
+                    OperationStatus::Failed => fiscal.failed += 1,
+                    OperationStatus::Conflict => fiscal.conflict += 1,
+                }
+                if operation.last_error.is_some() && operation.updated_at >= latest_fiscal_error_at
+                {
+                    latest_fiscal_error_at = operation.updated_at;
+                    fiscal.last_error = operation.last_error.clone();
+                }
+            }
             if operation.last_error.is_some() && operation.updated_at >= latest_error_at {
                 latest_error_at = operation.updated_at;
                 status.last_error = operation.last_error.clone();
@@ -452,12 +495,22 @@ impl LocalStore {
             .map_or(0, |created_at| now.saturating_sub(created_at));
         let mode = if status.pending > 0 {
             RelayMode::OfflineQueued
+        } else if status.failed > 0 || status.conflict > 0 {
+            RelayMode::Degraded
         } else {
             RelayMode::Online
         };
+        let review_tasks_open = self
+            .data
+            .review_tasks
+            .iter()
+            .filter(|task| task.tenant_id == subject.tenant_id)
+            .count();
         Ok(RelayStatus {
             mode,
             queue: status,
+            fiscal,
+            review_tasks_open,
         })
     }
 
@@ -557,21 +610,106 @@ impl LocalStore {
         code: &str,
         now: u64,
     ) -> Result<(), StoreError> {
-        let code = safe_code(code);
-        self.update_operation(
+        self.retry_or_fail(
             subject,
             target_operation_id,
-            |operation| {
-                if operation.status != OperationStatus::Pending {
-                    return Err(QueueError::InvalidTransition);
-                }
-                operation.status = OperationStatus::Pending;
-                operation.attempts = operation.attempts.saturating_add(1);
-                operation.last_error = Some(format!("sync_retry:{code}"));
-                Ok(())
-            },
+            code,
+            DEFAULT_SYNC_RETRY_LIMIT,
             now,
-        )
+        )?;
+        Ok(())
+    }
+
+    pub fn retry_or_fail(
+        &mut self,
+        subject: &AuthenticatedSubject,
+        target_operation_id: &str,
+        code: &str,
+        retry_limit: u32,
+        now: u64,
+    ) -> Result<RetryDisposition, StoreError> {
+        let code = safe_code(code);
+        let limit = retry_limit.max(1);
+        let operation = self
+            .data
+            .queue
+            .iter()
+            .find(|item| {
+                item.tenant_id == subject.tenant_id && item.operation_id == target_operation_id
+            })
+            .cloned()
+            .ok_or(StoreError::Queue(QueueError::NotFound))?;
+        if operation.status != OperationStatus::Pending {
+            return Err(StoreError::Queue(QueueError::InvalidTransition));
+        }
+        if operation.attempts.saturating_add(1) < limit {
+            self.update_operation(
+                subject,
+                target_operation_id,
+                |operation| {
+                    operation.status = OperationStatus::Pending;
+                    operation.attempts = operation.attempts.saturating_add(1);
+                    operation.last_error = Some(format!("sync_retry:{code}"));
+                    Ok(())
+                },
+                now,
+            )?;
+            return Ok(RetryDisposition::Retried);
+        }
+
+        self.mark_terminal_sync_failure(subject, target_operation_id, &code, now)?;
+        Ok(RetryDisposition::Exhausted)
+    }
+
+    fn mark_terminal_sync_failure(
+        &mut self,
+        subject: &AuthenticatedSubject,
+        target_operation_id: &str,
+        code: &str,
+        now: u64,
+    ) -> Result<ReviewTask, StoreError> {
+        if subject.tenant_id.trim().is_empty() {
+            return Err(StoreError::Queue(QueueError::EmptyTenant));
+        }
+        let index = self
+            .data
+            .queue
+            .iter()
+            .position(|item| {
+                item.tenant_id == subject.tenant_id && item.operation_id == target_operation_id
+            })
+            .ok_or(StoreError::Queue(QueueError::NotFound))?;
+        if self.data.queue[index].status != OperationStatus::Pending {
+            return Err(StoreError::Queue(QueueError::InvalidTransition));
+        }
+        let task_id = review_task_id(&subject.tenant_id, target_operation_id);
+        let task = ReviewTask {
+            task_id,
+            tenant_id: subject.tenant_id.clone(),
+            operation_id: target_operation_id.to_owned(),
+            kind: if self.data.queue[index].kind == OperationKind::FiscalEmission {
+                ReviewTaskKind::FiscalFailure
+            } else {
+                ReviewTaskKind::SyncFailure
+            },
+            code: format!("sync_retry_exhausted:{code}"),
+            status: ReviewTaskStatus::Open,
+            created_at: now,
+        };
+        let previous_queue = self.data.queue[index].clone();
+        self.data.queue[index].status = OperationStatus::Failed;
+        self.data.queue[index].attempts = self.data.queue[index].attempts.saturating_add(1);
+        self.data.queue[index].last_error = Some(task.code.clone());
+        self.data.queue[index].updated_at = now;
+        self.data.review_tasks.push(task.clone());
+        if let Err(error) = self.persist() {
+            self.data.queue[index] = previous_queue;
+            self.data
+                .review_tasks
+                .retain(|existing| existing.task_id != task.task_id);
+            return Err(error);
+        }
+        Ok(task)
     }
 
     pub fn mark_fiscal_failure(
@@ -1224,6 +1362,49 @@ mod tests {
         assert_eq!(status.queue.total, 2);
         assert_eq!(status.queue.last_seq, 2);
         assert_eq!(status.queue.oldest_pending_age_secs, day + 1_000);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn status_exposes_fiscal_backlog_and_terminal_failure_without_payload() {
+        let path = temp_store_path();
+        let mut store = LocalStore::open(&path).expect("store");
+        let subject = auth_subject(&mut store, "tenant-a", "operator-1", 100);
+        let (operation, _) = store
+            .append_operation(
+                &subject,
+                "node-1",
+                OperationDraft {
+                    kind: OperationKind::FiscalEmission,
+                    entity_id: "document-1".to_owned(),
+                    idempotency_key: "fiscal-1".to_owned(),
+                    payload: json!({"document_ref": "document-1"}),
+                },
+                100,
+            )
+            .expect("append fiscal");
+        let pending = store
+            .queue_status(&subject, Some("node-1"), 110)
+            .expect("pending status");
+        assert_eq!(pending.fiscal.total, 1);
+        assert_eq!(pending.fiscal.pending, 1);
+        assert_eq!(pending.fiscal.failed, 0);
+        assert_eq!(pending.review_tasks_open, 0);
+
+        store
+            .mark_fiscal_failure(&subject, &operation.operation_id, "schema_invalid", 120)
+            .expect("fiscal failure");
+        let failed = store
+            .queue_status(&subject, Some("node-1"), 130)
+            .expect("failed status");
+        assert_eq!(failed.mode, RelayMode::Degraded);
+        assert_eq!(failed.fiscal.failed, 1);
+        assert_eq!(failed.queue.failed, 1);
+        assert_eq!(failed.review_tasks_open, 1);
+        assert_eq!(
+            failed.fiscal.last_error.as_deref(),
+            Some("fiscal_rejected:schema_invalid")
+        );
         let _ = fs::remove_file(path);
     }
 

@@ -34,19 +34,27 @@ O relay expõe o estado da fila para a tela do cliente. A tela deve mostrar um d
 |---|---|
 | **Online** | não há operação pendente; o sistema está conectado |
 | **Offline com fila** | há operações guardadas no computador da loja aguardando envio |
+| **Degradado** | há falha terminal ou conflito que exige revisão do suporte |
 | **Contingência fiscal** | aparece quando a emissão fiscal em contingência existir; ainda não nesta versão |
 
 Ao abrir o estado da fila, a tela mostra:
 
 - quantas operações estão **pendentes**, **sincronizadas**, com **falha** e em **conflito**;
+- quantas operações estão em **retry** e, separadamente, o resumo fiscal com pendentes,
+  sincronizadas, falhas, conflitos e último erro;
 - a **sequência** da última operação do dispositivo;
 - **quantos minutos ou horas** tem a operação pendente mais antiga;
-- o **último erro** de envio, quando houver, sem dados pessoais.
+- o **último erro** de envio e o número de tarefas de revisão abertas, sem dados pessoais.
 
 O relay já entrega esses números pela rota de status; a ligação visual é da tela do cliente.
 
 Contagem e idade são o sinal de risco. Uma fila que cresce por horas é esperada numa queda de
 rede; uma fila que cresce sem queda de rede pede suporte.
+
+O relay tenta uma submissão no máximo três vezes por operação. Timeout ou
+indisponibilidade antes disso aparece como pendente em retry. Depois da terceira
+falha, a operação fica como falha terminal e uma tarefa de revisão é aberta; o
+relay não cria outro número nem autoriza a emissão.
 
 ## Queda de rede: o que fazer
 
@@ -66,6 +74,10 @@ não é dada como sincronizada e o suporte é acionado.
 
 Se uma transmissão fiscal for rejeitada, a operação fica falha e o relay cria uma tarefa de
 revisão. Isso não autoriza a emissão nem substitui a conferência do suporte.
+
+O suporte pode consultar as tarefas tenant-scoped em
+`GET /relay/v1/review-tasks`. A resposta mostra somente referência opaca e código
+sanitizado; não contém payload, resposta fiscal crua ou dado pessoal.
 
 ## Conflito e revisão
 
@@ -106,7 +118,8 @@ aceita operação nova até a credencial ser renovada.
 - A fila é local ao computador da loja. Se o disco falhar antes da sincronização, a operação
   pode ser perdida; faça backup conforme a orientação do suporte.
 - O relay ainda não substitui o banco definitivo do SaaS. O adaptador de rede, a migração para
-  PostgreSQL local e a reconciliação remota fazem parte das próximas fatias.
+  PostgreSQL local e a autoridade remota continuam fora desta versão; os testes de sync usam
+  transporte roteirizado em memória.
 - Documento fiscal em contingência ainda não é emitido por esta versão; quando entrar, seguirá
   as tabelas oficiais e nunca será calculado por aproximação.
 
@@ -116,5 +129,6 @@ Os contratos técnicos estão em `docs/contracts/relay-operations-v1.md` e
 `docs/contracts/relay-sync-v1.md`. As decisões de arquitetura estão em
 `docs/adr/0023-relay-fila-offline-contrato-caixa.md` e
 `docs/adr/0026-relay-sync-reconexao-revisao-fiscal.md` e
-`docs/adr/0027-relay-protocolo-sincronizacao-versionado.md`. Os comandos de verificação do
+`docs/adr/0027-relay-protocolo-sincronizacao-versionado.md` e
+`docs/adr/0029-relay-status-retry-observabilidade-fiscal.md`. Os comandos de verificação do
 relay estão no `relay/README.md`.

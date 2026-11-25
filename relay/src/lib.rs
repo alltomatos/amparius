@@ -14,15 +14,18 @@ pub use protocol::{
     SyncEnvelope, SyncReceiver,
 };
 pub use queue::{
-    DeviceSequencer, OperationDraft, OperationKind, OperationStatus, QueueError, QueueStatus,
-    QueuedOperation, RelayMode, RelayStatus, content_hash, operation_id, unix_now,
+    DeviceSequencer, FiscalStatus, OperationDraft, OperationKind, OperationStatus, QueueError,
+    QueueStatus, QueuedOperation, RelayMode, RelayStatus, content_hash, operation_id, unix_now,
 };
 pub use reconciliation::{ReconciliationDomain, domain_for};
 pub use snapshot::{SignedSnapshot, SnapshotError, SnapshotSigner, VerifiedSnapshot};
 pub use store::{
-    LocalStore, ReviewTask, ReviewTaskKind, ReviewTaskStatus, StoreError, TemporaryRecord,
+    DEFAULT_SYNC_RETRY_LIMIT, LocalStore, RetryDisposition, ReviewTask, ReviewTaskKind,
+    ReviewTaskStatus, StoreError, TemporaryRecord,
 };
-pub use sync::{SyncEngine, SyncError, SyncOutcome, SyncReport, SyncTransport, TransportError};
+pub use sync::{
+    SyncEngine, SyncError, SyncMetrics, SyncOutcome, SyncReport, SyncTransport, TransportError,
+};
 
 use serde::Deserialize;
 use std::path::PathBuf;

@@ -1365,3 +1365,33 @@ cargo test --manifest-path relay/Cargo.toml
 cargo clippy --manifest-path relay/Cargo.toml --all-targets --all-features -- -D warnings
 git diff --check
 ```
+
+## RELAY-02C: status fiscal, retry limitado e métricas de sync
+
+O `SyncEngine` conta as submissões por operação e usa limite padrão de três
+tentativas. Timeout ou indisponibilidade antes do limite mantém a operação
+pendente com `sync_retry:*`; a terceira falha marca `failed` com
+`sync_retry_exhausted:*` e cria uma revisão. Emissão fiscal usa
+`ReviewTaskKind::FiscalFailure`; outros domínios usam `SyncFailure`. O mesmo
+`operation_id`, `idempotency_key` e `seq` são preservados em todo replay.
+
+`GET /relay/v1/status` expõe o backlog geral, `queue.retrying`, o agregado
+`fiscal` e `review_tasks_open`. O modo `degraded` sinaliza falha ou conflito sem
+pendência. `GET /relay/v1/review-tasks` é somente leitura e tenant-scoped, para o
+suporte localizar a revisão sem receber payload, PII ou resposta fiscal crua.
+
+O relatório de cada ciclo e `SyncEngine::metrics()` fornecem contadores de
+tentativas, sucesso, retry, esgotamento, falha, conflito, revisão e cursor. São
+métricas locais do relay; não representam transmissão real ao SaaS. O
+`SyncTransport` futuro continua responsável por timeout, retry interno limitado,
+jitter, TLS e autenticação.
+
+ADR: `docs/adr/0029-relay-status-retry-observabilidade-fiscal.md`. Contrato:
+`docs/contracts/relay-sync-v1.md`. Verificação:
+
+```powershell
+cargo fmt --manifest-path relay/Cargo.toml --check
+cargo test --manifest-path relay/Cargo.toml
+cargo clippy --manifest-path relay/Cargo.toml --all-targets --all-features -- -D warnings
+git diff --check
+```

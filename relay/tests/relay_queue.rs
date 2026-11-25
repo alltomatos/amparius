@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use amparius_relay::{AppState, AuthCache, LocalStore, router};
+use amparius_relay::{AppState, AuthCache, LocalStore, OperationDraft, OperationKind, router};
 use axum::{
     Router,
     body::Body,
@@ -170,6 +170,8 @@ async fn contract_and_cash_are_queued_idempotently_and_visible() {
     assert_eq!(status["queue"]["pending"], 4);
     assert_eq!(status["queue"]["total"], 4);
     assert_eq!(status["queue"]["last_seq"], 4);
+    assert_eq!(status["fiscal"]["total"], 0);
+    assert_eq!(status["review_tasks_open"], 0);
 
     let list = app
         .clone()
@@ -192,6 +194,64 @@ async fn contract_and_cash_are_queued_idempotently_and_visible() {
     let raw = std::fs::read_to_string(&path).expect("store file");
     assert!(!raw.contains("secret-token"));
     assert!(raw.contains("contract-1"));
+
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn review_tasks_are_readable_only_inside_the_authenticated_tenant() {
+    let path = temp_path();
+    let mut store = LocalStore::open(&path).expect("store");
+    let now = amparius_relay::unix_now();
+    let credential = AuthCache
+        .issue(
+            "tenant-a",
+            "operator-1",
+            "secret-token",
+            now - 10,
+            now + 3_600,
+        )
+        .expect("credential");
+    store.cache_credential(credential).expect("cache");
+    let subject = store
+        .authenticate("tenant-a", "operator-1", "secret-token", now)
+        .expect("auth");
+    let (operation, _) = store
+        .append_operation(
+            &subject,
+            "node-1",
+            OperationDraft {
+                kind: OperationKind::FiscalEmission,
+                entity_id: "document-1".to_owned(),
+                idempotency_key: "fiscal-1".to_owned(),
+                payload: json!({"document_ref": "document-1"}),
+            },
+            now,
+        )
+        .expect("append");
+    store
+        .mark_fiscal_failure(&subject, &operation.operation_id, "schema_invalid", now + 1)
+        .expect("failure");
+    let app = router(AppState::new(store));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/relay/v1/review-tasks")
+                .header("x-amparius-tenant", "tenant-a")
+                .header("x-amparius-subject", "operator-1")
+                .header("x-amparius-token", "secret-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("review tasks");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body["tasks"].as_array().expect("tasks").len(), 1);
+    assert_eq!(body["tasks"][0]["operation_id"], operation.operation_id);
+    assert_eq!(body["tasks"][0]["code"], "schema_invalid");
 
     let _ = std::fs::remove_file(path);
 }

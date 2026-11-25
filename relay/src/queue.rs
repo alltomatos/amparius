@@ -92,6 +92,7 @@ pub struct OperationDraft {
 pub enum RelayMode {
     Online,
     OfflineQueued,
+    Degraded,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -102,6 +103,7 @@ pub struct QueueStatus {
     pub synced: usize,
     pub failed: usize,
     pub conflict: usize,
+    pub retrying: usize,
     pub total: usize,
     pub oldest_pending_at: Option<u64>,
     pub oldest_pending_age_secs: u64,
@@ -110,9 +112,22 @@ pub struct QueueStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FiscalStatus {
+    pub total: usize,
+    pub pending: usize,
+    pub synced: usize,
+    pub failed: usize,
+    pub conflict: usize,
+    pub retrying: usize,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelayStatus {
     pub mode: RelayMode,
     pub queue: QueueStatus,
+    pub fiscal: FiscalStatus,
+    pub review_tasks_open: usize,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]

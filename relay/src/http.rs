@@ -38,6 +38,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/relay/v1/status", get(status))
+        .route("/relay/v1/review-tasks", get(review_tasks))
         .route(
             "/relay/v1/operations",
             get(list_operations).post(append_operation),
@@ -64,6 +65,17 @@ async fn status(
     let subject = authenticate(&mut store, &headers, now)?;
     let status = store.queue_status(&subject, query.node_id.as_deref(), now)?;
     Ok(Json(status))
+}
+
+async fn review_tasks(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let now = crate::queue::unix_now();
+    let mut store = lock(&state)?;
+    let subject = authenticate(&mut store, &headers, now)?;
+    let tasks = store.list_review_tasks(&subject)?;
+    Ok(Json(json!({ "tasks": tasks })))
 }
 
 #[derive(Debug, Deserialize)]

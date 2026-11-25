@@ -1,7 +1,8 @@
 # Contrato RELAY-SYNC v1
 
-Escopo: processamento local da fila do relay após a reconexão (RELAY-01C) e o
-protocolo de sincronização versionado entre relay e SaaS (RELAY-02A). Este
+Escopo: processamento local da fila do relay após a reconexão (RELAY-01C), o
+protocolo de sincronização versionado entre relay e SaaS (RELAY-02A) e a
+reconciliação operacional de emissão fiscal (RELAY-02C). Este
 contrato define a fronteira do sincronizador; não afirma que exista um cliente
 HTTP do SaaS nesta fatia.
 
@@ -23,6 +24,17 @@ HTTP do SaaS nesta fatia.
 O adaptador de rede que implementar `SyncTransport` deve aplicar timeout, retry
 limitado e jitter. O engine desta versão não abre sockets nem simula integração
 com o SaaS.
+
+### Retry limitado e falha terminal (RELAY-02C)
+
+O engine conta as tentativas de submissão persistidas em `attempts`. O limite
+default é `3` por operação, incluindo a tentativa inicial. Antes do limite, uma
+indisponibilidade ou timeout mantém `status=pending`, incrementa `retrying` no
+status e grava somente `sync_retry:transport_unavailable` ou
+`sync_retry:transport_timeout`. Na terceira falha a operação vira
+`status=failed`, recebe `sync_retry_exhausted:*` e uma `ReviewTask`; a fila não
+descarta nem recria a operação. O limite é configurável no `SyncEngine` para
+testes e políticas operacionais, mas nunca pode ser zero.
 
 ## Rejeições críticas
 
@@ -114,6 +126,26 @@ sanitizado; não carrega payload, resposta remota ou PII. Reaplicar o mesmo
 conflito retorna a tarefa existente. Não há endpoint de resolução nem integração
 HTTP/SaaS nesta versão.
 
+## Status operacional e observabilidade (RELAY-02C)
+
+`GET /relay/v1/status` continua tenant-scoped e agora retorna, além da fila, um
+resumo `fiscal` com `total`, `pending`, `synced`, `failed`, `conflict`,
+`retrying` e `last_error`, e `review_tasks_open`. `queue.retrying` conta
+operações pendentes que já tiveram tentativa. O modo é `offline_queued` quando
+existe backlog pendente, `degraded` quando há falha ou conflito sem pendência e
+`online` quando não há nenhum desses bloqueios.
+
+`GET /relay/v1/review-tasks` lista somente tarefas abertas do tenant autenticado.
+Ele não resolve nem altera tarefas. A resposta contém referência opaca,
+identificador e código sanitizado; payload, resposta fiscal crua, segredo e PII
+continuam fora do endpoint.
+
+O `SyncReport` expõe as contagens do ciclo (`attempted`, `synced`, `retried`,
+`failed`, `exhausted`, `conflicts` e `review_tasks`). O `SyncEngine::metrics()`
+mantém contadores cumulativos do processo e o último cursor observado. Essas
+métricas são observabilidade local; não significam que o relay tenha transmitido
+por HTTP ou que a emissão fiscal tenha sido autorizada.
+
 ## Invariantes
 
 - tenant é obtido da credencial e filtrado em todas as leituras/escritas;
@@ -135,4 +167,5 @@ memória, e não comprovam conectividade real, TLS, PostgreSQL local ou resposta
 um ambiente SaaS. O receptor de referência não persiste estado entre execuções e
 não faz buffer de intervalos. A política local de conflitos e a trilha
 persistente de revisão da RELAY-02B ficam no `LocalStore`; autoridade remota,
-endpoint de resolução e integração HTTP/SaaS continuam fora desta fatia.
+endpoint de resolução, jitter do adaptador e integração HTTP/SaaS continuam fora
+desta fatia.

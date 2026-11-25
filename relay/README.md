@@ -50,6 +50,29 @@ conflito, idempotência, persistência e isolamento de tenant.
 Contrato: `../docs/contracts/relay-sync-v1.md`. Decisão:
 `../docs/adr/0028-relay-reconciliacao-conflitos.md`.
 
+## RELAY-02C
+
+O `SyncEngine` limita a três as tentativas persistidas por operação por padrão.
+Timeout ou indisponibilidade antes do limite mantém `pending` com
+`sync_retry:*`; ao esgotar, marca `failed` com `sync_retry_exhausted:*` e abre
+uma tarefa de revisão. Emissão fiscal usa `FiscalFailure`; demais operações usam
+`SyncFailure`. O replay preserva `operation_id`, `idempotency_key` e `seq`.
+
+`GET /relay/v1/status` expõe `queue.retrying`, o agregado `fiscal` e
+`review_tasks_open`. O modo é `degraded` quando há falha ou conflito sem
+pendência. `GET /relay/v1/review-tasks` lista tarefas somente do tenant
+autenticado e não resolve nenhuma delas. O `SyncReport` e
+`SyncEngine::metrics()` expõem contagens de tentativas, sucesso, retry,
+esgotamento, falhas, conflitos, revisões e cursor.
+
+Essa observabilidade é local e não comprova transmissão ao SaaS. O transporte
+HTTP/TLS autenticado, timeout e jitter concretos ainda precisam ser fornecidos
+por um adaptador `SyncTransport` futuro; nenhum documento fiscal real é emitido
+por esta fatia.
+
+Contrato: `../docs/contracts/relay-sync-v1.md`. Decisão:
+`../docs/adr/0029-relay-status-retry-observabilidade-fiscal.md`.
+
 ## RELAY-01C
 
 `SyncEngine` fornece a fronteira local para reconexão: lê pendentes em ordem, preserva

@@ -1,8 +1,12 @@
+use crate::store::RetryDisposition;
 use crate::{
     AuthenticatedSubject, LocalStore, OperationKind, OperationStatus, QueuedOperation, StoreError,
     SyncEnvelope, domain_for,
 };
+use serde::Serialize;
 use thiserror::Error;
+
+pub const DEFAULT_SYNC_RETRY_LIMIT: u32 = crate::store::DEFAULT_SYNC_RETRY_LIMIT;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncOutcome {
@@ -44,13 +48,28 @@ pub trait SyncTransport {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct SyncReport {
     pub attempted: usize,
     pub synced: usize,
     pub failed: usize,
     pub review_tasks: usize,
     pub conflicts: usize,
+    pub retried: usize,
+    pub exhausted: usize,
+    pub last_cursor: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct SyncMetrics {
+    pub cycles: u64,
+    pub attempted: u64,
+    pub synced: u64,
+    pub retried: u64,
+    pub exhausted: u64,
+    pub failed: u64,
+    pub conflicts: u64,
+    pub review_tasks: u64,
     pub last_cursor: Option<u64>,
 }
 
@@ -64,6 +83,8 @@ pub enum SyncError {
 
 pub struct SyncEngine<T> {
     transport: T,
+    retry_limit: u32,
+    metrics: SyncMetrics,
 }
 
 impl<T> SyncEngine<T>
@@ -71,7 +92,27 @@ where
     T: SyncTransport,
 {
     pub fn new(transport: T) -> Self {
-        Self { transport }
+        Self {
+            transport,
+            retry_limit: DEFAULT_SYNC_RETRY_LIMIT,
+            metrics: SyncMetrics::default(),
+        }
+    }
+
+    pub fn with_retry_limit(transport: T, retry_limit: u32) -> Self {
+        Self {
+            transport,
+            retry_limit: retry_limit.max(1),
+            metrics: SyncMetrics::default(),
+        }
+    }
+
+    pub fn retry_limit(&self) -> u32 {
+        self.retry_limit
+    }
+
+    pub fn metrics(&self) -> SyncMetrics {
+        self.metrics
     }
 
     pub fn sync_once(
@@ -81,6 +122,7 @@ where
         node_id: &str,
         now: u64,
     ) -> Result<SyncReport, SyncError> {
+        self.metrics.cycles = self.metrics.cycles.saturating_add(1);
         let operations = store.list_operations(subject, Some(node_id), 0, 200)?;
         let mut report = SyncReport::default();
 
@@ -89,6 +131,7 @@ where
             .filter(|operation| operation.status == OperationStatus::Pending)
         {
             report.attempted += 1;
+            self.metrics.attempted = self.metrics.attempted.saturating_add(1);
             let envelope = match SyncEnvelope::from_operation(&operation) {
                 Ok(envelope) => envelope,
                 Err(_) => {
@@ -174,21 +217,53 @@ where
                     report.review_tasks += 1;
                 }
                 Err(error) => {
-                    store.mark_operation_retryable(
+                    let disposition = store.retry_or_fail(
                         subject,
                         &operation.operation_id,
                         match error {
                             TransportError::Unavailable => "transport_unavailable",
                             TransportError::Timeout => "transport_timeout",
                         },
+                        self.retry_limit,
                         now,
                     )?;
+                    match disposition {
+                        RetryDisposition::Retried => report.retried += 1,
+                        RetryDisposition::Exhausted => {
+                            report.failed += 1;
+                            report.exhausted += 1;
+                            report.review_tasks += 1;
+                        }
+                    }
+                    self.apply_report_metrics(&report);
                     return Err(SyncError::Transport(error));
                 }
             }
         }
 
+        self.apply_report_metrics(&report);
         Ok(report)
+    }
+
+    fn apply_report_metrics(&mut self, report: &SyncReport) {
+        self.metrics.synced = self.metrics.synced.saturating_add(report.synced as u64);
+        self.metrics.retried = self.metrics.retried.saturating_add(report.retried as u64);
+        self.metrics.exhausted = self
+            .metrics
+            .exhausted
+            .saturating_add(report.exhausted as u64);
+        self.metrics.failed = self.metrics.failed.saturating_add(report.failed as u64);
+        self.metrics.conflicts = self
+            .metrics
+            .conflicts
+            .saturating_add(report.conflicts as u64);
+        self.metrics.review_tasks = self
+            .metrics
+            .review_tasks
+            .saturating_add(report.review_tasks as u64);
+        if report.last_cursor.is_some() {
+            self.metrics.last_cursor = report.last_cursor;
+        }
     }
 }
 
@@ -340,6 +415,52 @@ mod tests {
         assert_eq!(
             engine.transport.submitted,
             vec![operation.operation_id.clone(), operation.operation_id]
+        );
+        let _ = fs::remove_file(file);
+    }
+
+    #[test]
+    fn transport_retry_is_limited_and_terminal_failure_is_visible() {
+        let file = path();
+        let mut store = LocalStore::open(&file).expect("store");
+        let operator = subject(&mut store);
+        let (operation, _) = store
+            .append_operation(&operator, "node-1", fiscal(), 100)
+            .expect("append");
+        let transport = ScriptedTransport {
+            outcomes: VecDeque::from([
+                Err(TransportError::Timeout),
+                Err(TransportError::Timeout),
+                Err(TransportError::Timeout),
+            ]),
+            submitted: Vec::new(),
+        };
+        let mut engine = SyncEngine::with_retry_limit(transport, 3);
+
+        for now in [110, 120, 130] {
+            assert!(matches!(
+                engine.sync_once(&mut store, &operator, "node-1", now),
+                Err(SyncError::Transport(TransportError::Timeout))
+            ));
+        }
+
+        let stored = store
+            .list_operations(&operator, Some("node-1"), 0, 10)
+            .expect("operations");
+        assert_eq!(stored[0].operation_id, operation.operation_id);
+        assert_eq!(stored[0].status, OperationStatus::Failed);
+        assert_eq!(stored[0].attempts, 3);
+        assert_eq!(engine.retry_limit(), 3);
+        assert_eq!(engine.metrics().retried, 2);
+        assert_eq!(engine.metrics().exhausted, 1);
+        assert_eq!(engine.metrics().review_tasks, 1);
+        assert_eq!(store.list_review_tasks(&operator).expect("tasks").len(), 1);
+        assert_eq!(
+            store
+                .queue_status(&operator, Some("node-1"), 140)
+                .expect("status")
+                .mode,
+            crate::RelayMode::Degraded
         );
         let _ = fs::remove_file(file);
     }

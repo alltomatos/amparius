@@ -1,6 +1,6 @@
 # ADR 0016 — Contrato funerário e referências do agregado
 
-Status: aceito para a primeira fatia do módulo funerário  
+Status: aceito para a primeira fatia do módulo funerário
 Data: 2026-11-25
 
 ## Contexto

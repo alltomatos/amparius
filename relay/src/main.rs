@@ -1,15 +1,10 @@
 use std::net::SocketAddr;
 
 use anyhow::Context;
-use axum::{Router, http::StatusCode, routing::get};
 use tokio::net::TcpListener;
 use tracing::info;
 
-use amparius_relay::{LocalStore, RelayConfig};
-
-async fn healthz() -> StatusCode {
-    StatusCode::OK
-}
+use amparius_relay::{AppState, LocalStore, RelayConfig, router};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -20,8 +15,9 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .context("AMPARIUS_RELAY_BIND_ADDR inválido")?;
 
-    let _store = LocalStore::open(&config.store_path).context("abrir store local temporário")?;
-    let app = Router::new().route("/healthz", get(healthz));
+    let store = LocalStore::open(&config.store_path).context("abrir store local temporário")?;
+    let state = AppState::new(store);
+    let app = router(state);
     let listener = TcpListener::bind(address)
         .await
         .with_context(|| format!("escutar em {address}"))?;

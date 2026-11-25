@@ -1140,3 +1140,68 @@ gauge de backlog e uma fotografia dos tenants visitados no ultimo ciclo; com
 mais tenants ativos que `OUTBOX_MAX_TENANTS`, a soma subestima o backlog. Nao
 ha tracing distribuido (OpenTelemetry) nem exportador externo: a correlacao e
 por log/metrica local, e a adocao de OTLP exige decisao propria.
+
+## RELAY-01B: fila offline de contrato e caixa
+
+A fila do relay e um log append-only por dispositivo em
+`relay/src/queue.rs`, persistido no schema `2` do store local. Cada operacao
+tem `seq` monotona em `(tenant_id, node_id)`, `idempotency_key` local,
+`content_hash` SHA-256 de `(kind, entity_id, payload)` e status
+`pending|synced|failed|conflict`. Replay com o mesmo conteudo devolve o
+registro existente; a mesma chave com conteudo diferente e
+`idempotency_conflict`, sem sobrescrita. O store migra arquivos do schema `1`
+na abertura e recalcula a sequencia maxima para nunca reutilizar `seq`.
+
+Tipos de operacao desta fatia: `contract_create`, `cash_open`, `cash_movement`
+e `cash_close`. Dinheiro e inteiro em centavos, com minimo por tipo; PII
+conhecida no payload e recusada. O schema `2` tambem valida hash, identificador,
+unicidade de sequencia e unicidade de idempotencia na abertura; adulteracao
+falha fechado.
+
+Rotas HTTP autenticadas pela credencial em cache (tenant, sujeito, token e no
+`POST` o no do dispositivo): `POST/GET /relay/v1/operations` e
+`GET /relay/v1/status`. O status agrega pendentes, sincronizados, falhos,
+conflitos, total, ultima sequencia, idade do pendente mais antigo e ultimo erro;
+`mode` e `offline_queued` quando ha pendente.
+
+Testes novos:
+
+- `queue::tests::*`: validacao de contrato/caixa, dinheiro negativo ou float,
+  moeda desconhecida, PII, hash estavel e identificador opaco.
+- `store::tests::queue_persists_and_sequence_is_monotonic_per_device`: reinicio
+  preserva fila e `seq` continua de onde parou, inclusive por dispositivo.
+- `store::tests::replay_same_key_is_idempotent_and_different_content_is_rejected`:
+  replay nao duplica e conflito de idempotencia preserva o original.
+- `store::tests::status_reports_visible_backlog_after_24h_offline`: 24 h de
+  operacoes pendentes, contagem e idade visiveis.
+- `store::tests::tampered_operation_fails_closed_on_open`: payload alterado no
+  JSON impede a abertura.
+- `store::tests::legacy_schema_one_migrates_without_losing_records`: migracao
+  `1 -> 2` sem perda.
+- `tests/relay_queue.rs`: fluxo HTTP real com contrato + caixa, replay,
+  isolamento por tenant e token incorreto, sem token cru no arquivo.
+
+Evidencia local (Windows, Rust 1.97.1):
+
+```powershell
+cargo fmt --manifest-path relay/Cargo.toml -- --check
+cargo clippy --manifest-path relay/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path relay/Cargo.toml
+```
+
+Saida: `26 passed` nos testes da biblioteca e `2 passed` na integracao HTTP;
+`cargo fmt --check` e `cargo clippy -D warnings` sem achados. Smoke do binario
+em Windows (debug, porta 18089, store temporario): `GET /healthz` respondeu
+`200` em 786 ms desde o spawn ate a primeira consulta bem-sucedida (o numero
+inclui a janela de poll de 100 ms).
+
+Limites desta fatia: nao ha transmissao, sincronizacao, reconciliacao,
+PostgreSQL local, criptografia de volume, retencao automatica nem emissao
+fiscal em contingencia. O store JSON atende a janela minima de 24 h, mas nao
+substitui WAL/atomicidade do PostgreSQL para operacao continua. O relay deve
+escutar em loopback ou atras de TLS local; token em HTTP aberto na LAN e
+proibido. Contratos em `docs/contracts/relay-operations-v1.md` e
+`docs/contracts/relay-cache-v1.md`; decisoes em
+`docs/adr/0023-relay-fila-offline-contrato-caixa.md` e
+`docs/adr/0022-relay-store-snapshot-auth-cache.md`; guia do operador em
+`docs/userguide/relay-offline.md`.

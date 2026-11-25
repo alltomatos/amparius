@@ -187,6 +187,15 @@ token bruto e o snapshot de enforcement assinado/versão monotônica. O contrato
 `docs/contracts/relay-cache-v1.md` e a decisão em
 `docs/adr/0022-relay-store-snapshot-auth-cache.md`.
 
+A fatia RELAY-01B acrescenta a fila offline de contrato e caixa: log append-only por
+dispositivo com `seq` monotônica em `(tenant_id, node_id)`, idempotência local por
+`(tenant_id, node_id, idempotency_key)`, hash de conteúdo e status agregado (`pending`,
+`synced`, `failed`, `conflict`) com contagem, sequência final e idade do pendente mais
+antigo. O schema local passa a `2` com migração do `1`; o contrato HTTP está em
+`docs/contracts/relay-operations-v1.md` e a decisão em
+`docs/adr/0023-relay-fila-offline-contrato-caixa.md`. Transmissão, sincronização,
+reconciliação e contingência fiscal continuam nas fatias seguintes.
+
 Acesso em três caminhos com a **mesma interface**: portal web do SaaS (online), web local servida pelo servidor da loja (offline ou LAN) e desktop.
 
 Segurança: matrícula do dispositivo no control plane, chave por instalação, TLS local emitido no provisionamento, escuta apenas na LAN por padrão; túnel de saída para acesso remoto é opcional e desligado.

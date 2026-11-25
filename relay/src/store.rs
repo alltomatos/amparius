@@ -1,15 +1,22 @@
 use crate::auth::{AuthCache, AuthError, AuthenticatedSubject, CachedCredential};
+use crate::queue::{
+    DeviceSequencer, OperationDraft, OperationStatus, QueueError, QueueStatus, QueuedOperation,
+    RelayMode, RelayStatus, content_hash, operation_id, validate_draft, verify_operation,
+};
 use crate::snapshot::{SignedSnapshot, SnapshotError, VerifiedSnapshot};
 use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
+    collections::HashSet,
     fs, io,
     path::{Path, PathBuf},
 };
 use thiserror::Error;
 
-const STORE_SCHEMA_VERSION: u16 = 1;
+const STORE_SCHEMA_VERSION: u16 = 2;
+const PREVIOUS_STORE_SCHEMA_VERSION: u16 = 1;
+const MAX_SYNC_ERROR_LEN: usize = 500;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TemporaryRecord {
@@ -25,6 +32,10 @@ struct PersistedStore {
     records: Vec<TemporaryRecord>,
     credentials: Vec<CachedCredential>,
     snapshot: Option<SignedSnapshot>,
+    #[serde(default)]
+    queue: Vec<QueuedOperation>,
+    #[serde(default)]
+    sequencers: Vec<DeviceSequencer>,
 }
 
 impl Default for PersistedStore {
@@ -34,6 +45,8 @@ impl Default for PersistedStore {
             records: Vec::new(),
             credentials: Vec::new(),
             snapshot: None,
+            queue: Vec::new(),
+            sequencers: Vec::new(),
         }
     }
 }
@@ -48,7 +61,7 @@ pub struct LocalStore {
 pub enum StoreError {
     #[error("falha de I/O no store local: {0}")]
     Io(#[from] io::Error),
-    #[error("store local inválido: {0}")]
+    #[error("store local invÃ¡lido: {0}")]
     Serialization(#[from] serde_json::Error),
     #[error("tenant_id vazio")]
     EmptyTenant,
@@ -56,33 +69,60 @@ pub enum StoreError {
     EmptyKey,
     #[error("registro expirado")]
     Expired,
-    #[error("registro não encontrado")]
+    #[error("registro nÃ£o encontrado")]
     NotFound,
-    #[error("schema do store não suportado")]
+    #[error("schema do store nÃ£o suportado")]
     UnsupportedSchema,
-    #[error("snapshot recusado por versão não monotônica")]
+    #[error("snapshot recusado por versÃ£o nÃ£o monotÃ´nica")]
     SnapshotVersionRollback,
     #[error(transparent)]
     Auth(#[from] AuthError),
     #[error(transparent)]
     Snapshot(#[from] SnapshotError),
+    #[error(transparent)]
+    Queue(#[from] QueueError),
+}
+
+impl StoreError {
+    pub fn is_auth_error(&self) -> bool {
+        matches!(self, Self::Auth(_))
+    }
+
+    pub fn is_client_error(&self) -> bool {
+        match self {
+            Self::EmptyTenant | Self::EmptyKey => true,
+            Self::Queue(error) => error.is_client_error(),
+            _ => false,
+        }
+    }
 }
 
 impl LocalStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
         let path = path.as_ref().to_path_buf();
         recover_backup(&path)?;
-        let data = if path.exists() {
+        let (mut data, migrated) = if path.exists() {
             let bytes = fs::read(&path)?;
-            let data: PersistedStore = serde_json::from_slice(&bytes)?;
-            if data.schema_version != STORE_SCHEMA_VERSION {
-                return Err(StoreError::UnsupportedSchema);
-            }
-            data
+            let mut data: PersistedStore = serde_json::from_slice(&bytes)?;
+            let migrated = match data.schema_version {
+                STORE_SCHEMA_VERSION => false,
+                PREVIOUS_STORE_SCHEMA_VERSION => {
+                    data.schema_version = STORE_SCHEMA_VERSION;
+                    true
+                }
+                _ => return Err(StoreError::UnsupportedSchema),
+            };
+            (data, migrated)
         } else {
-            PersistedStore::default()
+            (PersistedStore::default(), false)
         };
-        Ok(Self { path, data })
+        validate_loaded_queue(&data.queue, &data.sequencers)?;
+        refresh_sequencers(&mut data);
+        let store = Self { path, data };
+        if migrated {
+            store.persist()?;
+        }
+        Ok(store)
     }
 
     pub fn path(&self) -> &Path {
@@ -186,6 +226,322 @@ impl LocalStore {
         result.map_err(StoreError::from)
     }
 
+    pub fn append_operation(
+        &mut self,
+        subject: &AuthenticatedSubject,
+        node_id: &str,
+        draft: OperationDraft,
+        now: u64,
+    ) -> Result<(QueuedOperation, bool), StoreError> {
+        if subject.tenant_id.trim().is_empty() {
+            return Err(StoreError::Queue(QueueError::EmptyTenant));
+        }
+        if node_id.trim().is_empty() {
+            return Err(StoreError::Queue(QueueError::EmptyNode));
+        }
+        validate_draft(&draft)?;
+        let hash = content_hash(&draft)?;
+        if let Some(existing) = self.data.queue.iter().find(|item| {
+            item.tenant_id == subject.tenant_id
+                && item.node_id == node_id
+                && item.idempotency_key == draft.idempotency_key
+        }) {
+            if existing.content_hash == hash {
+                return Ok((existing.clone(), true));
+            }
+            return Err(StoreError::Queue(QueueError::IdempotencyConflict));
+        }
+
+        let previous_last_seq = self
+            .data
+            .sequencers
+            .iter()
+            .find(|item| item.tenant_id == subject.tenant_id && item.node_id == node_id)
+            .map(|item| item.last_seq);
+        let highest_existing = self
+            .data
+            .queue
+            .iter()
+            .filter(|item| item.tenant_id == subject.tenant_id && item.node_id == node_id)
+            .map(|item| item.seq)
+            .max()
+            .unwrap_or(0);
+        let seq = previous_last_seq
+            .unwrap_or(0)
+            .max(highest_existing)
+            .checked_add(1)
+            .ok_or(StoreError::Queue(QueueError::SequenceExhausted))?;
+        let operation = QueuedOperation {
+            operation_id: operation_id(&subject.tenant_id, node_id, seq, &hash),
+            tenant_id: subject.tenant_id.clone(),
+            node_id: node_id.to_owned(),
+            seq,
+            kind: draft.kind,
+            entity_id: draft.entity_id,
+            idempotency_key: draft.idempotency_key,
+            actor_subject_id: subject.subject_id.clone(),
+            payload: draft.payload,
+            content_hash: hash,
+            status: OperationStatus::Pending,
+            created_at: now,
+            updated_at: now,
+            attempts: 0,
+            last_error: None,
+            synced_at: None,
+            server_cursor: None,
+        };
+
+        if let Some(sequencer) = self
+            .data
+            .sequencers
+            .iter_mut()
+            .find(|item| item.tenant_id == subject.tenant_id && item.node_id == node_id)
+        {
+            sequencer.last_seq = seq;
+        } else {
+            self.data.sequencers.push(DeviceSequencer {
+                tenant_id: subject.tenant_id.clone(),
+                node_id: node_id.to_owned(),
+                last_seq: seq,
+            });
+        }
+        self.data.queue.push(operation.clone());
+        if let Err(error) = self.persist() {
+            self.data
+                .queue
+                .retain(|item| item.operation_id != operation.operation_id);
+            match previous_last_seq {
+                Some(previous) => {
+                    if let Some(sequencer) =
+                        self.data.sequencers.iter_mut().find(|item| {
+                            item.tenant_id == subject.tenant_id && item.node_id == node_id
+                        })
+                    {
+                        sequencer.last_seq = previous;
+                    }
+                }
+                None => self.data.sequencers.retain(|item| {
+                    !(item.tenant_id == subject.tenant_id && item.node_id == node_id)
+                }),
+            }
+            return Err(error);
+        }
+        Ok((operation, false))
+    }
+
+    pub fn list_operations(
+        &self,
+        subject: &AuthenticatedSubject,
+        node_id: Option<&str>,
+        after_seq: u64,
+        limit: usize,
+    ) -> Result<Vec<QueuedOperation>, StoreError> {
+        if subject.tenant_id.trim().is_empty() {
+            return Err(StoreError::Queue(QueueError::EmptyTenant));
+        }
+        if let Some(node) = node_id {
+            if node.trim().is_empty() {
+                return Err(StoreError::Queue(QueueError::EmptyNode));
+            }
+        }
+        let mut operations: Vec<QueuedOperation> = self
+            .data
+            .queue
+            .iter()
+            .filter(|item| item.tenant_id == subject.tenant_id)
+            .filter(|item| node_id.is_none_or(|node| item.node_id == node))
+            .filter(|item| item.seq > after_seq)
+            .cloned()
+            .collect();
+        operations.sort_by_key(|item| item.seq);
+        operations.truncate(limit);
+        Ok(operations)
+    }
+
+    pub fn queue_status(
+        &self,
+        subject: &AuthenticatedSubject,
+        node_id: Option<&str>,
+        now: u64,
+    ) -> Result<RelayStatus, StoreError> {
+        if subject.tenant_id.trim().is_empty() {
+            return Err(StoreError::Queue(QueueError::EmptyTenant));
+        }
+        if let Some(node) = node_id {
+            if node.trim().is_empty() {
+                return Err(StoreError::Queue(QueueError::EmptyNode));
+            }
+        }
+        let mut status = QueueStatus {
+            tenant_id: subject.tenant_id.clone(),
+            node_id: node_id.map(str::to_owned),
+            pending: 0,
+            synced: 0,
+            failed: 0,
+            conflict: 0,
+            total: 0,
+            oldest_pending_at: None,
+            oldest_pending_age_secs: 0,
+            last_seq: 0,
+            last_error: None,
+        };
+        let mut latest_error_at = 0;
+        for operation in self
+            .data
+            .queue
+            .iter()
+            .filter(|item| item.tenant_id == subject.tenant_id)
+            .filter(|item| node_id.is_none_or(|node| item.node_id == node))
+        {
+            status.total += 1;
+            status.last_seq = status.last_seq.max(operation.seq);
+            match operation.status {
+                OperationStatus::Pending => {
+                    status.pending += 1;
+                    status.oldest_pending_at = Some(
+                        status
+                            .oldest_pending_at
+                            .map_or(operation.created_at, |oldest| {
+                                oldest.min(operation.created_at)
+                            }),
+                    );
+                }
+                OperationStatus::Synced => status.synced += 1,
+                OperationStatus::Failed => status.failed += 1,
+                OperationStatus::Conflict => status.conflict += 1,
+            }
+            if matches!(
+                operation.status,
+                OperationStatus::Failed | OperationStatus::Conflict
+            ) && operation.updated_at >= latest_error_at
+            {
+                latest_error_at = operation.updated_at;
+                status.last_error = operation.last_error.clone();
+            }
+        }
+        status.oldest_pending_age_secs = status
+            .oldest_pending_at
+            .map_or(0, |created_at| now.saturating_sub(created_at));
+        let mode = if status.pending > 0 {
+            RelayMode::OfflineQueued
+        } else {
+            RelayMode::Online
+        };
+        Ok(RelayStatus {
+            mode,
+            queue: status,
+        })
+    }
+
+    pub fn mark_operation_synced(
+        &mut self,
+        subject: &AuthenticatedSubject,
+        target_operation_id: &str,
+        cursor: u64,
+        now: u64,
+    ) -> Result<(), StoreError> {
+        self.update_operation(
+            subject,
+            target_operation_id,
+            |operation| {
+                if operation.status == OperationStatus::Synced {
+                    return Ok(());
+                }
+                if operation.status == OperationStatus::Conflict {
+                    return Err(QueueError::InvalidTransition);
+                }
+                operation.status = OperationStatus::Synced;
+                operation.synced_at = Some(now);
+                operation.attempts = operation.attempts.saturating_add(1);
+                operation.server_cursor = Some(cursor);
+                operation.last_error = None;
+                Ok(())
+            },
+            now,
+        )
+    }
+
+    pub fn mark_operation_failed(
+        &mut self,
+        subject: &AuthenticatedSubject,
+        target_operation_id: &str,
+        reason: &str,
+        now: u64,
+    ) -> Result<(), StoreError> {
+        let reason = truncate(reason, MAX_SYNC_ERROR_LEN);
+        self.update_operation(
+            subject,
+            target_operation_id,
+            |operation| {
+                if matches!(
+                    operation.status,
+                    OperationStatus::Synced | OperationStatus::Conflict
+                ) {
+                    return Err(QueueError::InvalidTransition);
+                }
+                operation.status = OperationStatus::Failed;
+                operation.attempts = operation.attempts.saturating_add(1);
+                operation.last_error = Some(reason);
+                Ok(())
+            },
+            now,
+        )
+    }
+
+    pub fn mark_operation_conflict(
+        &mut self,
+        subject: &AuthenticatedSubject,
+        target_operation_id: &str,
+        reason: &str,
+        now: u64,
+    ) -> Result<(), StoreError> {
+        let reason = truncate(reason, MAX_SYNC_ERROR_LEN);
+        self.update_operation(
+            subject,
+            target_operation_id,
+            |operation| {
+                if operation.status == OperationStatus::Synced {
+                    return Err(QueueError::InvalidTransition);
+                }
+                operation.status = OperationStatus::Conflict;
+                operation.last_error = Some(reason);
+                Ok(())
+            },
+            now,
+        )
+    }
+
+    fn update_operation<F>(
+        &mut self,
+        subject: &AuthenticatedSubject,
+        target_operation_id: &str,
+        update: F,
+        now: u64,
+    ) -> Result<(), StoreError>
+    where
+        F: FnOnce(&mut QueuedOperation) -> Result<(), QueueError>,
+    {
+        if subject.tenant_id.trim().is_empty() {
+            return Err(StoreError::Queue(QueueError::EmptyTenant));
+        }
+        let index = self
+            .data
+            .queue
+            .iter()
+            .position(|item| {
+                item.tenant_id == subject.tenant_id && item.operation_id == target_operation_id
+            })
+            .ok_or(StoreError::Queue(QueueError::NotFound))?;
+        let previous = self.data.queue[index].clone();
+        update(&mut self.data.queue[index])?;
+        self.data.queue[index].updated_at = now;
+        if let Err(error) = self.persist() {
+            self.data.queue[index] = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub fn apply_snapshot(
         &mut self,
         snapshot: SignedSnapshot,
@@ -227,6 +583,76 @@ impl LocalStore {
         fs::write(&temp_path, bytes)?;
         Ok(replace_file(&temp_path, &self.path)?)
     }
+}
+
+fn validate_loaded_queue(
+    queue: &[QueuedOperation],
+    sequencers: &[DeviceSequencer],
+) -> Result<(), StoreError> {
+    let mut operation_ids = HashSet::new();
+    let mut sequences = HashSet::new();
+    let mut idempotency_keys = HashSet::new();
+    let mut devices = HashSet::new();
+    for sequencer in sequencers {
+        if sequencer.tenant_id.trim().is_empty() || sequencer.node_id.trim().is_empty() {
+            return Err(StoreError::Queue(QueueError::Tampered));
+        }
+        if !devices.insert((sequencer.tenant_id.as_str(), sequencer.node_id.as_str())) {
+            return Err(StoreError::Queue(QueueError::Tampered));
+        }
+    }
+    for operation in queue {
+        verify_operation(operation)?;
+        if operation.tenant_id.trim().is_empty() || operation.node_id.trim().is_empty() {
+            return Err(StoreError::Queue(QueueError::Tampered));
+        }
+        if !operation_ids.insert(operation.operation_id.as_str()) {
+            return Err(StoreError::Queue(QueueError::Tampered));
+        }
+        if !sequences.insert((
+            operation.tenant_id.as_str(),
+            operation.node_id.as_str(),
+            operation.seq,
+        )) {
+            return Err(StoreError::Queue(QueueError::Tampered));
+        }
+        if !idempotency_keys.insert((
+            operation.tenant_id.as_str(),
+            operation.node_id.as_str(),
+            operation.idempotency_key.as_str(),
+        )) {
+            return Err(StoreError::Queue(QueueError::Tampered));
+        }
+    }
+    Ok(())
+}
+
+fn refresh_sequencers(data: &mut PersistedStore) {
+    for operation in &data.queue {
+        match data
+            .sequencers
+            .iter_mut()
+            .find(|item| item.tenant_id == operation.tenant_id && item.node_id == operation.node_id)
+        {
+            Some(sequencer) => sequencer.last_seq = sequencer.last_seq.max(operation.seq),
+            None => data.sequencers.push(DeviceSequencer {
+                tenant_id: operation.tenant_id.clone(),
+                node_id: operation.node_id.clone(),
+                last_seq: operation.seq,
+            }),
+        }
+    }
+}
+
+fn truncate(value: &str, max: usize) -> String {
+    if value.len() <= max {
+        return value.to_owned();
+    }
+    let mut end = max;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_owned()
 }
 
 fn replace_file(temp_path: &Path, destination: &Path) -> Result<(), io::Error> {
@@ -272,6 +698,7 @@ fn validate_identity(tenant_id: &str, key: &str) -> Result<(), StoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::queue::OperationKind;
     use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -281,6 +708,30 @@ mod tests {
             .expect("clock")
             .as_nanos();
         std::env::temp_dir().join(format!("amparius-relay-test-{nonce}.json"))
+    }
+
+    fn auth_subject(
+        store: &mut LocalStore,
+        tenant: &str,
+        subject_id: &str,
+        now: u64,
+    ) -> AuthenticatedSubject {
+        let credential = AuthCache
+            .issue(tenant, subject_id, "secret-token", now - 10, now + 3_600)
+            .expect("credential");
+        store.cache_credential(credential).expect("cache");
+        store
+            .authenticate(tenant, subject_id, "secret-token", now)
+            .expect("auth")
+    }
+
+    fn contract(entity: &str, key: &str, total: i64) -> OperationDraft {
+        OperationDraft {
+            kind: OperationKind::ContractCreate,
+            entity_id: entity.to_owned(),
+            idempotency_key: key.to_owned(),
+            payload: json!({"total_cents": total, "currency": "BRL", "item_count": 2}),
+        }
     }
 
     #[test]
@@ -347,6 +798,312 @@ mod tests {
             store.current_snapshot(&key, "tenant-a", 300),
             Err(StoreError::Snapshot(SnapshotError::Expired))
         ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn queue_persists_and_sequence_is_monotonic_per_device() {
+        let path = temp_store_path();
+        let mut store = LocalStore::open(&path).expect("store");
+        let subject = auth_subject(&mut store, "tenant-a", "operator-1", 100);
+        let (first, replayed) = store
+            .append_operation(
+                &subject,
+                "node-1",
+                contract("contract-1", "key-1", 10_000),
+                100,
+            )
+            .expect("append");
+        assert!(!replayed);
+        assert_eq!(first.seq, 1);
+        drop(store);
+
+        let mut store = LocalStore::open(&path).expect("reopen");
+        let subject = auth_subject(&mut store, "tenant-a", "operator-1", 200);
+        let (second, _) = store
+            .append_operation(
+                &subject,
+                "node-1",
+                contract("contract-2", "key-2", 20_000),
+                200,
+            )
+            .expect("append");
+        assert_eq!(second.seq, 2);
+        let (third, _) = store
+            .append_operation(
+                &subject,
+                "node-1",
+                contract("contract-3", "key-3", 30_000),
+                210,
+            )
+            .expect("append");
+        assert_eq!(third.seq, 3);
+        let (other_node, _) = store
+            .append_operation(
+                &subject,
+                "node-2",
+                contract("contract-4", "key-4", 40_000),
+                220,
+            )
+            .expect("append");
+        assert_eq!(other_node.seq, 1);
+        let listed = store
+            .list_operations(&subject, Some("node-1"), 0, 10)
+            .expect("list");
+        assert_eq!(listed.len(), 3);
+        assert_eq!(
+            listed.iter().map(|item| item.seq).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn replay_same_key_is_idempotent_and_different_content_is_rejected() {
+        let path = temp_store_path();
+        let mut store = LocalStore::open(&path).expect("store");
+        let subject = auth_subject(&mut store, "tenant-a", "operator-1", 100);
+        let draft = contract("contract-1", "key-1", 10_000);
+        let (first, replayed) = store
+            .append_operation(&subject, "node-1", draft.clone(), 100)
+            .expect("first");
+        assert!(!replayed);
+        let (again, replayed) = store
+            .append_operation(&subject, "node-1", draft, 120)
+            .expect("again");
+        assert!(replayed);
+        assert_eq!(first, again);
+        assert!(matches!(
+            store.append_operation(
+                &subject,
+                "node-1",
+                contract("contract-1", "key-1", 99_000),
+                130
+            ),
+            Err(StoreError::Queue(QueueError::IdempotencyConflict))
+        ));
+        let listed = store
+            .list_operations(&subject, Some("node-1"), 0, 10)
+            .expect("list");
+        assert_eq!(listed.len(), 1);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn queue_is_tenant_scoped() {
+        let path = temp_store_path();
+        let mut store = LocalStore::open(&path).expect("store");
+        let tenant_a = auth_subject(&mut store, "tenant-a", "operator-1", 100);
+        let tenant_b = auth_subject(&mut store, "tenant-b", "operator-2", 100);
+        store
+            .append_operation(
+                &tenant_a,
+                "node-1",
+                contract("contract-1", "key-1", 10_000),
+                100,
+            )
+            .expect("append a");
+        assert!(
+            store
+                .list_operations(&tenant_b, Some("node-1"), 0, 10)
+                .expect("list b")
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .queue_status(&tenant_b, Some("node-1"), 130)
+                .expect("status b")
+                .queue
+                .total,
+            0
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn status_reports_visible_backlog_after_24h_offline() {
+        let path = temp_store_path();
+        let mut store = LocalStore::open(&path).expect("store");
+        let subject = auth_subject(&mut store, "tenant-a", "operator-1", 1_000);
+        let day = 24 * 60 * 60;
+        store
+            .append_operation(
+                &subject,
+                "node-1",
+                contract("contract-1", "key-1", 10_000),
+                1_000,
+            )
+            .expect("append");
+        let opened = OperationDraft {
+            kind: OperationKind::CashOpen,
+            entity_id: "cash-1".to_owned(),
+            idempotency_key: "key-2".to_owned(),
+            payload: json!({"opening_amount_cents": 50_000}),
+        };
+        store
+            .append_operation(&subject, "node-1", opened, 1_000 + day)
+            .expect("append cash");
+        let status = store
+            .queue_status(&subject, Some("node-1"), 2_000 + day)
+            .expect("status");
+        assert_eq!(status.mode, RelayMode::OfflineQueued);
+        assert_eq!(status.queue.pending, 2);
+        assert_eq!(status.queue.total, 2);
+        assert_eq!(status.queue.last_seq, 2);
+        assert_eq!(status.queue.oldest_pending_age_secs, day + 1_000);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn expired_credential_cannot_enqueue() {
+        let path = temp_store_path();
+        let mut store = LocalStore::open(&path).expect("store");
+        let credential = AuthCache
+            .issue("tenant-a", "operator-1", "secret-token", 100, 200)
+            .expect("credential");
+        store.cache_credential(credential).expect("cache");
+        assert!(matches!(
+            store.authenticate("tenant-a", "operator-1", "secret-token", 200),
+            Err(StoreError::Auth(AuthError::Expired))
+        ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn sync_transitions_are_append_only_and_reject_regression() {
+        let path = temp_store_path();
+        let mut store = LocalStore::open(&path).expect("store");
+        let subject = auth_subject(&mut store, "tenant-a", "operator-1", 100);
+        let (operation, _) = store
+            .append_operation(
+                &subject,
+                "node-1",
+                contract("contract-1", "key-1", 10_000),
+                100,
+            )
+            .expect("append");
+        store
+            .mark_operation_synced(&subject, &operation.operation_id, 42, 150)
+            .expect("synced");
+        store
+            .mark_operation_synced(&subject, &operation.operation_id, 42, 160)
+            .expect("idempotent synced");
+        assert!(matches!(
+            store.mark_operation_failed(&subject, &operation.operation_id, "late failure", 170),
+            Err(StoreError::Queue(QueueError::InvalidTransition))
+        ));
+        let status = store
+            .queue_status(&subject, Some("node-1"), 180)
+            .expect("status");
+        assert_eq!(status.queue.synced, 1);
+        assert_eq!(status.queue.pending, 0);
+        assert_eq!(status.mode, RelayMode::Online);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn tampered_operation_fails_closed_on_open() {
+        let path = temp_store_path();
+        let mut store = LocalStore::open(&path).expect("store");
+        let subject = auth_subject(&mut store, "tenant-a", "operator-1", 100);
+        store
+            .append_operation(
+                &subject,
+                "node-1",
+                contract("contract-1", "key-1", 10_000),
+                100,
+            )
+            .expect("append");
+        drop(store);
+        let text = fs::read_to_string(&path).expect("read");
+        let tampered = text.replace("\"total_cents\": 10000", "\"total_cents\": 99000");
+        assert_ne!(text, tampered);
+        fs::write(&path, tampered).expect("write");
+        assert!(matches!(
+            LocalStore::open(&path),
+            Err(StoreError::Queue(QueueError::Tampered))
+        ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn offline_queue_survives_simulated_network_downtime_and_restart() {
+        let path = temp_store_path();
+        let mut store = LocalStore::open(&path).expect("store");
+        let subject = auth_subject(&mut store, "tenant-a", "operator-1", 100);
+        store
+            .append_operation(
+                &subject,
+                "node-1",
+                contract("contract-1", "key-1", 10_000),
+                100,
+            )
+            .expect("contract");
+        store
+            .append_operation(
+                &subject,
+                "node-1",
+                OperationDraft {
+                    kind: OperationKind::CashMovement,
+                    entity_id: "cash-1".to_owned(),
+                    idempotency_key: "key-2".to_owned(),
+                    payload: json!({"direction": "in", "amount_cents": 5_000, "reason": "recebimento"}),
+                },
+                120,
+            )
+            .expect("cash");
+        drop(store);
+
+        let mut store = LocalStore::open(&path).expect("reopen after outage");
+        let subject = auth_subject(&mut store, "tenant-a", "operator-1", 200);
+        let status = store
+            .queue_status(&subject, Some("node-1"), 200)
+            .expect("status");
+        assert_eq!(status.mode, RelayMode::OfflineQueued);
+        assert_eq!(status.queue.pending, 2);
+        assert_eq!(status.queue.last_seq, 2);
+        let operations = store
+            .list_operations(&subject, Some("node-1"), 0, 10)
+            .expect("list");
+        assert_eq!(
+            operations
+                .iter()
+                .map(|item| (item.seq, item.status))
+                .collect::<Vec<_>>(),
+            vec![(1, OperationStatus::Pending), (2, OperationStatus::Pending)]
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn legacy_schema_one_migrates_without_losing_records() {
+        let path = temp_store_path();
+        let legacy = json!({
+            "schema_version": 1,
+            "records": [{
+                "tenant_id": "tenant-a",
+                "key": "catalog",
+                "expires_at": 9999999999u64,
+                "payload": {"name": "urna"}
+            }],
+            "credentials": [],
+            "snapshot": null
+        });
+        fs::write(&path, serde_json::to_vec_pretty(&legacy).expect("json")).expect("write");
+        let mut store = LocalStore::open(&path).expect("open legacy");
+        assert_eq!(
+            store
+                .get_record("tenant-a", "catalog", 100)
+                .expect("record"),
+            json!({"name": "urna"})
+        );
+        let persisted: Value =
+            serde_json::from_slice(&fs::read(&path).expect("read")).expect("persisted json");
+        assert_eq!(persisted["schema_version"], 2);
+        assert_eq!(persisted["queue"], json!([]));
+        drop(store);
+        let reopened = LocalStore::open(&path).expect("reopen");
+        assert!(reopened.path().exists());
         let _ = fs::remove_file(path);
     }
 }

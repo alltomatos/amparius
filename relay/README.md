@@ -33,3 +33,46 @@ a versão é monotônica.
 Contrato detalhado: `../docs/contracts/relay-cache-v1.md`. Decisão arquitetural:
 `../docs/adr/0022-relay-store-snapshot-auth-cache.md`.
 
+## RELAY-01B
+
+A fila offline de contrato e caixa é um log append-only por dispositivo. Cada operação tem
+`seq` monotônica em `(tenant_id, node_id)`, chave de idempotência local, hash de conteúdo e
+status (`pending`, `synced`, `failed`, `conflict`). Replay com o mesmo conteúdo não duplica;
+a mesma chave com conteúdo diferente falha em vez de sobrescrever. O store JSON passa ao
+schema `2` e migra arquivos `1` na abertura.
+
+Rotas autenticadas pela credencial em cache (cabeçalhos `x-amparius-tenant`,
+`x-amparius-subject`, `x-amparius-token`; `x-amparius-node` no `POST`):
+
+```powershell
+# abrir caixa offline
+Invoke-RestMethod -Method Post http://127.0.0.1:8080/relay/v1/operations `
+  -Headers @{
+    "content-type" = "application/json"
+    "x-amparius-tenant" = "tenant-a"
+    "x-amparius-subject" = "operator-1"
+    "x-amparius-token" = $env:AMPARIUS_RELAY_TOKEN
+    "x-amparius-node" = "node-1"
+  } `
+  -Body '{"kind":"cash_open","entity_id":"cash-1","idempotency_key":"op-1","payload":{"opening_amount_cents":50000}}'
+
+# status da fila
+Invoke-RestMethod "http://127.0.0.1:8080/relay/v1/status?node_id=node-1" -Headers @{
+  "x-amparius-tenant" = "tenant-a"
+  "x-amparius-subject" = "operator-1"
+  "x-amparius-token" = $env:AMPARIUS_RELAY_TOKEN
+}
+```
+
+Contrato detalhado: `../docs/contracts/relay-operations-v1.md`. Decisão arquitetural:
+`../docs/adr/0023-relay-fila-offline-contrato-caixa.md`. Transmissão, sincronização e
+reconciliação continuam na RELAY-02.
+
+## Verificação
+
+```powershell
+cargo fmt --manifest-path relay/Cargo.toml -- --check
+cargo clippy --manifest-path relay/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path relay/Cargo.toml
+```
+

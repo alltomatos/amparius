@@ -1,8 +1,15 @@
 mod auth;
+mod http;
+mod queue;
 mod snapshot;
 mod store;
 
 pub use auth::{AuthCache, AuthError, AuthenticatedSubject, CachedCredential};
+pub use http::{ApiError, AppState, router};
+pub use queue::{
+    DeviceSequencer, OperationDraft, OperationKind, OperationStatus, QueueError, QueueStatus,
+    QueuedOperation, RelayMode, RelayStatus, content_hash, operation_id, unix_now,
+};
 pub use snapshot::{SignedSnapshot, SnapshotError, SnapshotSigner, VerifiedSnapshot};
 pub use store::{LocalStore, StoreError, TemporaryRecord};
 

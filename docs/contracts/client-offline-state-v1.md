@@ -53,10 +53,70 @@ O transporte entrega um `ReconciliationOutcome` explícito:
 As tarefas de revisão carregam somente referência opaca, tipo e código filtrado.
 Não existe resolução automática nesta versão.
 
+## Transporte HTTP
+
+`client::transport::HttpTransport` envia operações `pending` da fila persistida ao
+relay local, no contrato RELAY-OPERATIONS v1 (`POST /relay/v1/operations`).
+
+- **Contexto:** `tenant_id` e `node_id` vêm da fila, nunca do corpo; seguem em
+  `x-amparius-tenant` e `x-amparius-node`, com `x-amparius-subject` e
+  `x-amparius-token`. O token existe apenas em trânsito, não é logado nem
+  persistido; credencial vazia falha antes de qualquer socket.
+- **Corpo:** `kind`, `entity_id`, `idempotency_key`, `payload`, `seq`,
+  `operation_id` e `content_hash`. `Idempotency-Key` também vai em cabeçalho. O
+  relay atual ignora campos extras; o cliente os preserva para auditoria e
+  evolução do contrato. O payload é revalidado (mesmas regras do enfileiramento,
+  sem PII) e hash/identificador são recalculados antes do envio; divergência é
+  erro fatal e nada é transmitido.
+- **Resultado:** `Accepted` (200/201), `Conflict` (409), `Rejected` (demais 4xx
+  ou 2xx ilegível) ou `Transient` (timeout, conexão/leitura, 5xx).
+- **Integração:** `sync_pending` percorre `pending` em ordem crescente de `seq`,
+  aplica cada resultado em `ClientQueue::reconcile` (que persiste antes de
+  confirmar em memória) e para na primeira falha transitória, para não consumir
+  o orçamento das demais operações durante uma queda.
+
+### Rede e retry
+
+Cada chamada usa timeout configurável de cliente e conexão. `max_attempts` inclui
+a tentativa inicial e nunca é zero. Apenas indisponibilidade/timeout é repetida:
+
+| Situação | Classificação | Retry |
+|---|---|---|
+| timeout | `transport_timeout` | sim, com backoff |
+| conexão/leitura | `transport_unavailable` | sim, com backoff |
+| HTTP 5xx | `transport_unavailable` | sim, com backoff |
+| HTTP 401/403 | `Unauthorized` | não |
+| HTTP 409 | `Conflict` | não |
+| demais 4xx | `Rejected` | não |
+| 2xx ilegível | `Rejected` `invalid_response` | não |
+
+401/403 interrompem a execução sem reconciliar: a operação permanece `pending`, sem
+revisão de negócio, para uma execução após renovação da credencial. 4xx fiscal vira
+`FiscalRejected`; 4xx de dinheiro ou mestre vira `Conflict`, com tarefa de revisão
+explícita e sem sobrescrever valor local. Redirecionamentos são desabilitados para
+o token não vazar de host.
+
+O backoff é exponencial com full jitter determinístico derivado de
+`(jitter_seed, operation_id, seq, attempt)` e limitado por `backoff_cap`. O mesmo
+estado produz o mesmo atraso, o que torna timeout e retry testáveis sem relógio
+global. Esgotadas as tentativas HTTP, a operação continua `pending`, `attempts` é
+incrementado e `last_error` recebe somente `sync_retry:*`; o limite de execuções
+do `ClientQueue` continua sendo aplicado por `reconcile`.
+
+### Reconciliação do transporte
+
+- `Accepted` sem `replayed` → `Applied`; `replayed` → `Duplicate` (sucesso
+  idempotente, sem criar operação nem consumir nova sequência).
+- `Accepted` de `master_upsert` sem `authoritative_version` → `Conflict`
+  (`master_requires_authoritative_version`); o relay não é a autoridade do mestre
+  e a operação não é marcada como sincronizada.
+- `server_cursor` é o `seq` do registro aceito pelo relay.
+
 ## Limites
 
-O cliente ainda não abre sockets; o adaptador de rede deverá aplicar timeout, retry
-limitado e jitter. A UI gráfica e a integração HTTP com o relay ficam para fatias
-posteriores. O arquivo local não substitui o PostgreSQL do relay, não é backup e não
-autoriza emissão fiscal: contingência continua sendo apenas um estado explícito do
-cliente.
+O transporte é HTTP sem TLS embutido: o relay deve escutar em loopback ou atrás de
+TLS local, como no contrato de operações de relay. HTTPS direto, proxy corporativo,
+credencial renovável e envio de XML fiscal continuam fora desta fatia. A UI gráfica
+permanece posterior. O arquivo local não substitui o PostgreSQL do relay, não é
+backup e não autoriza emissão fiscal: contingência continua sendo apenas um estado
+explícito do cliente.

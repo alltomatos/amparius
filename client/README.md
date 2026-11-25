@@ -25,7 +25,33 @@ O binário aguarda `Ctrl+C` para encerramento gracioso. A interface gráfica ser
 - `ClientStatus` e `ClientMetrics` expõem apenas contagens, estado e códigos técnicos seguros para observabilidade.
 - `ClientQueue::open(path, tenant_id, node_id)` persiste a fila em JSON versionado com SHA-256, escrita temporária/backup e rejeição fail-closed de corrupção ou versão desconhecida.
 
-O arquivo local cobre a fila da estação e o reinício do cliente, mas não substitui o armazenamento durável do relay. Transporte HTTP, timeout/retry/jitter de rede e UI gráfica permanecem nas fatias correspondentes.
+O arquivo local cobre a fila da estação e o reinício do cliente, mas não substitui o armazenamento durável do relay. A UI gráfica permanece em fatia posterior.
+
+## Transporte HTTP
+
+`src/transport.rs` envia a fila persistida ao relay local no contrato RELAY-OPERATIONS v1:
+
+```rust
+use amparius_client::transport::{Credentials, HttpTransport, TransportConfig, sync_pending};
+
+let mut config = TransportConfig::new("http://127.0.0.1:8787")?;
+config.timeout = std::time::Duration::from_secs(5);
+config.max_attempts = 3;
+let transport = HttpTransport::new(config)?;
+let credentials = Credentials::new("operator-1", token)?;
+
+let report = sync_pending(&mut queue, &transport, &credentials, amparius_client::unix_now()).await?;
+```
+
+- Preserva `(tenant_id, node_id)`, `Idempotency-Key`, `seq` monotônica, `operation_id` e `content_hash`; revalida payload e recusa PII.
+- Timeout configurável; retry limitado apenas para timeout/indisponibilidade/5xx, com backoff exponencial e jitter determinístico.
+- 409 vira conflito explícito; demais 4xx são rejeição sem retry (fiscal vira `FiscalRejected`, os outros viram `Conflict`).
+- Replay do relay (`replayed: true`) é `Duplicate`, sucesso idempotente sem criar operação.
+- `master_upsert` só é marcado sincronizado com `authoritative_version`; sem ela, vira revisão.
+- Em queda, a execução para após a primeira falha transitória e a operação continua `pending`.
+- O transporte é HTTP (loopback ou atrás de TLS local): o token nunca é logado nem persistido, e redirecionamentos são desabilitados.
+
+Nenhuma tela gráfica é implementada nesta fatia.
 
 ## Verificação
 

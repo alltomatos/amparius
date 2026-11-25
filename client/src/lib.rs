@@ -1,3 +1,5 @@
+pub mod transport;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -117,7 +119,7 @@ pub enum RetryReason {
 }
 
 impl RetryReason {
-    const fn code(self) -> &'static str {
+    pub const fn code(self) -> &'static str {
         match self {
             Self::TransportUnavailable => "transport_unavailable",
             Self::TransportTimeout => "transport_timeout",
@@ -403,6 +405,18 @@ impl ClientQueue {
 
     pub const fn connectivity(&self) -> ConnectivityState {
         self.connectivity
+    }
+
+    /// Identidade do tenant fixada na abertura. Usada pelo transporte para
+    /// preservar o contexto e nunca aceitar tenant vindo do corpo da requisição.
+    pub fn tenant_id(&self) -> &str {
+        &self.tenant_id
+    }
+
+    /// Identidade do dispositivo fixada na abertura; a sequência é monotônica
+    /// por `(tenant_id, node_id)`.
+    pub fn node_id(&self) -> &str {
+        &self.node_id
     }
 
     pub fn enqueue(
@@ -1020,7 +1034,7 @@ fn reject_personal_data(value: &Value, depth: usize) -> Result<(), ClientError> 
     Ok(())
 }
 
-fn sanitize_code(code: &str) -> String {
+pub(crate) fn sanitize_code(code: &str) -> String {
     let sanitized: String = code
         .chars()
         .filter(|character| {

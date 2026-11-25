@@ -289,7 +289,11 @@ ON CONFLICT (tenant_id,event_id,attempt,outcome) DO NOTHING`, tenant, ids)
 	return events, nil
 }
 
-// Succeed fecha o evento como processado e registra a trilha "succeeded".
+// Succeed fecha o evento como processado, grava a confirmação de entrega e
+// registra a trilha "succeeded". As três escritas ocorrem na MESMA transação:
+// não existe status 'processed' sem o efeito de entrega correspondente. A
+// entrega é idempotente por (tenant_id, event_id) via ON CONFLICT DO NOTHING,
+// então um replay do worker não duplica o efeito.
 func (r *Repository) Succeed(ctx context.Context, id uuid.UUID) (Event, error) {
 	tenant, err := db.TenantFromContext(ctx)
 	if err != nil {
@@ -306,6 +310,13 @@ RETURNING `+eventColumns, tenant, id), &result)
 			return classifyMiss(ctx, tx, tenant, id)
 		}
 		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+INSERT INTO outbox.delivery (tenant_id, event_id, event_type, attempt)
+VALUES ($1,$2,$3,$4)
+ON CONFLICT (tenant_id, event_id) DO NOTHING`,
+			tenant, result.ID, result.EventType, result.Attempts); err != nil {
 			return err
 		}
 		return auditAttempt(ctx, tx, tenant, result.ID, result.Attempts, "succeeded", nil)
@@ -644,6 +655,12 @@ func isForbiddenPayloadKey(tokens []string) bool {
 	return false
 }
 
+// errorText normaliza a mensagem de erro antes de persistir em last_error.
+// Um handler futuro pode, por descuido, devolver erro com e-mail, documento,
+// telefone ou segredo; a outbox é trilha de auditoria e não pode virar cadastro
+// nem cofre. Padrões sensíveis são substituídos por [redigido] e o texto é
+// truncado. A redação roda antes do INSERT, então vale para qualquer caminho
+// que chame Fail.
 func errorText(err error) string {
 	if err == nil {
 		return "erro sem mensagem"
@@ -652,8 +669,22 @@ func errorText(err error) string {
 	if text == "" {
 		return "erro sem mensagem"
 	}
+	text = redactSensitive(text)
 	if runes := []rune(text); len(runes) > maxErrorRunes {
 		text = string(runes[:maxErrorRunes])
 	}
+	return text
+}
+
+var (
+	lastErrorEmail = regexp.MustCompile(`(?i)[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+`)
+	lastErrorDoc   = regexp.MustCompile(`\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b|\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b|\b(?:\+?\d[\d\s().-]{8,14}\d)\b`)
+	lastErrorToken = regexp.MustCompile(`(?i)\b(?:token|senha|password|secret|api[_-]?key|bearer|authorization)\b[:\s=]*[^\s,;]+`)
+)
+
+func redactSensitive(text string) string {
+	text = lastErrorEmail.ReplaceAllString(text, "[redigido]")
+	text = lastErrorToken.ReplaceAllString(text, "[redigido]")
+	text = lastErrorDoc.ReplaceAllString(text, "[redigido]")
 	return text
 }

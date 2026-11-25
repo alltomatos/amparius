@@ -21,6 +21,7 @@ type environment struct {
 	database   *db.DB
 	repository *outbox.Repository
 	tenants    []uuid.UUID
+	adminDSN   string
 }
 
 func newEnvironment(t *testing.T, tenantCount int) *environment {
@@ -58,7 +59,7 @@ func newEnvironment(t *testing.T, tenantCount int) *environment {
 		database.Close()
 		t.Fatalf("teste precisa usar amparius_app sem BYPASSRLS; role=%s bypass=%v", role, bypass)
 	}
-	env := &environment{ctx: ctx, database: database}
+	env := &environment{ctx: ctx, database: database, adminDSN: adminDSN}
 	t.Cleanup(func() {
 		env.cleanup(t, admin)
 		database.Close()
@@ -90,11 +91,14 @@ func (e *environment) cleanup(t *testing.T, admin *pgxpool.Pool) {
 		defer func() { _ = tx.Rollback(ctx) }()
 		for _, statement := range []string{
 			"ALTER TABLE outbox.event_attempt DISABLE TRIGGER event_attempt_append_only",
+			"ALTER TABLE outbox.delivery DISABLE TRIGGER delivery_append_only",
 			"ALTER TABLE outbox.event DISABLE TRIGGER event_history_preserve",
+			"DELETE FROM outbox.delivery WHERE tenant_id = ANY($1::uuid[])",
 			"DELETE FROM outbox.event_attempt WHERE tenant_id = ANY($1::uuid[])",
 			"DELETE FROM outbox.event WHERE tenant_id = ANY($1::uuid[])",
 			"DELETE FROM identity.tenant WHERE id = ANY($1::uuid[])",
 			"ALTER TABLE outbox.event_attempt ENABLE TRIGGER event_attempt_append_only",
+			"ALTER TABLE outbox.delivery ENABLE TRIGGER delivery_append_only",
 			"ALTER TABLE outbox.event ENABLE TRIGGER event_history_preserve",
 		} {
 			if err = execCleanup(ctx, tx, statement, e.tenants); err != nil {
@@ -128,6 +132,18 @@ func execCleanup(ctx context.Context, tx pgx.Tx, statement string, tenants []uui
 func (e *environment) tenantContext(t *testing.T, index int) context.Context {
 	t.Helper()
 	return db.WithTenant(e.ctx, e.tenants[index])
+}
+
+// adminPool abre uma conexão administrativa para preparar cenários de teste
+// (triggers temporários). O papel de aplicação continua sendo o único usado
+// nas operações de negócio, sempre NOSUPERUSER/NOBYPASSRLS.
+func (e *environment) adminPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	admin, err := pgxpool.New(e.ctx, e.adminDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return admin
 }
 
 func (e *environment) appendEvent(t *testing.T, tenantIndex int, key string, maxAttempts int) outbox.Event {

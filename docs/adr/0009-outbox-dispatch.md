@@ -79,8 +79,15 @@ apenas no `t.Cleanup`, como os demais módulos.
 
 - Todo módulo que publica evento escreve na mesma transação do dado de negócio.
 - O dispatcher é biblioteca (`outbox.Dispatcher`) com `Handler` injetado; o
-  binário `cmd/worker` só deve ser ligado quando existir o primeiro handler real,
-  para não marcar eventos como processados sem efeito.
+  binário `cmd/worker` só deve ser ligado quando existir um **traço durável de
+  entrega**, para não marcar eventos como processados sem efeito algum. A
+  OUT-01B (#29) liga o worker a um sink de entrega idempotente
+  (`outbox.delivery`, migration `0026`), gravado na mesma transação do `Succeed`:
+  é efeito de infraestrutura observável, **não** handler de negócio. A validação
+  de envelope do `DeliveryHandler` não conta como efeito; o efeito é a linha de
+  entrega. O primeiro consumidor de domínio (fiscal, read-model, broker) continua
+  sem contrato e exigirá decisão própria — inclusive outra chave de
+  idempotência, pois `(tenant_id, event_id)` só vale para sink single-consumer.
 - O desenho adiciona uma função `SECURITY DEFINER`. Ela é auditável, devolve só
   IDs de tenant e é a única leitura cross-tenant do projeto.
 - `max_attempts` por evento permite tratar eventos críticos (fiscal, dinheiro)
@@ -112,8 +119,12 @@ apenas no `t.Cleanup`, como os demais módulos.
    `amparius_app` sem `SUPERUSER` e sem `BYPASSRLS`.
 3. Claim concorrente não entrega o mesmo evento duas vezes dentro do lease; lease
    vencido é reivindicado de novo e incrementa `attempts`.
-4. Falha grava `last_error`, agenda `next_attempt_at` com backoff e, ao esgotar
-   `max_attempts`, marca `failed`; `ReapExpired` fecha leases vencidos.
+4. Falha grava `last_error` (redigido, sem PII/segredo), agenda `next_attempt_at`
+   com backoff e, ao esgotar `max_attempts`, marca `failed`; `ReapExpired` fecha
+   leases vencidos.
 5. `event_attempt` é append-only e registra claim, sucesso e retry/falha.
 6. Migration sobe, desce e sobe de novo sem tocar nas migrations anteriores, e
    `go build`, `go vet` e `go test` passam.
+7. (OUT-01B) A entrega e o `status='processed'` são atômicos: se o INSERT em
+   `outbox.delivery` falha, o evento permanece `processing` e nada de efeito
+   parcial é gravado. Replay do mesmo `event_id` não duplica a entrega.

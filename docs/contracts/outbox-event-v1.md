@@ -97,9 +97,39 @@ agregado sob RLS e pela API do módulo, nunca pela outbox.
 - Ordem por `next_attempt_at, created_at, id` dentro do tenant; não há ordem
   global entre tenants nem entre aggregates distintos.
 - Falha grava `last_error`, aplica backoff exponencial de 2s a 1h e volta para
-  `pending`; ao esgotar `max_attempts` vira `failed`.
+  `pending`; ao esgotar `max_attempts` vira `failed`. `last_error` é redigido
+  antes de persistir (e-mail, CPF/CNPJ, telefone e segredos viram `[redigido]`),
+  porque a trilha de auditoria não pode virar cadastro nem cofre.
 - Lease vencido que já esgotou tentativas é fechado por `ReapExpired`.
 - A outbox é a fonte da verdade; um broker futuro será apenas consumidor dela.
+
+### 6.1 Registro de entrega (OUT-01B, #29)
+
+A migration forward-only `0026_outbox_delivery.sql` cria `outbox.delivery`:
+confirmação de entrega idempotente por `(tenant_id, event_id)`, com RLS por
+`app.tenant_id`, trigger append-only e grants mínimos (`SELECT, INSERT` apenas
+para `amparius_app`). A tabela guarda somente `tenant_id`, `event_id`,
+`event_type`, `attempt` e `delivered_at`: **nenhum payload, PII ou `last_error`**.
+
+`outbox.Repository.Succeed` grava, na **mesma transação**, o `status='processed'`,
+a linha de entrega e a trilha `succeeded` (`INSERT ... ON CONFLICT (tenant_id,
+event_id) DO NOTHING`). Não existe `processed` sem efeito: se o INSERT da entrega
+falhar, a transação inteira sofre rollback e o evento permanece `processing`,
+elegível para novo claim. A chave é mais forte que a do §6 (por `event_id`,
+não por `attempt`): deduplica também entre tentativas de retry, que é o que
+"replay sem duplicar efeito" exige.
+
+O handler `DeliveryHandler` apenas valida o envelope v1 antes de autorizar a
+conclusão — **essa validação não é o efeito**; o efeito é a linha de entrega.
+O handler `RefusingHandler` (`OUTBOX_DELIVERY_HANDLER=refuse`) recusa toda
+entrega de forma explícita, para que ligar o binário sem efeito nunca esvazie a
+outbox marcando eventos como processados.
+
+**Escopo single-consumer.** A chave `(tenant_id, event_id)` pressupõe um único
+destino por evento. Quando existir o primeiro consumidor real (broker,
+read-model, fiscal), o mesmo `event_id` terá vários destinos e essa chave deixa
+de bastar: multi-consumer exige outro desenho (chave por destino) e nova
+decisão de contrato. Nenhum handler de negócio está ligado nesta fatia.
 
 ## 7. Catálogo v1
 
@@ -147,16 +177,26 @@ publicado para não carregar texto livre.
 ## 9. Verificação
 
 ```powershell
-go test ./internal/modules/outbox/... -run 'PayloadPrivacy|Atomicity|Database' -count=1 -v
+go test ./internal/modules/outbox/... -run 'PayloadPrivacy|Atomicity|Database|ErrorText' -count=1 -v
 ```
 
-Com PostgreSQL real (`amparius_app` `NOSUPERUSER NOBYPASSRLS`):
+Com PostgreSQL real (`amparius_app` `NOSUPERUSER NOBYPASSRLS`), comando
+reproduzível da fatia OUT-01B:
 
 ```powershell
-$env:AMPA_TEST_POSTGRES_DSN = 'postgres://amparius_app:...@127.0.0.1:5432/amparius?sslmode=disable'
-$env:AMPA_TEST_POSTGRES_ADMIN_DSN = 'postgres://amparius:...@127.0.0.1:5432/amparius?sslmode=disable'
-go test ./internal/modules/outbox/... ./internal/modules/funeral/... -count=1 -run 'Atomicity|PersonalData|FuneralContractEvent' -v
+$env:AMPA_TEST_POSTGRES_DSN = 'postgres://amparius_app:amparius@127.0.0.1:5432/amparius?sslmode=disable'
+$env:AMPA_TEST_POSTGRES_ADMIN_DSN = 'postgres://amparius:amparius@127.0.0.1:5432/amparius?sslmode=disable'
+go test ./... -count=1
+go vet ./...
+go build ./...
+git diff --check
+goose -dir migrations postgres 'postgres://amparius:amparius@127.0.0.1:5432/amparius?sslmode=disable' up
 ```
+
+Testes de integração da entrega: concorrência de dois workers sem duplicar,
+crash/lease expirado reobtido, replay sem reaplicar efeito, falha terminal
+visível, entrega atômica (`TestSucceedRollsBackWhenDeliveryInsertFails`) e
+isolamento RLS de `outbox.delivery`.
 
 ## 10. Limites conhecidos
 
@@ -164,5 +204,11 @@ go test ./internal/modules/outbox/... ./internal/modules/funeral/... -count=1 -r
   decisão de auditoria/LGPD pendente).
 - Não há garantia de ordem entre aggregates; consumidores não podem assumir
   sequência global.
-- O `Dispatcher` ainda não está ligado ao `cmd/worker` porque não existe handler
-  de negócio real; ligar sem efeito marcaria eventos como processados à toa.
+- O `Dispatcher` **está** ligado ao `cmd/worker` desde a OUT-01B, mas apenas ao
+  registro de entrega idempotente (§6.1), que é efeito de infraestrutura, não de
+  negócio. Ainda **não** existe handler de negócio real: ligar um consumidor de
+  domínio (fiscal, read-model, broker) exige contrato próprio e, se houver mais
+  de um destino por evento, redesenho da chave de idempotência do sink.
+- `outbox.delivery` fica fora do escopo original deste contrato v1 (que cobre
+  `event` e `event_attempt`): é uma extensão da OUT-01B, documentada no §6.1,
+  com migration, RLS e grants próprios.

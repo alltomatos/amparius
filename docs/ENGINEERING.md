@@ -783,12 +783,13 @@ payload atravessa essa função.
 `internal/modules/outbox` expõe `Append`, `GetByID`, `GetByIdempotencyKey`,
 `Claim`, `Succeed`, `Fail`, `ReapExpired` e `PendingTenants`, todos com
 `context.Context` primeiro e SQL explícito. `Fail` persiste `last_error`
-(limitado a 1000 runes), aplica backoff exponencial de 2s a 1h e, ao atingir
-`max_attempts`, fecha o evento como `failed`; `ReapExpired` cobre worker que
-morreu depois do último claim. O `Dispatcher` recebe um `Handler`, drena cada
-tenant em sua própria transação e nunca registra payload em log. Ele não é
-ligado ao `cmd/worker` neste slice porque ainda não existe handler de negócio:
-marcar eventos como processados sem efeito seria pior que não consumir.
+(limitado a 1000 runes e redigido contra PII/segredo desde a OUT-01B), aplica
+backoff exponencial de 2s a 1h e, ao atingir `max_attempts`, fecha o evento
+como `failed`; `ReapExpired` cobre worker que morreu depois do último claim. O
+`Dispatcher` recebe um `Handler`, drena cada tenant em sua própria transação e
+nunca registra payload em log. Na OUT-01A ele não era ligado ao `cmd/worker`
+por falta de efeito; a OUT-01B (#29) liga o binário ao registro de entrega
+idempotente descrito abaixo, sem handler de negócio.
 
 As permissões são explícitas: `amparius_app` recebe `SELECT/INSERT/UPDATE` em
 `outbox.event`, `SELECT/INSERT` em `outbox.event_attempt` e `EXECUTE` apenas em
@@ -843,6 +844,75 @@ Testes novos:
   dois lados, payload do evento só tem chaves de referência e rollback de
   status também desfaz o evento.
 
-Limites mantidos: retenção/expurgo de eventos processados continua fora deste
-slice; a outbox não garante ordem entre aggregates; o `Dispatcher` ainda não
-está ligado a `cmd/worker` por falta de handler de negócio real.
+Limites mantidos **nesta fatia OUT-01A**: retenção/expurgo de eventos
+processados continua fora do escopo; a outbox não garante ordem entre
+aggregates; o `Dispatcher` ainda não estava ligado a `cmd/worker` por falta de
+efeito real (isso muda na OUT-01B, abaixo).
+
+### Worker, lease, retry e idempotência (OUT-01B, #29)
+
+Esta fatia liga o `cmd/worker` ao `Dispatcher` sem inventar efeito de negócio.
+O ADR 0009 e o contrato v1 proibiam marcar `processed` sem efeito; a saída é um
+**traço durável de entrega** de infraestrutura, não um consumidor de domínio.
+
+A migration forward-only `0026_outbox_delivery.sql` cria `outbox.delivery` com
+`UNIQUE (tenant_id, event_id)`, FK para `outbox.event`, RLS por
+`app.tenant_id`, trigger `delivery_append_only` e grants mínimos
+(`SELECT, INSERT` apenas para `amparius_app`; sem `UPDATE`/`DELETE`). A tabela
+guarda somente `tenant_id`, `event_id`, `event_type`, `attempt` e
+`delivered_at`: nenhum payload, PII, `last_error` ou segredo.
+
+`outbox.Repository.Succeed` passa a gravar, na **mesma transação**, o
+`status='processed'`, a linha de entrega (`ON CONFLICT (tenant_id, event_id) DO
+NOTHING`) e a trilha `succeeded`. Não existe `processed` sem entrega: se o
+INSERT falha, tudo sofre rollback e o evento continua `processing`, elegível a
+novo claim. A chave por `event_id` (e não por `attempt`) deduplica também entre
+tentativas de retry, que é a garantia pedida por "replay sem duplicar efeito".
+
+O `cmd/worker` deixa de ser esqueleto: abre o pool com `db.New`, cria
+`Repository` e `Dispatcher`, e roda até `SIGTERM`/`SIGINT` com encerramento
+gracioso. A configuração em `cmd/worker/config.go` lê apenas variáveis não
+sensíveis (`OUTBOX_BATCH`, `OUTBOX_MAX_TENANTS`, `OUTBOX_LEASE`,
+`OUTBOX_INTERVAL`, `OUTBOX_DELIVERY_HANDLER`), valida limites e exige
+`lease >= intervalo` (senão outro worker reivindicaria antes de o ciclo
+terminar). `String()` e o log de bootstrap nunca incluem o DSN; `config.Load`
+continua sendo o único lugar onde o DSN é lido. `OUTBOX_DELIVERY_HANDLER=refuse`
+usa `outbox.RefusingHandler`, que recusa explicitamente — nunca um noop que
+esvazia a outbox. `DeliveryHandler` valida o envelope v1 e a guarda de PII
+antes de autorizar a conclusão; essa validação **não é o efeito**, o efeito é a
+linha de entrega. `errorText` redige e-mail, CPF/CNPJ, telefone e tokens/senhas
+antes de gravar `last_error`.
+
+O sink é **single-consumer**: `(tenant_id, event_id)` pressupõe um destino por
+evento. Com o primeiro consumidor real (broker, read-model, fiscal) a chave
+deixa de bastar e exige novo desenho e novo contrato. Nenhum handler de negócio
+está ligado nesta fatia.
+
+Evidência (PostgreSQL real, `amparius_app` `NOSUPERUSER/NOBYPASSRLS`, cleanup
+administrativo conferido — inclui `outbox.delivery` antes de `outbox.event` por
+causa da FK):
+
+```powershell
+$env:AMPA_TEST_POSTGRES_DSN = 'postgres://amparius_app:amparius@127.0.0.1:5432/amparius?sslmode=disable'
+$env:AMPA_TEST_POSTGRES_ADMIN_DSN = 'postgres://amparius:amparius@127.0.0.1:5432/amparius?sslmode=disable'
+go test ./... -count=1
+go vet ./...
+go build ./...
+git diff --check
+goose -dir migrations postgres 'postgres://amparius:amparius@127.0.0.1:5432/amparius?sslmode=disable' up
+```
+
+Testes novos de integração: `TestConcurrentWorkersDoNotDoubleDeliver` (dois
+dispatchers, 20 eventos, nenhuma duplicação), `TestCrashReobtainsLeaseWithoutDuplicatingEffect`
+(worker morre após claim, lease expira, segundo worker conclui com `attempts=2`),
+`TestReplayOfProcessedEventDoesNotReapplyEffect`, `TestTerminalFailureIsVisible`
+(`failed` + `last_error` + trilha, sem PII),
+`TestSucceedRecordsDeliveryOnceInSameTransaction`, `TestSucceedRollsBackWhenDeliveryInsertFails`
+(sabota o INSERT da entrega e prova rollback do `processed`),
+`TestDeliveryRespectsRLSIsolation`, `TestFailRedactsPIIFromLastError`,
+além dos testes de `DeliveryHandler`, `workerConfig` e redação unitária.
+
+Smoke do binário real (4s, `OUTBOX_DELIVERY_HANDLER=delivery`,
+`OUTBOX_INTERVAL=1s`): log de bootstrap sem DSN, evento `processed` com
+`attempts=1`, uma linha em `outbox.delivery`; dados de smoke removidos e
+triggers reabilitados.

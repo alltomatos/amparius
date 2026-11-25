@@ -143,11 +143,13 @@ func (f *atomicityFixture) close(t *testing.T) {
 		"ALTER TABLE funeral.contract_item DISABLE TRIGGER contract_item_append_only",
 		"ALTER TABLE funeral.contract DISABLE TRIGGER contract_history_preserve",
 		"ALTER TABLE outbox.event_attempt DISABLE TRIGGER event_attempt_append_only",
+		"ALTER TABLE outbox.delivery DISABLE TRIGGER delivery_append_only",
 		"ALTER TABLE outbox.event DISABLE TRIGGER event_history_preserve",
 		"DELETE FROM funeral.contract_status_history WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM funeral.contract_family_member WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM funeral.contract_item WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM funeral.contract WHERE tenant_id = ANY($1::uuid[])",
+		"DELETE FROM outbox.delivery WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM outbox.event_attempt WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM outbox.event WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM party.family_link WHERE tenant_id = ANY($1::uuid[])",
@@ -162,6 +164,7 @@ func (f *atomicityFixture) close(t *testing.T) {
 		"ALTER TABLE funeral.contract_item ENABLE TRIGGER contract_item_append_only",
 		"ALTER TABLE funeral.contract ENABLE TRIGGER contract_history_preserve",
 		"ALTER TABLE outbox.event_attempt ENABLE TRIGGER event_attempt_append_only",
+		"ALTER TABLE outbox.delivery ENABLE TRIGGER delivery_append_only",
 		"ALTER TABLE outbox.event ENABLE TRIGGER event_history_preserve",
 	} {
 		if strings.HasPrefix(statement, "ALTER TABLE") {

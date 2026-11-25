@@ -797,3 +797,52 @@ de integração usa `AMPA_TEST_POSTGRES_DSN` com `amparius_app` e
 `AMPA_TEST_POSTGRES_ADMIN_DSN` apenas no `t.Cleanup`. Retenção e expurgo de
 eventos processados ficam para um slice próprio, com política de auditoria e
 LGPD definida.
+
+### Outbox transacional e guarda de payload (OUT-01A, #28)
+
+Esta fatia fecha o contrato de escrita da outbox. O agregado e o evento são
+gravados na mesma transação por `outbox.Repository.AppendTx`; nos módulos, isso
+já acontece no contrato funerário (`funeral.contract.created` e
+`funeral.contract.status_changed`, ambos v1).
+
+A migration forward-only `0025_outbox_payload_guard.sql` adiciona
+`outbox.assert_payload_safe(jsonb)` e reinstala `outbox.validate_event()` para
+chamá-la no `INSERT`. A função rejeita payload que não seja objeto, acima de
+64 KiB, com mais de 8 níveis, com chave de PII direta (`name`, `cpf`, `cnpj`,
+`email`, `phone`, `address`, `birth_date`, `notes`, ...) ou com valor que seja
+e-mail, sequência de 10 a 14 dígitos sem letras ou texto livre acima de 512
+caracteres. Chaves terminadas em `id`/`ids`/`ref` são referências opacas e
+passam. `outbox.ValidatePayloadPrivacy` aplica a mesma regra em Go antes do
+`INSERT`, então o erro chega tipado (`outbox.ErrPayloadContainsPII`) e a
+garantia não depende do caminho de escrita. A `0025` revoga `EXECUTE` de
+`PUBLIC` na guarda e concede apenas a `amparius_app`, mantendo os grants
+mínimos já definidos na `0007`.
+
+O contrato v1 do evento — envelope, idempotência, payload permitido, RLS,
+grants, entrega e catálogo de eventos — está em
+`docs/contracts/outbox-event-v1.md`.
+
+Evidência (PostgreSQL real, `amparius_app` `NOSUPERUSER/NOBYPASSRLS`, cleanup
+administrativo conferido):
+
+```powershell
+$env:AMPA_TEST_POSTGRES_DSN = 'postgres://amparius_app:...@127.0.0.1:5432/amparius?sslmode=disable'
+$env:AMPA_TEST_POSTGRES_ADMIN_DSN = 'postgres://amparius:...@127.0.0.1:5432/amparius?sslmode=disable'
+go test ./internal/modules/outbox/... ./internal/modules/funeral/... -count=1 -run 'Atomicity|PersonalData|FuneralContractEvent|AppendIsIdempotent' -v
+```
+
+Testes novos:
+
+- `outbox.TestAppendTxRollsBackWithAggregate`: append + erro desfaz o evento;
+  replay na mesma transação grava uma linha só.
+- `outbox.TestDatabaseRejectsPersonalDataInPayload`: INSERT direto com nome,
+  CPF, CNPJ, e-mail, telefone, PII aninhada, texto livre e payload acima do
+  teto é recusado pelo banco.
+- `funeral.TestFuneralContractEventAtomicityAndPayloadPrivacy`: contrato e
+  evento juntos, replay sem duplicar, falha antes/depois do append desfaz os
+  dois lados, payload do evento só tem chaves de referência e rollback de
+  status também desfaz o evento.
+
+Limites mantidos: retenção/expurgo de eventos processados continua fora deste
+slice; a outbox não garante ordem entre aggregates; o `Dispatcher` ainda não
+está ligado a `cmd/worker` por falta de handler de negócio real.

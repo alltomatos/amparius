@@ -574,6 +574,8 @@ erDiagram
 
 > **`AI_AGENT.model` é código estável de modelo, não string livre.** A coluna `model` guarda o `code` do catálogo `ai.ai_model` (ex.: `gpt-4o`, `claude-sonnet-4`), nunca um nome de exibição nem um identificador de provedor. O valor é **referência por código**, resolvida no control plane e validada contra o snapshot de enforcement de IA (`AI_MODEL_ALLOWANCE`) a cada `AI_RUN` — **não há FK entre bancos**, porque `AI_MODEL` vive no control plane e `AI_AGENT` na célula (ADR 0008). Modelo fora da allowlist do snapshot faz o assistente falhar fechado (ver §5).
 
+> **`OUTBOX_EVENT.payload` não carrega PII.** O evento referencia o agregado por UUIDs, enums, dinheiro em centavos e datas; nome, documento, contato e endereço ficam nas tabelas do módulo. A regra é validada no Go (`outbox.ValidatePayloadPrivacy`) e no banco (`outbox.assert_payload_safe`, migration `0025`); o contrato v1 está em `docs/contracts/outbox-event-v1.md`. `OUTBOX_EVENT` e `OUTBOX_EVENT_ATTEMPT` são append-only (DELETE bloqueado) e o evento nasce na mesma transação do agregado.
+
 ## 5. Entitlement, módulos e IA — vivem no **control plane**
 
 > **Banco:** os schemas `entitlement` e `ai`, o catálogo `module` e o catálogo de provedor/modelo pertencem ao **Postgres do control plane** (ADR 0005), junto de billing, diretório de tenants e provisionamento. **Nenhuma dessas tabelas existe na célula.** A célula e o relay guardam apenas um **snapshot assinado** de enforcement (ver nota ao final da seção) — não é tabela de negócio.

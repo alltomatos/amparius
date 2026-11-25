@@ -5,6 +5,7 @@
 package outbox
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/alltomatos/amparius/internal/platform/db"
 	"github.com/google/uuid"
@@ -29,19 +32,50 @@ var (
 	ErrTenantMismatch = errors.New("tenant da entidade diverge do contexto")
 	// ErrStaleEvent indica evento fora de processamento para a transição pedida.
 	ErrStaleEvent = errors.New("evento não está em processamento")
+	// ErrPayloadContainsPII indica payload com dado pessoal ou texto livre.
+	// Evento de domínio carrega referências opacas (UUID), não PII.
+	ErrPayloadContainsPII = errors.New("payload da outbox contém dado pessoal indevido")
 )
 
 const (
 	// DefaultMaxAttempts é o teto padrão de tentativas de entrega.
 	DefaultMaxAttempts = 10
+	// MaxPayloadBytes é o teto do payload serializado; o banco aplica o mesmo.
+	MaxPayloadBytes = 64 * 1024
 	// maxErrorRunes limita o last_error persistido.
 	maxErrorRunes = 1000
 	// backoffBase e backoffMax definem o crescimento do retry.
 	backoffBase = 2 * time.Second
 	backoffMax  = time.Hour
+	// maxPayloadDepth e maxPayloadStringRunes limitam payload aninhado e texto.
+	maxPayloadDepth       = 8
+	maxPayloadStringRunes = 512
 )
 
-var eventTypePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`)
+var (
+	eventTypePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`)
+	emailPattern     = regexp.MustCompile(`(?i)^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+)
+
+// forbiddenPayloadTokens são palavras que, sozinhas numa chave, indicariam PII
+// direta. O banco repete a lista na migration 0025: vale mesmo fora do Go.
+var forbiddenPayloadTokens = map[string]struct{}{
+	"name": {}, "cpf": {}, "cnpj": {}, "rg": {}, "ie": {},
+	"email": {}, "mail": {}, "phone": {}, "mobile": {}, "cellphone": {},
+	"telephone": {}, "telefone": {}, "fone": {}, "celular": {}, "whatsapp": {},
+	"address": {}, "street": {}, "logradouro": {}, "bairro": {}, "cidade": {},
+	"city": {}, "cep": {}, "zip": {}, "nascimento": {},
+	"obs": {}, "notes": {}, "observacao": {}, "message": {}, "mensagem": {},
+	"password": {}, "senha": {}, "token": {}, "secret": {}, "apikey": {},
+	"cartao": {}, "cvv": {}, "holder": {}, "titular": {},
+}
+
+// forbiddenPayloadCompounds são chaves compostas por dois tokens vizinhos.
+var forbiddenPayloadCompounds = map[string]struct{}{
+	"fullname": {}, "socialname": {}, "legalname": {}, "tradename": {},
+	"birthdate": {}, "datanascimento": {}, "zipcode": {}, "cardnumber": {},
+	"mothername": {}, "nomemae": {}, "cpfcnpj": {},
+}
 
 // Event é o evento de domínio persistido na outbox.
 type Event struct {
@@ -474,6 +508,9 @@ func validateEvent(event Event) error {
 	if len(event.Payload) == 0 || json.Unmarshal(event.Payload, &object) != nil || object == nil {
 		return fmt.Errorf("%w: payload deve ser um objeto JSON", ErrInvalidEvent)
 	}
+	if err := ValidatePayloadPrivacy(event.Payload); err != nil {
+		return err
+	}
 	key := strings.TrimSpace(event.IdempotencyKey)
 	if key == "" || len(key) > 200 {
 		return fmt.Errorf("%w: idempotency_key obrigatória com até 200 caracteres", ErrInvalidEvent)
@@ -485,6 +522,126 @@ func validateEvent(event Event) error {
 		return fmt.Errorf("%w: evento só nasce pending", ErrInvalidEvent)
 	}
 	return nil
+}
+
+// ValidatePayloadPrivacy barra PII direta no payload da outbox. Evento de
+// domínio referencia pessoas e documentos por UUID e enum; nome, documento,
+// contato e endereço ficam no agregado, nunca no evento. O banco aplica a
+// mesma regra (migration 0025), então a validação não depende do Go.
+func ValidatePayloadPrivacy(payload json.RawMessage) error {
+	if len(payload) > MaxPayloadBytes {
+		return fmt.Errorf("%w: payload excede %d bytes", ErrPayloadContainsPII, MaxPayloadBytes)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	var root any
+	if err := decoder.Decode(&root); err != nil {
+		return fmt.Errorf("%w: payload JSON inválido", ErrInvalidEvent)
+	}
+	if _, ok := root.(map[string]any); !ok {
+		return fmt.Errorf("%w: payload deve ser um objeto JSON", ErrInvalidEvent)
+	}
+	return inspectPayloadValue(root, 0)
+}
+
+func inspectPayloadValue(node any, depth int) error {
+	if depth > maxPayloadDepth {
+		return fmt.Errorf("%w: payload excede %d níveis", ErrInvalidEvent, maxPayloadDepth)
+	}
+	switch value := node.(type) {
+	case map[string]any:
+		for key, child := range value {
+			if isForbiddenPayloadKey(payloadKeyTokens(key)) {
+				return fmt.Errorf("%w: chave %q", ErrPayloadContainsPII, key)
+			}
+			if err := inspectPayloadValue(child, depth+1); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, child := range value {
+			if err := inspectPayloadValue(child, depth+1); err != nil {
+				return err
+			}
+		}
+	case string:
+		if err := inspectPayloadString(value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func inspectPayloadString(value string) error {
+	if utf8.RuneCountInString(value) > maxPayloadStringRunes {
+		return fmt.Errorf("%w: texto livre no payload", ErrPayloadContainsPII)
+	}
+	if emailPattern.MatchString(strings.TrimSpace(value)) {
+		return fmt.Errorf("%w: e-mail no payload", ErrPayloadContainsPII)
+	}
+	if !strings.ContainsFunc(value, func(r rune) bool {
+		return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')
+	}) {
+		digits := 0
+		for _, r := range value {
+			if r >= '0' && r <= '9' {
+				digits++
+			}
+		}
+		if digits >= 10 && digits <= 14 {
+			return fmt.Errorf("%w: documento ou telefone no payload", ErrPayloadContainsPII)
+		}
+	}
+	return nil
+}
+
+// payloadKeyTokens quebra a chave em palavras: separadores e camelCase. Assim
+// "customer_full_name" e "customerFullName" caem no token proibido "name".
+func payloadKeyTokens(key string) []string {
+	var tokens []string
+	var current strings.Builder
+	flush := func() {
+		if current.Len() > 0 {
+			tokens = append(tokens, strings.ToLower(current.String()))
+			current.Reset()
+		}
+	}
+	runes := []rune(strings.TrimSpace(key))
+	for i, r := range runes {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			flush()
+			continue
+		}
+		if unicode.IsUpper(r) && i > 0 && (unicode.IsLower(runes[i-1]) || unicode.IsDigit(runes[i-1])) {
+			flush()
+		}
+		current.WriteRune(r)
+	}
+	flush()
+	return tokens
+}
+
+// isForbiddenPayloadKey aceita referências opacas: uma chave terminada em
+// id/ids/ref é ponteiro para o agregado, não PII.
+func isForbiddenPayloadKey(tokens []string) bool {
+	if len(tokens) == 0 {
+		return false
+	}
+	switch tokens[len(tokens)-1] {
+	case "id", "ids", "ref":
+		return false
+	}
+	for _, token := range tokens {
+		if _, forbidden := forbiddenPayloadTokens[token]; forbidden {
+			return true
+		}
+	}
+	for i := 1; i < len(tokens); i++ {
+		if _, forbidden := forbiddenPayloadCompounds[tokens[i-1]+tokens[i]]; forbidden {
+			return true
+		}
+	}
+	return false
 }
 
 func errorText(err error) string {

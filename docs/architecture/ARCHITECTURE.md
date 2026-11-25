@@ -62,7 +62,7 @@ Versão 0.1 · 21/11/2026
 | `catalog` | produto, serviço, plano, preço, NCM/LC116 | `catalog.item.updated` |
 | `finance` | plano de contas, título, parcela, baixa, caixa, ledger | `finance.title.created`, `finance.payment.settled` |
 | `fiscal` | configuração, motor de tributos, documento, transmissão, DANFE | `fiscal.document.authorized`, `fiscal.document.rejected` |
-| `funeral` | contrato, OS, velório, traslado (sem cremação) | `funeral.contract.signed` |
+| `funeral` | contrato, OS, velório, traslado (sem cremação) | `funeral.contract.created`, `funeral.contract.status_changed` |
 | `cemetery` | cemitério, quadra, jazigo, concessão, sepultamento | `cemetery.burial.registered` |
 | `cremation` | crematório, cremação, urna, autorização (módulo próprio — ADR 0007, independente de funeral/cemetery) | `cremation.service.registered` |
 | `floriculture` | arranjo, pedido, entrega, rota, lote | `floriculture.order.dispatched` |

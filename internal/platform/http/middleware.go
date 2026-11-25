@@ -9,16 +9,13 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/alltomatos/amparius/internal/platform/observability"
 )
 
-type contextKey int
-
-const requestIDKey contextKey = iota
-
-// RequestIDFromContext devolve o request-id associado ao contexto.
+// RequestIDFromContext devolve o request-id (correlation id) do contexto.
 func RequestIDFromContext(ctx context.Context) string {
-	id, _ := ctx.Value(requestIDKey).(string)
-	return id
+	return observability.CorrelationIDFromContext(ctx)
 }
 
 // middleware é o formato padrão de encadeamento.
@@ -40,7 +37,7 @@ func requestID(next http.Handler) http.Handler {
 			id = newRequestID()
 		}
 		w.Header().Set("X-Request-Id", id)
-		ctx := context.WithValue(r.Context(), requestIDKey, id)
+		ctx := observability.WithCorrelationID(r.Context(), id)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

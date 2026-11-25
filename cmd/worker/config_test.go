@@ -29,7 +29,7 @@ func TestWorkerConfigFromEnvironment(t *testing.T) {
 	if cfg.Handler != "delivery" {
 		t.Fatalf("handler: %q", cfg.Handler)
 	}
-	// O DSN nunca aparece em representação de log nem em erro de validação.
+	// O DSN nunca aparece em representaÃ§Ã£o de log nem em erro de validaÃ§Ã£o.
 	if strings.Contains(cfg.String(), "senha") || strings.Contains(cfg.String(), "amparius_app") {
 		t.Fatalf("String() vazou segredo: %s", cfg.String())
 	}
@@ -44,10 +44,10 @@ func TestWorkerConfigDefaultsAreSafe(t *testing.T) {
 		t.Fatalf("defaults fora do limite: %+v", cfg)
 	}
 	if cfg.Lease <= 0 || cfg.Interval <= 0 {
-		t.Fatalf("defaults de tempo inválidos: %+v", cfg)
+		t.Fatalf("defaults de tempo invÃ¡lidos: %+v", cfg)
 	}
 	if cfg.Handler != "delivery" {
-		t.Fatalf("handler padrão deveria ser entrega real, obtido %q", cfg.Handler)
+		t.Fatalf("handler padrÃ£o deveria ser entrega real, obtido %q", cfg.Handler)
 	}
 }
 
@@ -92,5 +92,62 @@ func TestWorkerConfigStringNeverIncludesDSN(t *testing.T) {
 	}
 	if strings.Contains(cfg.String(), "supersegredo") {
 		t.Fatalf("String() vazou DSN: %s", cfg.String())
+	}
+}
+
+func TestWorkerConfigMetricsAddress(t *testing.T) {
+	cfg, err := workerConfigFrom(func(key string) (string, bool) {
+		if key == "OUTBOX_METRICS_ADDR" {
+			return "127.0.0.1:9292", true
+		}
+		return "", false
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MetricsAddr != "127.0.0.1:9292" {
+		t.Fatalf("metrics addr = %q", cfg.MetricsAddr)
+	}
+	if !strings.Contains(cfg.String(), "metrics_addr=127.0.0.1:9292") {
+		t.Fatalf("String() sem metrics addr: %s", cfg.String())
+	}
+
+	disabled := map[string]string{"off": "", "-": "", "disabled": ""}
+	for value, want := range disabled {
+		cfg, err := workerConfigFrom(func(key string) (string, bool) {
+			if key == "OUTBOX_METRICS_ADDR" {
+				return value, true
+			}
+			return "", false
+		})
+		if err != nil {
+			t.Fatalf("%q deveria desabilitar: %v", value, err)
+		}
+		if cfg.MetricsAddr != want {
+			t.Fatalf("%q: metrics addr = %q, quer %q", value, cfg.MetricsAddr, want)
+		}
+	}
+
+	invalid := []string{"sem-porta", "host:99999", "host:abc", ":"}
+	for _, value := range invalid {
+		_, err := workerConfigFrom(func(key string) (string, bool) {
+			if key == "OUTBOX_METRICS_ADDR" {
+				return value, true
+			}
+			return "", false
+		})
+		if err == nil {
+			t.Fatalf("%q deveria falhar", value)
+		}
+	}
+}
+
+func TestWorkerConfigMetricsDefaultIsLoopback(t *testing.T) {
+	cfg, err := workerConfigFrom(func(string) (string, bool) { return "", false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MetricsAddr != "127.0.0.1:9091" {
+		t.Fatalf("default de metricas deveria ser loopback 9091, obtido %q", cfg.MetricsAddr)
 	}
 }

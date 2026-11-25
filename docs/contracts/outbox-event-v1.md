@@ -212,3 +212,44 @@ isolamento RLS de `outbox.delivery`.
 - `outbox.delivery` fica fora do escopo original deste contrato v1 (que cobre
   `event` e `event_attempt`): é uma extensão da OUT-01B, documentada no §6.1,
   com migration, RLS e grants próprios.
+
+## 11. Observabilidade (OUT-01C, #30)
+
+O contrato de observação é composto por logs JSON e pela exposição Prometheus
+do worker. Nenhum dos dois carrega payload, `last_error` bruto, DSN ou segredo.
+
+- **Log de ciclo** (`outbox ciclo concluido`): `correlation_id` do ciclo,
+  `worker_id`, contagens (`tenants`, `reaped`, `claimed`, `succeeded`,
+  `retried`, `failed`), backlog amostrado por soma e `duration_ms`. Erro de
+  ciclo é logado em Warn com `erro` redigido.
+- **Log de evento** (entrega em Debug, retry em Warn, falha terminal em
+  Error): `tenant_id`, `event_id`, `trace_id`, `event_type`, `attempt`,
+  `max_attempts`, `correlation_id`, `worker_id` e `duration_ms`.
+- `trace_id` é o `event_id` (UUIDv7). É a correlação estável entre produtor,
+  linha de `outbox.event` e linha de `outbox.delivery`, sem incluir dado de
+  negócio. O `correlation_id` do ciclo é opaco e, quando o append nasce de uma
+  requisição HTTP, o `X-Request-Id` é propagado pelo contexto.
+- Texto de erro passa por `outbox.RedactError`, a mesma redação aplicada ao
+  `last_error`; padrões de e-mail, CPF/CNPJ, telefone e token viram
+  `[redigido]`.
+- **Métricas** (prefixo `amparius_outbox_`): ciclos, erros de ciclo, eventos
+  reivindicados/entregues/reagendados/falhos/recolhidos, histogramas de
+  duração de ciclo e de entrega, gauge de backlog por tenant/status e gauge de
+  idade do evento mais antigo. O gauge é a fotografia do último ciclo e é
+  substituído inteiro a cada ciclo (`ReplaceGauges`), sem série obsoleta.
+- **Endpoint**: `GET /metrics` no worker, por padrão em `127.0.0.1:9091`;
+  `OUTBOX_METRICS_ADDR` aceita `host:porta` ou `off`/`-`/`disabled`/`none`.
+  Falha ao abrir o listener derruba o bootstrap.
+- Amostrar backlog nunca interrompe entrega: erro de amostragem vira log Warn,
+  incrementa `amparius_outbox_backlog_sample_errors_total` e o ciclo segue.
+
+Alertas, limitações do gauge (amostra por ciclo e limite de
+`OUTBOX_MAX_TENANTS`), regras Prometheus e comandos reproduzíveis estão em
+`docs/observability/outbox-alerts.md`.
+
+Evidência local sem banco (contrato de log/métrica):
+
+```powershell
+go test ./internal/platform/observability/... ./cmd/worker/... -count=1 -v
+go test ./internal/modules/outbox/... -count=1 -run 'DispatcherLogs|DispatcherRetry|BacklogSampleError|Observability' -v
+```

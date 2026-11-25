@@ -1,12 +1,13 @@
-// Comando worker é o ponto de entrada dos consumidores de fila e jobs do SaaS.
+// Comando worker: ponto de entrada dos consumidores de fila e jobs do SaaS.
 //
-// Ele drena a outbox transacional por tenant (OUT-01B): descobre tenants com
-// evento elegível, reivindica com lease, entrega via handler real e registra
-// sucesso/falha de forma idempotente. Nenhum segredo nem payload é logado.
+// Ele drena a outbox transacional por tenant (OUT-01B) e publica metricas
+// Prometheus do backlog, retry, falha e latencia (OUT-01C). Nenhum segredo nem
+// payload e logado.
 package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -16,6 +17,7 @@ import (
 	"github.com/alltomatos/amparius/internal/platform/config"
 	"github.com/alltomatos/amparius/internal/platform/db"
 	"github.com/alltomatos/amparius/internal/platform/log"
+	"github.com/alltomatos/amparius/internal/platform/observability"
 )
 
 func main() {
@@ -28,21 +30,31 @@ func main() {
 func run() error {
 	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("carregar configuração: %w", err)
+		return fmt.Errorf("carregar configuracao: %w", err)
 	}
 	workerCfg, err := workerConfigFrom(os.LookupEnv)
 	if err != nil {
-		return fmt.Errorf("carregar configuração do worker: %w", err)
+		return fmt.Errorf("carregar configuracao do worker: %w", err)
 	}
 
 	level, err := log.ParseLevel(cfg.LogLevel)
 	if err != nil {
 		return fmt.Errorf("configurar log: %w", err)
 	}
-	logger := log.New(os.Stdout, level)
+	workerID := observability.NewCorrelationID()
+	logger := log.New(os.Stdout, level).With(
+		"service", "worker",
+		"env", cfg.Env,
+		"worker_id", workerID,
+	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	metrics := observability.NewMetrics()
+	if err := startMetricsServer(ctx, logger, workerCfg.MetricsAddr, metrics); err != nil {
+		return err
+	}
 
 	database, err := db.New(ctx, cfg.PostgresDSN)
 	if err != nil {
@@ -52,7 +64,7 @@ func run() error {
 
 	repository, err := outbox.NewRepository(database)
 	if err != nil {
-		return fmt.Errorf("criar repositório da outbox: %w", err)
+		return fmt.Errorf("criar repositorio da outbox: %w", err)
 	}
 
 	handler := selectHandler(workerCfg.Handler)
@@ -62,25 +74,26 @@ func run() error {
 		Lease:      workerCfg.Lease,
 		Interval:   workerCfg.Interval,
 		Logger:     logger,
+		Metrics:    metrics,
 	})
 	if err != nil {
 		return fmt.Errorf("criar dispatcher da outbox: %w", err)
 	}
 
-	// Só campos não sensíveis vão para o log de bootstrap: env, limites e
-	// nome do handler. O DSN permanece apenas na conexão.
-	logger.Info("worker iniciado", "env", cfg.Env, "config", workerCfg.String())
+	// So campos nao sensiveis vao para o log de bootstrap: env, limites e
+	// nome do handler. O DSN permanece apenas na conexao.
+	logger.Info("worker iniciado", "config", workerCfg.String())
 	err = dispatcher.Run(ctx)
-	if err != nil && err != context.Canceled {
+	if err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("ciclo da outbox: %w", err)
 	}
 	logger.Info("worker encerrado")
 	return nil
 }
 
-// selectHandler escolhe o handler real de entrega ou a recusa explícita.
-// "refuse" existe para ligar o binário sem efeito sem esvaziar a outbox: o
-// ADR 0009 proíbe marcar eventos como processados sem efeito real. Qualquer
+// selectHandler escolhe o handler real de entrega ou a recusa explicita.
+// "refuse" existe para ligar o binario sem efeito sem esvaziar a outbox: o
+// ADR 0009 proibe marcar eventos como processados sem efeito real. Qualquer
 // valor diferente de "delivery" cai na recusa, nunca em noop silencioso.
 func selectHandler(name string) outbox.Handler {
 	if name == "delivery" {

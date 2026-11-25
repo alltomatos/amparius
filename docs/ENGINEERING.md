@@ -916,3 +916,70 @@ Smoke do binário real (4s, `OUTBOX_DELIVERY_HANDLER=delivery`,
 `OUTBOX_INTERVAL=1s`): log de bootstrap sem DSN, evento `processed` com
 `attempts=1`, uma linha em `outbox.delivery`; dados de smoke removidos e
 triggers reabilitados.
+
+### Observabilidade do worker e da outbox (OUT-01C, #30)
+
+Esta fatia nao muda schema nem o contrato de eventos: adiciona observacao sobre
+o worker existente. O pacote `internal/platform/observability` concentra o
+correlation id (contexto, UUIDv7) e um registry de metricas concorrente com
+exposicao Prometheus, sem dependencia externa nova.
+
+O `Dispatcher` passa a receber `observability.Metrics` na config e o `cmd/worker`
+enriquece o logger base com `service`, `env` e `worker_id`.
+Cada ciclo gera um `correlation_id` opaco e o propaga no contexto; cada evento
+usa o proprio `event_id` como `trace_id`, o que liga log de entrega, linha de
+`outbox.event` e linha de `outbox.delivery` sem tocar payload. O log de ciclo
+traz tenant count, reaped, claimed, succeeded, retried, failed, backlog
+amostrado e `duration_ms`; entregas bem-sucedidas ficam em Debug (para nao
+gerar 10 mil linhas por ciclo), retry em Warn e falha terminal em Error. Todo
+texto de erro passa por `outbox.RedactError`, a mesma redacao de e-mail, CPF,
+CNPJ, telefone e token aplicada ao `last_error`.
+
+O `Repository.Backlog(ctx)` roda sob RLS e devolve pendentes, em processamento,
+falhos e a idade do evento mais antigo do tenant. O dispatcher troca a familia
+de gauges a cada ciclo (`ReplaceGauges`), entao tenant sem evento nao deixa
+serie obsoleta. Erro de amostragem nao interrompe entrega: vira Warn e
+incrementa `amparius_outbox_backlog_sample_errors_total`.
+
+Metricas expostas: `amparius_outbox_cycles_total`,
+`amparius_outbox_cycle_errors_total`, `amparius_outbox_cycle_duration_seconds`,
+`amparius_outbox_events_claimed_total`,
+`amparius_outbox_events_succeeded_total`,
+`amparius_outbox_events_retried_total`,
+`amparius_outbox_events_failed_total`,
+`amparius_outbox_events_reaped_total`, `amparius_outbox_backlog_events` por
+tenant/status, `amparius_outbox_backlog_oldest_age_seconds` por tenant,
+`amparius_outbox_backlog_sample_errors_total` e
+`amparius_outbox_delivery_duration_seconds`.
+
+O `cmd/worker` sobe `GET /metrics` e `GET /healthz` em
+`OUTBOX_METRICS_ADDR` (padrao `127.0.0.1:9091`; `off`/`-` desabilita) e
+identifica a instancia no log com `service`, `env` e `worker_id`. O endpoint
+continua separado do trafego de negocio e nao deve ser exposto publicamente.
+
+O `Store` do dispatcher e uma interface: o contrato de log/metrica e testado
+com store roteirizado, sem PostgreSQL, e a persistencia continua coberta pela
+integracao. Os testes provam tenant/correlation/trace nos logs, ausencia de
+payload e de PII/segredo, contadores, `ReplaceGauges` e que erro de backlog nao
+derruba entrega.
+
+Evidencia local (PostgreSQL real, `amparius_app` `NOSUPERUSER/NOBYPASSRLS`):
+
+```powershell
+$env:AMPA_TEST_POSTGRES_DSN = 'postgres://amparius_app:amparius@127.0.0.1:5432/amparius?sslmode=disable'
+$env:AMPA_TEST_POSTGRES_ADMIN_DSN = 'postgres://amparius:amparius@127.0.0.1:5432/amparius?sslmode=disable'
+go test ./... -count=1
+go vet ./...
+go build ./...
+git diff --check
+```
+
+Contrato de metricas, alertas Prometheus, limites do gauge de backlog e
+comandos de scrape estao em `docs/observability/outbox-alerts.md`; o contrato
+de evento ganhou a secao 11 em `docs/contracts/outbox-event-v1.md`.
+
+Limites desta fatia: retencao/expurgo e broker continuam fora de escopo. O
+gauge de backlog e uma fotografia dos tenants visitados no ultimo ciclo; com
+mais tenants ativos que `OUTBOX_MAX_TENANTS`, a soma subestima o backlog. Nao
+ha tracing distribuido (OpenTelemetry) nem exportador externo: a correlacao e
+por log/metrica local, e a adocao de OTLP exige decisao propria.

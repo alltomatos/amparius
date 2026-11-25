@@ -436,6 +436,35 @@ func (r *Repository) PendingTenants(ctx context.Context, limit int) ([]uuid.UUID
 	return tenants, nil
 }
 
+// Backlog devolve a fotografia da fila do tenant do contexto. A consulta roda
+// sob RLS como qualquer outra leitura de negócio; serve apenas para métricas e
+// alertas, nunca para decidir entrega.
+func (r *Repository) Backlog(ctx context.Context) (Backlog, error) {
+	tenant, err := db.TenantFromContext(ctx)
+	if err != nil {
+		return Backlog{}, err
+	}
+	var backlog Backlog
+	var oldestSeconds float64
+	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+SELECT
+	count(*) FILTER (WHERE status='pending'),
+	count(*) FILTER (WHERE status='processing'),
+	count(*) FILTER (WHERE status='failed'),
+	COALESCE(EXTRACT(EPOCH FROM now() - min(created_at) FILTER (WHERE status IN ('pending','processing'))), 0)
+FROM outbox.event
+WHERE tenant_id=$1 AND status IN ('pending','processing','failed')`, tenant).Scan(&backlog.Pending, &backlog.Processing, &backlog.Failed, &oldestSeconds)
+	})
+	if err != nil {
+		return Backlog{}, fmt.Errorf("consultar backlog da outbox: %w", err)
+	}
+	if oldestSeconds > 0 {
+		backlog.OldestPendingAge = time.Duration(oldestSeconds * float64(time.Second))
+	}
+	return backlog, nil
+}
+
 // Backoff devolve o atraso exponencial do retry: 2s na primeira falha até 1h.
 func Backoff(attempts int) time.Duration {
 	if attempts <= 1 {
@@ -687,4 +716,11 @@ func redactSensitive(text string) string {
 	text = lastErrorToken.ReplaceAllString(text, "[redigido]")
 	text = lastErrorDoc.ReplaceAllString(text, "[redigido]")
 	return text
+}
+
+// RedactError devolve o texto seguro do erro, com a mesma redação e o mesmo
+// limite aplicados antes de persistir em last_error. Logs de worker usam esta
+// função para que um erro de handler nunca vaze PII ou segredo.
+func RedactError(err error) string {
+	return errorText(err)
 }

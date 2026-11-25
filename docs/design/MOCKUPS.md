@@ -19,6 +19,7 @@ O gerador usa a logomarca oficial (azul `#00274C` / `#0073CF`) e produz `index.h
 | `02-atendimento-contrato.svg` | Novo contrato | Atendente (offline) | formulário em etapas, resumo, pagamento e operação sem internet |
 | `03-cemiterio-mapa.svg` | Mapa do cemitério | Administrador | quadras e jazigos, status, concessão vencendo, detalhe do jazigo |
 | `04-financeiro-titulos.svg` | Contas a receber | Financeiro | KPIs, filtros, tabela com status, total e paginação |
+| `03-painel-saas-dashboard.svg` | Visão geral do control plane | Admin SaaS | saúde dos módulos, tenants ativos, licenças a vencer, quota de IA e auditoria recente |
 | `05-painel-saas-cotas.svg` | Cotas do tenant | Admin SaaS | licenças por módulo (núcleo × opcional), cota/em uso/disponível, cota esgotada, acessos 12/20 |
 | `06-painel-saas-licenca.svg` | Liberar / revogar licença | Admin SaaS | modal com módulo, empresa (CNPJ), vigência, resumo da cota, herança da filial e `LICENSE_POOL_EXHAUSTED` |
 | `07-painel-saas-auditoria.svg` | Auditoria de entitlement | Admin SaaS | trilha append-only: quando, módulo, empresa, quem, origem (admin × self-service) e filtros |

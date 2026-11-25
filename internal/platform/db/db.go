@@ -116,6 +116,14 @@ func (db *DB) WithTenantTx(ctx context.Context, fn func(context.Context, pgx.Tx)
 	if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID.String()); err != nil {
 		return fmt.Errorf("definir tenant da transação: %w", err)
 	}
+	companyID, ok := ctx.Value(companyContextKey{}).(uuid.UUID)
+	companySetting := ""
+	if ok && companyID != uuid.Nil {
+		companySetting = companyID.String()
+	}
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.company_id', $1, true)", companySetting); err != nil {
+		return fmt.Errorf("definir empresa da transação: %w", err)
+	}
 	if err := fn(ctx, tx); err != nil {
 		return err
 	}

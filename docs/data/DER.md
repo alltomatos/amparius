@@ -178,7 +178,8 @@ erDiagram
   PAYMENT ||--o{ LEDGER_ENTRY : posts
   TITLE ||--o{ LEDGER_ENTRY : posts
   BANK_ACCOUNT ||--o{ RECONCILIATION : reconciles
-  COMPANY ||--|| FISCAL_CONFIG : configures
+  COMPANY ||--o{ FISCAL_CONFIG : configures
+  ESTABLISHMENT ||--o{ FISCAL_CONFIG : narrows
   FISCAL_CONFIG ||--o{ CERTIFICATE : uses
   TENANT ||--o{ TAX_RULE : applies
   TENANT ||--o{ FISCAL_DOCUMENT : issues
@@ -226,16 +227,22 @@ erDiagram
                  numeric debit
                  numeric credit
                  text source }
-  FISCAL_CONFIG { uuid company_id PK
+  FISCAL_CONFIG { uuid id PK
                   uuid tenant_id FK
+                  uuid company_id FK
+                  uuid establishment_id FK nullable
                   text regime
                   text environment
                   char uf nullable
                   char municipality_code nullable
                   text series_nfse
                   text series_nfe
+                  text state_registration nullable
+                  text municipal_registration nullable
                   text status
-                  int config_version }
+                  int config_version
+                  date valid_from
+                  date valid_to nullable }
   CERTIFICATE { uuid id PK
                 uuid tenant_id FK
                 uuid company_id FK
@@ -735,7 +742,7 @@ erDiagram
 10. **Fiscal**: `fiscal_document` guarda o XML em object storage com `xml_hash`; o banco guarda metadados e o retorno cru por tentativa.
 11. **Empresa e estabelecimento**: `COMPANY` é a entidade legal (CNPJ raiz) e recebe entitlement, `fiscal_config` e `certificate`; `ESTABLISHMENT` (substitui `BRANCH`) é o estabelecimento/filial e herda o entitlement da empresa. Onde o ADR 0003 diz `branch_id`, lê-se `establishment_id`; `company_id` passa a ser escopo secundário adicional nas políticas de acesso.
 12. **Fronteira control plane**: `module` e `entitlement` vivem no Postgres do control plane; célula e relay só mantêm o snapshot assinado de enforcement (versão + TTL). Nenhuma cópia de tabela de licença na célula. O mesmo vale para o schema `ai` (ADR 0008): `ai_provider`, `ai_model`, `ai_model_allowance`, `ai_token_quota` e `ai_usage` **não existem na célula nem no relay** — só o snapshot de IA assinado (allowlist + teto + política, `version` + `valid_until`, fail-closed).
-13. **Migração fiscal forward-only**: `fiscal_config` sai de `tenant_id PK` para `company_id PK` e `certificate` troca `tenant_id` por `company_id` em **migração nova**; a migração existente não é editada. A carga inicial exige `COMPANY` criada por tenant antes do `NOT NULL`.
+13. **Migração fiscal forward-only**: a separação inicial de `fiscal_config`/`certificate` por CNPJ é preservada. A migration `0019_fiscal_config_scope.sql` adiciona id próprio, escopo opcional de `establishment_id`, inscrições e vigência sem editar migrations aplicadas; a configuração não fica somente no tenant.
 14. **Fiscal não se estima**: nenhuma coluna deste modelo (nem `tax_rule`, nem `tax_calculation`) carrega alíquota, CST, cClassTrib, NCM ou CFOP fixos; valores vêm de tabela oficial datada, consultada pela data de competência.
 15. **Cota de IA é dinheiro, preço de modelo não é.** `ai_token_quota.cap_amount` e `ai_usage.consumed_amount` são `NUMERIC(18,2)` em R$ e governam bloqueio; `ai_model.input_price_mtok`/`output_price_mtok` são `NUMERIC(18,6)` por 1M tokens e alimentam **apenas** a estimativa de tokens do painel. Trocar preço de tabela não muda o teto nem o consumo já registrado.
 16. **Código de modelo é referência, não FK entre bancos.** `ai_agent.model` (célula) guarda o `code` de `ai.ai_model`, validado contra o snapshot de IA a cada `ai_run`; os enums de IA são tabelas de domínio (`ai_provider_kind`, `ai_model_kind`, `ai_provider_status`, `ai_model_status`, `ai_quota_period`, `ai_limit_policy`, `ai_quota_status`), nunca `enum` do Postgres. Modelo fora da allowlist vigente faz o run falhar fechado, sem fallback fora do snapshot.

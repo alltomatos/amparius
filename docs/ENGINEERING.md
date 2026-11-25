@@ -605,6 +605,16 @@ datadas. Os códigos são domínios em `identity.domain_value`, validados por
 trigger; não há enums PostgreSQL, alíquotas embutidas nem tabelas de códigos
 fiscais nesta etapa.
 
+`migrations/0019_fiscal_config_scope.sql` mantém esse contrato sem editar a
+migration aplicada: `fiscal.fiscal_config` passa a ter id próprio, configuração
+padrão por empresa ou configuração específica por estabelecimento, inscrições
+estadual/municipal e vigência half-open (`valid_from` inclusivo e `valid_to`
+exclusivo). A exclusão GiST impede vigências sobrepostas no mesmo escopo. A
+FK composta impede associar um estabelecimento a outro CNPJ. O papel
+`amparius_app` recebe somente `SELECT/INSERT/UPDATE` nessa tabela; a
+`migrations/0020_fiscal_config_company_rls.sql` faz a RLS limitar tenant e
+empresa, e o repositório Go exige empresa no contexto.
+
 `fiscal.tax_rule` aceita regras oficiais globais (`tenant_id IS NULL`) somente
 para leitura e regras de exceção isoladas por tenant. A vigência usa intervalo
 half-open e exclusão GiST para impedir sobreposição da mesma chave lógica.
@@ -630,6 +640,9 @@ origem obrigatória de cada regra.
 
 Certificados nunca armazenam senha, PIN, chave privada, PFX, token ou bytes
 criptográficos: apenas metadados e uma referência opaca ao Vault/KMS.
+`fiscal.certificate.storage_ref` é referência opaca; a migration 0019 registra
+essa fronteira também no comentário da coluna. A configuração Go não possui
+campo para segredo.
 
 `0005_fiscal_documents.sql` acrescenta a trilha operacional fiscal: `fiscal_document`
 e `fiscal_item` particionados por competência mensal, `tax_calc` com entrada e

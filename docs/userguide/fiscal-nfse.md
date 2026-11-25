@@ -35,11 +35,18 @@ imposto não se estima.
 
 ## Estado atual
 
-O motor de tributos, a geração da DPS no leiaute vigente e a
-persistência/idempotência (FIS-02B) estão implementados e testados. A
-**emissão em produção ainda não está liberada**: falta o adapter de envio e
-fechamento (FIS-02C), a importação das tabelas oficiais e os testes contra o
-ambiente do ADN.
+O motor de tributos, a geração da DPS no leiaute vigente, a
+persistência/idempotência (FIS-02B) e o fechamento com adapter fake, status
+consultável e contrato DANFSe (FIS-02C) estão implementados e testados. A
+**emissão em produção ainda não está liberada**: falta o adapter real de envio,
+a importação das tabelas oficiais e os testes contra o ambiente do ADN.
+
+O que o usuário já consegue verificar no ambiente de desenvolvimento:
+
+- status persistido da emissão (documento e última tentativa), sem reenviar;
+- rejeição com código e descrição oficiais guardados para auditoria;
+- timeout que permanece pendente e depois reconcilia sem duplicar a nota;
+- prévia de DANFSe em PDF marcada como simulada, sem validade fiscal.
 
 Enquanto isso, nenhuma nota é transmitida e nenhum imposto é calculado com dado
 inventado.

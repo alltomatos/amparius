@@ -982,6 +982,39 @@ A migration 0008 adiciona à tentativa os metadados de transporte necessários
 `request_hash`). Hashes são SHA-256 hexadecimais minúsculos; ambiente é domínio
 versionado (`producao_restrita` ou `producao`) e nenhuma coluna guarda segredo.
 
+### Adapter fake, status e DANFSe (FIS-02C)
+
+`nfse.Service` fecha o ciclo sem transmissao real. A `Idempotency-Key` do
+pedido identifica a intencao; cada transporte usa uma chave append-only propria
+(`<chave>`, `<chave>:attempt-N` ou `<chave>:reconcile-N`). Antes de emitir, o
+servico le o historico do documento: tentativa `authorized` ou `rejected` ja
+persistida encerra o pedido sem novo transporte; depois consulta `GetDPSStatus`
+e so reenvia quando nao ha NFS-e. Timeout continua `pending` e nunca autoriza
+offline.
+
+Rejeicao oficial (`400` + `*ErrDocumentRejected`) e persistida como tentativa
+`rejected` com corpo cru, `http_status=400` e codigo/descricao; o documento vira
+`rejected` e replay devolve o mesmo erro. `Service.Status` le documento e
+tentativas append-only (status, resultado, chave, `dps_id`, ambiente,
+rejeicao) sem transmitir. O contrato DANFSe/PDF usa `DANFSeRenderer`; o
+`FakeDANFSeRenderer` gera PDF 1.4 deterministico, com hash e aviso explicito de
+que nao tem validade fiscal. Nenhum renderer desta fatia assina ou transmite.
+
+O builder estrutural da fatia 01 continua classificado como incompativel com o
+XSD oficial (`ErrXSDIncompatible`); o leiaute NT 009 segue como caminho oficial.
+Nenhuma migration nova e nenhuma `tax_rule` oficial foi importada. Contrato:
+`docs/contracts/fiscal-nfse-status-danfse-v1.md`; ADR 0033; relatorio
+`docs/fiscal/2026-11-25-fis-02c-adapter-status-danfse.md`.
+
+Evidencia, com PostgreSQL real e `amparius_app` sem `SUPERUSER`/`BYPASSRLS`:
+
+```powershell
+$env:AMPA_TEST_POSTGRES_DSN = 'postgres://amparius_app:...@127.0.0.1:5432/amparius?sslmode=disable'
+$env:AMPA_TEST_POSTGRES_ADMIN_DSN = 'postgres://amparius:...@127.0.0.1:5432/amparius?sslmode=disable'
+go test ./internal/modules/fiscal/... -count=1
+go test ./internal/modules/fiscal/nfse -run 'TestServicoTimeoutReconcilia|TestServicoRejeicao|TestServicoDANFSe' -count=1 -v
+```
+
 ### Outbox transacional e dispatch
 
 `migrations/0007_outbox.sql` cria o schema `outbox` com `outbox.event` e a

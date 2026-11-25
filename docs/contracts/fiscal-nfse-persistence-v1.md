@@ -12,6 +12,12 @@ chave devolve a tentativa original. Reutilizar a chave para outro documento,
 competência, `dps_id`, modo ou `request_hash` retorna
 `ErrIdempotencyConflict`/`409 IDEMPOTENCY_CONFLICT` na borda.
 
+A chave identifica a intenção, não o transporte. Cada transporte append-only
+usa uma chave própria: a primeira emissão usa a chave original; reenvio após
+ausência confirmada usa `<chave>:attempt-N`; reconciliação após timeout usa
+`<chave>:reconcile-N`. Detalhes em
+`docs/contracts/fiscal-nfse-status-danfse-v1.md` (FIS-02C).
+
 ## Bytes e hashes
 
 | Registro | Conteúdo | Integridade |
@@ -29,6 +35,12 @@ Uma resposta HTTP `201` persiste a tentativa como `authorized` e fecha o
 documento como `authorized` na mesma transação. Timeout, indisponibilidade ou
 ausência de resposta deixam a tentativa `pending` e o documento não autorizado.
 `authorized` sem XML bruto e hash é rejeitado pelo banco.
+
+Uma rejeição oficial (`400` + `*ErrDocumentRejected`) persiste a tentativa como
+`rejected`, com `http_status=400` e o corpo cru em `response_raw`, e fecha o
+documento como `rejected`. Replay devolve o mesmo erro tipado sem novo
+transporte. `Service.Status` lê documento e tentativas append-only, sem
+transmitir; contrato em `fiscal-nfse-status-danfse-v1.md`.
 
 ## Isolamento
 

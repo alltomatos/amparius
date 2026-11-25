@@ -29,11 +29,34 @@ func NewDevelopmentHTTPHandler(checker AccessChecker, contractServices ...Contra
 		contracts = contractServices[0]
 		serviceOrders, _ = contractServices[0].(ServiceOrderService)
 	}
+	return newDevelopmentHTTPHandler(checker, contracts, serviceOrders, nil)
+}
+
+// NewDevelopmentHTTPHandlerWithScheduling monta a superficie dev-only do
+// funeral incluindo locais, recursos e agenda. O escopo tenant/empresa deve
+// continuar sendo composto pelo middleware confiavel antes deste handler.
+func NewDevelopmentHTTPHandlerWithScheduling(checker AccessChecker, contracts ContractService, scheduling SchedulingService) http.Handler {
+	var serviceOrders ServiceOrderService
+	if contracts != nil {
+		serviceOrders, _ = contracts.(ServiceOrderService)
+	}
+	return newDevelopmentHTTPHandler(checker, contracts, serviceOrders, scheduling)
+}
+
+func newDevelopmentHTTPHandler(checker AccessChecker, contracts ContractService, serviceOrders ServiceOrderService, scheduling SchedulingService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Amparius-Development-Only", "true")
 		w.Header().Set("Cache-Control", "no-store")
 		if r.URL.Path == accessPath {
 			serveAccess(w, r, checker)
+			return
+		}
+		if scheduling != nil && (strings.HasPrefix(r.URL.Path, "/_dev/funeral/locations") || strings.HasPrefix(r.URL.Path, "/_dev/funeral/resources") || strings.HasPrefix(r.URL.Path, "/_dev/funeral/schedules") || (strings.HasPrefix(r.URL.Path, "/_dev/funeral/contracts/") && strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/schedules"))) {
+			if err := checkFuneralAccess(r, checker); err != nil {
+				writeAccessError(w, err)
+				return
+			}
+			serveSchedulingRoute(w, r, scheduling)
 			return
 		}
 		if contracts != nil && strings.HasPrefix(r.URL.Path, "/_dev/funeral/contracts") {

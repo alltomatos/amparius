@@ -34,3 +34,44 @@ A resposta inclui o estado atual e `status_history`. Repetir uma chave com o
 mesmo conteúdo devolve o mesmo agregado; reutilizá-la com conteúdo diferente
 é conflito. A descrição não é publicada na outbox. A rota é dev-only e não
 substitui autenticação de produção.
+
+## Agenda de velório e sepultamento
+
+Depois de ativar o contrato, cadastre o local e, se necessário, um recurso:
+
+```http
+POST /_dev/funeral/locations
+Idempotency-Key: location-001
+Content-Type: application/json
+
+{"name":"Sala principal","kind":"wake_room","time_zone":"America/Fortaleza"}
+```
+
+```http
+POST /_dev/funeral/resources
+Idempotency-Key: resource-001
+Content-Type: application/json
+
+{"location_id":"<location_id>","name":"Sala principal","kind":"room"}
+```
+
+Agende o velório ou sepultamento com um intervalo explícito. `starts_at` e
+`ends_at` aceitam RFC3339 e são persistidos em UTC; `time_zone` deve ser um
+nome IANA. A janela é semiaberta: um evento que começa exatamente no fim de
+outro não conflita.
+
+```http
+POST /_dev/funeral/schedules
+Idempotency-Key: schedule-001
+Content-Type: application/json
+
+{"contract_id":"<contract_id>","service_order_id":"<service_order_id>","kind":"wake","location_id":"<location_id>","resource_id":"<resource_id>","starts_at":"2026-11-25T12:00:00-03:00","ends_at":"2026-11-25T14:00:00-03:00","time_zone":"America/Fortaleza"}
+```
+
+Use `GET /_dev/funeral/contracts/{contract_id}/schedules` para listar a agenda,
+`PATCH /_dev/funeral/schedules/{id}` para alterar intervalo/local/recurso e
+`POST /_dev/funeral/schedules/{id}/cancel` para cancelar. Toda escrita exige
+uma nova `Idempotency-Key`; sobreposição do mesmo local ou recurso responde
+`409 SCHEDULE_CONFLICT`. A agenda mantém histórico append-only e eventos sem
+PII. Mapa de cemitério, jazigo/concessão, recorrência e regras de horário
+comercial não fazem parte desta fatia.

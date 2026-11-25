@@ -62,7 +62,7 @@ Versão 0.1 · 21/11/2026
 | `catalog` | produto, serviço, plano, preço, NCM/LC116 | `catalog.item.updated` |
 | `finance` | plano de contas, título, parcela, baixa, caixa, ledger | `finance.title.created`, `finance.payment.settled` |
 | `fiscal` | configuração, motor de tributos, documento, transmissão, DANFE | `fiscal.document.authorized`, `fiscal.document.rejected` |
-| `funeral` | contrato, OS, velório, traslado (sem cremação) | `funeral.contract.created`, `funeral.contract.status_changed` |
+| `funeral` | contrato, OS, agenda de velório/sepultamento, locais e recursos, traslado (sem cremação) | `funeral.contract.created`, `funeral.schedule.created`, `funeral.schedule.cancelled` |
 | `cemetery` | cemitério, quadra, jazigo, concessão, sepultamento | `cemetery.burial.registered` |
 | `cremation` | crematório, cremação, urna, autorização (módulo próprio — ADR 0007, independente de funeral/cemetery) | `cremation.service.registered` |
 | `floriculture` | arranjo, pedido, entrega, rota, lote | `floriculture.order.dispatched` |
@@ -100,6 +100,20 @@ Os eventos `funeral.service_order.created`,
 carregam descrição, nomes ou qualquer dado de party. Não existe JOIN com
 `party`, `finance` ou `fiscal` no módulo funeral. Consumidores de negócio e
 sincronização do relay continuam sendo fatias posteriores.
+
+### FUN-02A — agenda e recursos funerários
+
+`funeral.schedule` reserva uma janela semiaberta `[starts_at, ends_at)` em UTC,
+com o nome IANA `time_zone` explícito. Cada agenda referencia o contrato e o
+local por UUID opaco, podendo também referenciar uma OS e um recurso do local.
+As constraints de exclusão do PostgreSQL impedem sobreposição de local ou
+recurso, inclusive em duas inserções concorrentes; `[14:00,15:00)` é adjacente
+e não conflita com `[12:00,14:00)`.
+
+`schedule_status_history` e `schedule_mutation` são append-only, e a criação,
+alteração/cancelamento e evento v1 são transacionais. O módulo não faz JOIN
+com `party`, `cemetery`, `finance` ou `fiscal`; a integração futura ocorre por
+referência opaca e eventos versionados.
 
 ## 5. Dados
 

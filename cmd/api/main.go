@@ -113,7 +113,7 @@ func run() error {
 				logger.Warn("control plane de entitlement indisponível")
 			}
 		}
-		optionalHandler := funeral.NewDevelopmentHTTPHandler(checker, funeralRepository)
+		optionalHandler := funeral.NewDevelopmentHTTPHandlerWithScheduling(checker, funeralRepository, funeralRepository)
 		funeralHandler = httpserver.DevelopmentTenantCompanyContext(optionalHandler, repository)
 	}
 

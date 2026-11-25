@@ -36,6 +36,12 @@ erDiagram
   FUNERAL_CONTRACT ||--o{ CONTRACT_INSTALLMENT : schedules
   FUNERAL_CONTRACT ||--o{ SERVICE_ORDER : opens
   SERVICE_ORDER ||--o{ SERVICE_ORDER_STATUS_HISTORY : records
+  FUNERAL_CONTRACT ||--o{ FUNERAL_SCHEDULE : has
+  SERVICE_ORDER |o--o{ FUNERAL_SCHEDULE : supports
+  FUNERAL_LOCATION ||--o{ FUNERAL_RESOURCE : contains
+  FUNERAL_LOCATION ||--o{ FUNERAL_SCHEDULE : hosts
+  FUNERAL_RESOURCE |o--o{ FUNERAL_SCHEDULE : reserves
+  FUNERAL_SCHEDULE ||--o{ SCHEDULE_STATUS_HISTORY : records
 
   TENANT { uuid id PK
            text name
@@ -210,6 +216,59 @@ erDiagram
                            text idempotency_key
                            text request_hash
                            timestamptz created_at }
+  FUNERAL_LOCATION { uuid id PK
+                     uuid tenant_id FK
+                     uuid company_id FK
+                     text name
+                     text kind
+                     text time_zone
+                     text idempotency_key
+                     text request_hash
+                     timestamptz created_at
+                     timestamptz updated_at }
+  FUNERAL_RESOURCE { uuid id PK
+                    uuid tenant_id FK
+                    uuid company_id FK
+                    uuid location_id FK
+                    text name
+                    text kind
+                    bool active
+                    text idempotency_key
+                    text request_hash
+                    timestamptz created_at
+                    timestamptz updated_at }
+  FUNERAL_SCHEDULE { uuid id PK
+                    uuid tenant_id FK
+                    uuid company_id FK
+                    uuid contract_id FK
+                    uuid service_order_id FK
+                    text kind
+                    uuid location_id FK
+                    uuid resource_id FK
+                    timestamptz starts_at
+                    timestamptz ends_at
+                    text time_zone
+                    tstzrange slot
+                    text status
+                    text idempotency_key
+                    text request_hash
+                    int version
+                    timestamptz created_at
+                    timestamptz updated_at }
+  SCHEDULE_STATUS_HISTORY { uuid id PK
+                            uuid tenant_id FK
+                            uuid schedule_id FK
+                            text from_status
+                            text to_status
+                            text reason
+                            timestamptz changed_at }
+  SCHEDULE_MUTATION { uuid id PK
+                      uuid tenant_id FK
+                      uuid schedule_id FK
+                      text operation
+                      text idempotency_key
+                      text request_hash
+                      timestamptz created_at }
 ```
 
 ### Contrato funerário (ADR 0016)
@@ -228,6 +287,16 @@ ativo. A descrição e o tipo são dados da OS, não uma cópia de party; a outb
 publica somente IDs opacos, estados e datas. `service_order_status_history` e
 `service_order_mutation` são append-only e têm RLS por tenant. A empresa do
 contexto limita leitura e escrita na aplicação.
+
+### Agenda funerária (ADR 0019)
+
+`funeral.schedule` liga contrato, local e, opcionalmente, OS/recurso por UUIDs
+opacos. `starts_at`/`ends_at` são UTC com timezone IANA explícito e formam o
+intervalo semiaberto `[starts_at, ends_at)`. O PostgreSQL aplica duas
+constraints de exclusão: não há sobreposição do mesmo local nem do mesmo
+recurso em estado `scheduled`, inclusive sob concorrência. Histórico e
+mutação são append-only; todas as cinco tabelas têm RLS por `tenant_id` e a
+aplicação filtra `company_id` pelo contexto confiável.
 
 ### Nome social e nome de exibição
 

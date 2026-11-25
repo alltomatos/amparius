@@ -117,6 +117,12 @@ func (s *Server) routes(options Options) {
 		s.mux.Handle("/_dev/funeral/service-orders/{id}", options.DevelopmentFuneral)
 		s.mux.Handle("/_dev/funeral/service-orders/{id}/complete", options.DevelopmentFuneral)
 		s.mux.Handle("/_dev/funeral/service-orders/{id}/status", options.DevelopmentFuneral)
+		s.mux.Handle("/_dev/funeral/locations", options.DevelopmentFuneral)
+		s.mux.Handle("/_dev/funeral/resources", options.DevelopmentFuneral)
+		s.mux.Handle("/_dev/funeral/schedules", options.DevelopmentFuneral)
+		s.mux.Handle("/_dev/funeral/schedules/{id}", options.DevelopmentFuneral)
+		s.mux.Handle("/_dev/funeral/schedules/{id}/cancel", options.DevelopmentFuneral)
+		s.mux.Handle("/_dev/funeral/contracts/{id}/schedules", options.DevelopmentFuneral)
 	}
 }
 

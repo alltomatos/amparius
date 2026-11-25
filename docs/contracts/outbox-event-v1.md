@@ -234,6 +234,40 @@ Descrição, nomes e motivo textual não entram no payload. A criação usa
 `funeral.service_order.<op>:<service_order_id>:<sha256 do request>`. O hash
 mantém as chaves estáveis e dentro do limite de 200 caracteres da outbox.
 
+### `funeral.schedule.*` — v1 (FUN-02A)
+
+Agregado: `funeral.schedule`. Os eventos não carregam PII e usam referências
+opacas:
+
+```json
+{
+  "schedule_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "contract_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "company_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "kind": "wake",
+  "location_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "resource_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "starts_at": "2026-11-25T15:00:00Z",
+  "ends_at": "2026-11-25T17:00:00Z",
+  "time_zone": "America/Fortaleza",
+  "status": "scheduled"
+}
+```
+
+- `funeral.schedule.created`: todos os campos do exemplo;
+- `funeral.schedule.updated`: `schedule_id`, `contract_id`, `company_id`,
+  `kind`, `location_id`, `resource_id`, `starts_at`, `ends_at`, `time_zone`,
+  `from_status` e `to_status`;
+- `funeral.schedule.cancelled`: `schedule_id`, `contract_id`, `company_id`,
+  `from_status` e `to_status`, com `to_status = cancelled`.
+
+O banco usa intervalo semiaberto `[starts_at, ends_at)` e rejeita sobreposição
+do mesmo local ou recurso enquanto o status é `scheduled`, inclusive sob
+concorrência. A chave de criação é
+`funeral.schedule.create:<sha256 do request>`; alterações e cancelamento usam
+`funeral.schedule.<op>:<schedule_id>:<sha256 do request>`. Nome, kind de local,
+descrição, party e texto livre não entram no payload.
+
 ## 8. Compatibilidade
 
 - Campo **novo e opcional** entra na mesma `event_version`.

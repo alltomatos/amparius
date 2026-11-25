@@ -138,6 +138,11 @@ func (f *atomicityFixture) close(t *testing.T) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	for _, statement := range []string{
+		"ALTER TABLE funeral.schedule_status_history DISABLE TRIGGER funeral_schedule_history_append_only",
+		"ALTER TABLE funeral.schedule_mutation DISABLE TRIGGER funeral_schedule_mutation_append_only",
+		"ALTER TABLE funeral.schedule DISABLE TRIGGER funeral_schedule_preserve",
+		"ALTER TABLE funeral.resource DISABLE TRIGGER funeral_resource_preserve",
+		"ALTER TABLE funeral.location DISABLE TRIGGER funeral_location_preserve",
 		"ALTER TABLE funeral.service_order_status_history DISABLE TRIGGER service_order_status_append_only",
 		"ALTER TABLE funeral.service_order_mutation DISABLE TRIGGER service_order_mutation_append_only",
 		"ALTER TABLE funeral.service_order DISABLE TRIGGER service_order_history_preserve",
@@ -149,6 +154,11 @@ func (f *atomicityFixture) close(t *testing.T) {
 		"ALTER TABLE outbox.event_attempt DISABLE TRIGGER event_attempt_append_only",
 		"ALTER TABLE outbox.delivery DISABLE TRIGGER delivery_append_only",
 		"ALTER TABLE outbox.event DISABLE TRIGGER event_history_preserve",
+		"DELETE FROM funeral.schedule_status_history WHERE tenant_id = ANY($1::uuid[])",
+		"DELETE FROM funeral.schedule_mutation WHERE tenant_id = ANY($1::uuid[])",
+		"DELETE FROM funeral.schedule WHERE tenant_id = ANY($1::uuid[])",
+		"DELETE FROM funeral.resource WHERE tenant_id = ANY($1::uuid[])",
+		"DELETE FROM funeral.location WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM funeral.contract_status_history WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM funeral.service_order_mutation WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM funeral.service_order_status_history WHERE tenant_id = ANY($1::uuid[])",
@@ -178,6 +188,11 @@ func (f *atomicityFixture) close(t *testing.T) {
 		"ALTER TABLE outbox.event_attempt ENABLE TRIGGER event_attempt_append_only",
 		"ALTER TABLE outbox.delivery ENABLE TRIGGER delivery_append_only",
 		"ALTER TABLE outbox.event ENABLE TRIGGER event_history_preserve",
+		"ALTER TABLE funeral.location ENABLE TRIGGER funeral_location_preserve",
+		"ALTER TABLE funeral.resource ENABLE TRIGGER funeral_resource_preserve",
+		"ALTER TABLE funeral.schedule ENABLE TRIGGER funeral_schedule_preserve",
+		"ALTER TABLE funeral.schedule_mutation ENABLE TRIGGER funeral_schedule_mutation_append_only",
+		"ALTER TABLE funeral.schedule_status_history ENABLE TRIGGER funeral_schedule_history_append_only",
 	} {
 		if strings.HasPrefix(statement, "ALTER TABLE") {
 			_, err = tx.Exec(ctx, statement)

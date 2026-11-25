@@ -563,6 +563,51 @@ O teste real confirmou abertura, update, conclusão, replay sem duplicação,
 isolamento por empresa e cleanup. Benchmark de carga de produção e
 consumidores de negócio da outbox permanecem fora do aceite desta fatia.
 
+### FUN-02A: agenda, locais e recursos funerários
+
+`migrations/0029_funeral_schedule.sql` adiciona `funeral.location`,
+`funeral.resource`, `funeral.schedule`, `funeral.schedule_status_history` e
+`funeral.schedule_mutation`. Todas as tabelas têm `tenant_id`, RLS e grants
+mínimos para `amparius_app`; a agenda também filtra `company_id` pelo contexto
+confiável. Local e recurso são registros operacionais com UUID opaco e chave de
+idempotência.
+
+Uma agenda é `wake` ou `burial`, referencia um contrato e um local, e pode
+referenciar uma OS e um recurso. `starts_at`/`ends_at` são `timestamptz` UTC e
+`time_zone` exige nome IANA. O intervalo é semiaberto `[início,fim)`; duas
+constraints `EXCLUDE USING gist` bloqueiam sobreposição do mesmo local ou
+recurso somente enquanto `status = scheduled`, inclusive sob concorrência.
+SQLSTATE `23P01` vira `ErrScheduleConflict` sem vazar SQL para HTTP.
+
+Criação, alteração e cancelamento usam `Idempotency-Key`; replay idêntico não
+duplica agregado, histórico ou outbox. O histórico e a trilha de mutações são
+append-only e a agenda não pode ser apagada. Eventos v1 são
+`funeral.schedule.created`, `.updated` e `.cancelled`, somente com referências
+opacas, estados, intervalo e timezone.
+
+Rotas dev-only: `POST/GET /_dev/funeral/locations`,
+`POST/GET /_dev/funeral/resources?location_id=...`,
+`POST/GET /_dev/funeral/schedules`,
+`GET /_dev/funeral/contracts/{id}/schedules`,
+`GET/PATCH /_dev/funeral/schedules/{id}` e
+`POST /_dev/funeral/schedules/{id}/cancel`. JSON é estrito, respostas têm
+`no-store` e erros não expõem PII.
+
+Evidência reproduzível com PostgreSQL real, role `amparius_app`
+`NOSUPERUSER/NOBYPASSRLS` e cleanup administrativo:
+
+```powershell
+goose -dir migrations postgres 'postgres://amparius:amparius@127.0.0.1:5432/amparius?sslmode=disable' up
+$env:AMPA_TEST_POSTGRES_DSN = 'postgres://amparius_app:...@127.0.0.1:5432/amparius?sslmode=disable'
+$env:AMPA_TEST_POSTGRES_ADMIN_DSN = 'postgres://amparius:...@127.0.0.1:5432/amparius?sslmode=disable'
+go test ./internal/modules/funeral -run 'TestDevelopmentSchedule|TestFuneralScheduleRealPostgres' -count=1 -v
+```
+
+O teste real prova replay, isolamento, cleanup, janela adjacente e corrida
+concorrente com um vencedor e um conflito. Fora da fatia ficam recorrência,
+feriados, disponibilidade automática, mapa/concessão de cemitério,
+autenticação de produção e consumidores de negócio da outbox.
+
 ### Migration Finance
 
 `migrations/0003_finance.sql` cria o schema `finance` para contas, centros de

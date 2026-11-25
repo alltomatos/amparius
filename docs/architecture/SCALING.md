@@ -20,7 +20,7 @@ O Amparius cresce por **células**: cada VPS roda uma pilha Docker completa para
 │ worker x2     │      │ worker x2     │      │ worker x2     │
 │ postgres + rep│      │ postgres + rep│      │ postgres + rep│
 │ redis/rabbitmq│      │ redis/rabbitmq│      │ redis/rabbitmq│
-│ minio         │      │ minio         │      │ minio         │
+│ S3 object     │      │ S3 object     │      │ S3 object     │
 └───────────────┘      └───────────────┘      └───────────────┘
         ▲                      ▲                      ▲
         └──────────┬───────────┴──────────────────────┘
@@ -44,7 +44,7 @@ Uma VPS com Docker Compose (ou Swarm leve, se necessário) contendo:
 | PgBouncer | 1 | pool por tenant, limite de conexões |
 | Redis | 1 | cache, locks, idempotência curta |
 | RabbitMQ | 1 | quorum queues, DLQ |
-| MinIO (ou S3 externo) | 1 | XML, PDF, anexos |
+| Object storage S3-compatible | externo ou por célula | XML, PDF, anexos |
 | Backup (pgBackRest/wal-g) | sidecar | WAL contínuo + base diária |
 | Agentes | node_exporter, otel collector | métricas e logs para o control plane |
 
@@ -120,7 +120,7 @@ Tempo alvo: **< 30 min** do comando ao estado elegível.
 
 ### 6.3 Migrar tenant entre células
 
-1. Exportação lógica (schemas do tenant) + objetos (MinIO/S3).
+1. Exportação lógica (schemas do tenant) + objetos no S3-compatible.
 2. Restauração na célula destino e verificação de contagem/hash.
 3. Congelamento curto de escrita (manutenção programada).
 4. Troca do mapeamento no control plane; relay recebe novo endpoint.

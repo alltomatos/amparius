@@ -19,16 +19,19 @@ reproduzível de backup/restore nem uma regra executável de rollback.
    - PostgreSQL: `Ping` pelo protocolo PostgreSQL;
    - Redis: comando `PING` e resposta `PONG`;
    - RabbitMQ: início do handshake AMQP;
-   - MinIO: `GET /minio/health/live` com status 2xx;
+   - object storage: `HeadBucket` assinado pelo protocolo S3;
    - PostgreSQL do control plane, quando `AMPA_CONTROL_POSTGRES_DSN` estiver
      configurado.
 3. Falha de qualquer probe retorna 503. A resposta contém apenas o nome,
    estado e latência; não contém DSN, usuário, senha ou erro bruto. O limite
    total é `READINESS_TIMEOUT` (2 s por padrão).
+   Object storage usa `OBJECT_STORAGE_ENDPOINT`, `OBJECT_STORAGE_REGION`,
+   `OBJECT_STORAGE_BUCKET`, `OBJECT_STORAGE_ACCESS_KEY`,
+   `OBJECT_STORAGE_SECRET_KEY` e `OBJECT_STORAGE_USE_PATH_STYLE`.
 4. O benchmark reproduzível mede o caminho HTTP/readiness com uma dependência
-   sintética em 1.000 amostras. O smoke com Docker Compose é a evidência
-   separada para dependências reais; nenhum número sintético é apresentado
-   como p95 de produção.
+   sintética em 1.000 amostras. O smoke com Docker Compose valida a topologia
+   local instalada; o Adapter S3 é validado por endpoint sintético ou R2
+   autorizado. Nenhum número sintético é apresentado como p95 de produção.
 5. `scripts/backup-restore.ps1` usa `pg_dump` em formato custom e valida o
    catálogo do dump. O modo `test` cria um banco temporário com um marcador
    sintético, destrói/recria o banco, restaura e verifica o marcador, removendo
@@ -48,10 +51,11 @@ reproduzível de backup/restore nem uma regra executável de rollback.
   ser acompanhado junto da latência das dependências. O timeout limita o custo
   de uma dependência indisponível.
 - O teste operacional de backup não prova PITR/WAL contínuo, criptografia do
-  repositório, restore de object storage, nem dados de produção. Essas provas
+  repositório, restore de object storage S3, nem dados de produção. Essas provas
   permanecem no runbook da célula.
-- Staging passa a subir Redis, RabbitMQ e MinIO para que readiness não fique
-  permanentemente degradada por uma topologia incompleta.
+- Staging sobe somente PostgreSQL, Redis e RabbitMQ. Object storage é uma
+  dependência externa S3-compatible, configurada por endpoint, região, bucket
+  e credenciais fora do repositório.
 
 ## Segurança e LGPD
 
@@ -69,6 +73,7 @@ go test ./...
 go vet ./...
 go build ./...
 .\scripts\benchmark.ps1 -Iterations 1000
+go test ./internal/platform/readiness -run 'TestS3ChecksHeadBucketAgainstGenericEndpoint|TestS3UnconfiguredFailsClosed' -count=1 -v
 $env:AMPA_BACKUP_TEST_ADMIN_DSN = 'postgres://<admin>:<secret>@127.0.0.1:5432/amparius?sslmode=disable'
 .\scripts\backup-restore.ps1 test
 ```

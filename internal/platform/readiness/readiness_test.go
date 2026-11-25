@@ -52,18 +52,41 @@ func (d fakeBlockingDependency) Check(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func TestMinIOChecksHealthEndpoint(t *testing.T) {
+func TestS3ChecksHeadBucketAgainstGenericEndpoint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/minio/health/live" {
-			t.Fatalf("path = %q", r.URL.Path)
+		if r.Method != http.MethodHead || r.URL.Path != "/amparius-test" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") == "" {
+			t.Fatal("HeadBucket sem assinatura AWS SigV4")
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 
-	probe := NewMinIO(server.URL, false)
+	probe, err := NewS3(context.Background(), S3Config{
+		Endpoint:     server.URL,
+		Region:       "auto",
+		Bucket:       "amparius-test",
+		AccessKey:    "access",
+		SecretKey:    "secret",
+		UsePathStyle: true,
+	})
+	if err != nil {
+		t.Fatalf("NewS3: %v", err)
+	}
 	if err := probe.Check(context.Background()); err != nil {
-		t.Fatalf("MinIO.Check: %v", err)
+		t.Fatalf("S3.Check: %v", err)
+	}
+}
+
+func TestS3UnconfiguredFailsClosed(t *testing.T) {
+	probe, err := NewS3(context.Background(), S3Config{})
+	if err != nil {
+		t.Fatalf("NewS3 sem configuração: %v", err)
+	}
+	if err := probe.Check(context.Background()); err == nil {
+		t.Fatal("object storage sem configuração deveria falhar")
 	}
 }
 

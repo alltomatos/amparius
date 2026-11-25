@@ -6,7 +6,11 @@ param(
   [switch]$ExpectReady,
   [string]$RedisAddress = "127.0.0.1:6399",
   [string]$RabbitMQUrl = "amqp://127.0.0.1:5673/",
-  [string]$MinIOEndpoint = "127.0.0.1:19000"
+  [string]$ObjectStorageEndpoint = "",
+  [string]$ObjectStorageRegion = "auto",
+  [string]$ObjectStorageBucket = "amparius",
+  [string]$ObjectStorageAccessKey = "",
+  [string]$ObjectStorageSecretKey = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,7 +22,7 @@ $exe = Join-Path ([System.IO.Path]::GetTempPath()) "amparius-api-readiness-smoke
 $stdout = Join-Path ([System.IO.Path]::GetTempPath()) "amparius-api-readiness-smoke.out"
 $stderr = Join-Path ([System.IO.Path]::GetTempPath()) "amparius-api-readiness-smoke.err"
 $process = $null
-$names = @("APP_ENV", "HTTP_PORT", "POSTGRES_DSN", "REDIS_ADDR", "RABBITMQ_URL", "MINIO_ENDPOINT", "MINIO_USE_SSL", "ENABLE_DEV_ONBOARDING")
+$names = @("APP_ENV", "HTTP_PORT", "POSTGRES_DSN", "REDIS_ADDR", "RABBITMQ_URL", "OBJECT_STORAGE_ENDPOINT", "OBJECT_STORAGE_REGION", "OBJECT_STORAGE_BUCKET", "OBJECT_STORAGE_ACCESS_KEY", "OBJECT_STORAGE_SECRET_KEY", "OBJECT_STORAGE_USE_PATH_STYLE", "ENABLE_DEV_ONBOARDING")
 $old = @{}
 foreach ($name in $names) { $old[$name] = [Environment]::GetEnvironmentVariable($name) }
 
@@ -29,8 +33,12 @@ try {
   $env:POSTGRES_DSN = "postgres://amparius:amparius@127.0.0.1:5432/amparius?sslmode=disable"
   $env:REDIS_ADDR = $RedisAddress
   $env:RABBITMQ_URL = $RabbitMQUrl
-  $env:MINIO_ENDPOINT = $MinIOEndpoint
-  $env:MINIO_USE_SSL = "false"
+  $env:OBJECT_STORAGE_ENDPOINT = $ObjectStorageEndpoint
+  $env:OBJECT_STORAGE_REGION = $ObjectStorageRegion
+  $env:OBJECT_STORAGE_BUCKET = $ObjectStorageBucket
+  $env:OBJECT_STORAGE_ACCESS_KEY = $ObjectStorageAccessKey
+  $env:OBJECT_STORAGE_SECRET_KEY = $ObjectStorageSecretKey
+  $env:OBJECT_STORAGE_USE_PATH_STYLE = "true"
   $env:ENABLE_DEV_ONBOARDING = "false"
 
   $process = Start-Process -FilePath $exe -WorkingDirectory $root -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru

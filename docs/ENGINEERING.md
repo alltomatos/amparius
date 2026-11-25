@@ -48,7 +48,7 @@ docs/               PRD, arquitetura, DER, UML, ADRs, pesquisa
 ## Ambiente
 
 ```bash
-.\scripts\dev.ps1 up                        # docker compose up -d (Postgres, Redis, RabbitMQ, MinIO)
+.\scripts\dev.ps1 up                        # docker compose up -d (Postgres, Redis, RabbitMQ; object storage externo)
 go run ./cmd/api                            # SaaS
 go run ./cmd/worker                         # worker
 cargo run --manifest-path relay/Cargo.toml  # relay (servidor da loja)
@@ -354,8 +354,8 @@ preços e vigência. `NCM`, `CST`, `cClassTrib`, código `LC 116` e a tabela
 `catalog.tax_classification` permanecem fora do escopo e o RF-010 continua
 **parcial**; nenhum código ou alíquota fiscal foi inferido, criado ou copiado.
 
-`GET /readyz` executa probes reais de PostgreSQL, Redis, RabbitMQ e MinIO e
-responde 503 enquanto qualquer dependência obrigatória falhar. O control plane
+`GET /readyz` executa probes reais de PostgreSQL, Redis, RabbitMQ e object storage
+S3-compatible por `HeadBucket` assinado e responde 503 enquanto qualquer dependência obrigatória falhar. O control plane
 também é verificado quando `AMPA_CONTROL_POSTGRES_DSN` está configurado. O
 endpoint não expõe DSN, credenciais nem erro bruto.
 
@@ -1230,13 +1230,17 @@ proibido. Contratos em `docs/contracts/relay-operations-v1.md` e
 ### Readiness
 
 `GET /healthz` é liveness e não consulta dependências. `GET /readyz` consulta
-PostgreSQL, Redis, RabbitMQ e MinIO; o PostgreSQL do control plane também entra
+PostgreSQL, Redis, RabbitMQ e object storage S3-compatible por `HeadBucket`; o PostgreSQL do control plane também entra
 quando `AMPA_CONTROL_POSTGRES_DSN` está presente. O status é 200 somente com
 todos os probes em `ok`; qualquer falha retorna 503. A resposta não contém DSN,
 credenciais ou texto de erro bruto.
 
 ```powershell
 $env:READINESS_TIMEOUT = '2s'
+$env:OBJECT_STORAGE_ENDPOINT = 'https://<account>.r2.cloudflarestorage.com'
+$env:OBJECT_STORAGE_REGION = 'auto'
+$env:OBJECT_STORAGE_BUCKET = 'amparius'
+# As duas chaves devem vir do secret store; não as grave no repositório.
 go run ./cmd/api
 curl.exe -i http://127.0.0.1:8080/healthz
 curl.exe -i http://127.0.0.1:8080/readyz
@@ -1250,7 +1254,14 @@ curl.exe -i http://127.0.0.1:8080/readyz
 
 O comando imprime `readiness_p95_us`, `readiness_p95_ms` e a quantidade de
 amostras. A medição usa uma dependência sintética para isolar o caminho HTTP;
-ela não é um p95 de produção nem substitui o smoke com Docker Compose.
+ela não é um p95 de produção nem substitui o smoke com Docker Compose e o
+probe S3 sintético/R2 autorizado.
+
+Probe S3 sintético, sem credenciais reais:
+
+```powershell
+go test ./internal/platform/readiness -run 'TestS3ChecksHeadBucketAgainstGenericEndpoint|TestS3UnconfiguredFailsClosed' -count=1 -v
+```
 
 ### Backup e restore
 

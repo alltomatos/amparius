@@ -9,11 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -189,48 +192,77 @@ func (r *RabbitMQ) Check(ctx context.Context) error {
 	return nil
 }
 
-// MinIO verifica o endpoint de saúde HTTP. A rota não inclui credenciais nem
-// dados de bucket e é adequada para readiness da infraestrutura.
-type MinIO struct {
-	endpoint string
-	client   *http.Client
+// S3 verifica a existência do bucket por uma operação real do protocolo S3.
+// S3Config descreve um endpoint S3 ou S3-compatible, como Cloudflare R2.
+// Credenciais incompletas deixam a dependência não configurada e fazem o
+// readiness falhar fechado, sem tentar a cadeia automática da AWS.
+type S3Config struct {
+	Endpoint     string
+	Region       string
+	Bucket       string
+	AccessKey    string
+	SecretKey    string
+	UsePathStyle bool
 }
 
-func NewMinIO(endpoint string, useSSL bool) *MinIO {
-	scheme := "http"
-	if useSSL {
-		scheme = "https"
-	}
-	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
-	if !strings.Contains(endpoint, "://") {
-		endpoint = scheme + "://" + endpoint
-	}
-	return &MinIO{endpoint: endpoint, client: &http.Client{}}
+// S3 executa HeadBucket assinado contra object storage S3-compatible.
+type S3 struct {
+	client             *s3.Client
+	bucket             string
+	configurationError error
 }
 
-func (*MinIO) Name() string { return "minio" }
+func NewS3(ctx context.Context, configuration S3Config) (*S3, error) {
+	storage := &S3{bucket: strings.TrimSpace(configuration.Bucket)}
+	missing := make([]string, 0, 5)
+	if strings.TrimSpace(configuration.Endpoint) == "" {
+		missing = append(missing, "endpoint")
+	}
+	if strings.TrimSpace(configuration.Region) == "" {
+		missing = append(missing, "region")
+	}
+	if strings.TrimSpace(configuration.Bucket) == "" {
+		missing = append(missing, "bucket")
+	}
+	if strings.TrimSpace(configuration.AccessKey) == "" {
+		missing = append(missing, "access_key")
+	}
+	if strings.TrimSpace(configuration.SecretKey) == "" {
+		missing = append(missing, "secret_key")
+	}
+	if len(missing) > 0 {
+		storage.configurationError = fmt.Errorf("object storage não configurado: campos ausentes (%s)", strings.Join(missing, ","))
+		return storage, nil
+	}
+	parsedEndpoint, err := url.Parse(strings.TrimRight(configuration.Endpoint, "/"))
+	if err != nil || parsedEndpoint.Scheme == "" || parsedEndpoint.Host == "" {
+		return nil, errors.New("endpoint de object storage inválido")
+	}
+	awsConfiguration, err := awsconfig.LoadDefaultConfig(ctx,
+		awsconfig.WithRegion(configuration.Region),
+		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(configuration.AccessKey, configuration.SecretKey, "")),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("configurar cliente S3: %w", err)
+	}
+	storage.client = s3.NewFromConfig(awsConfiguration, func(options *s3.Options) {
+		options.BaseEndpoint = aws.String(strings.TrimRight(configuration.Endpoint, "/"))
+		options.UsePathStyle = configuration.UsePathStyle
+	})
+	return storage, nil
+}
 
-func (m *MinIO) Check(ctx context.Context) error {
-	if m == nil || m.endpoint == "" {
-		return errors.New("endpoint MinIO vazio")
+func (*S3) Name() string { return "object_storage" }
+
+func (s *S3) Check(ctx context.Context) error {
+	if s == nil || s.client == nil {
+		if s == nil || s.configurationError == nil {
+			return errors.New("object storage não configurado")
+		}
+		return s.configurationError
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, m.endpoint+"/minio/health/live", nil)
-	if err != nil {
-		return err
-	}
-	client := m.client
-	if client == nil {
-		client = http.DefaultClient
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("MinIO respondeu HTTP %d", response.StatusCode)
-	}
-	return nil
+	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(s.bucket)})
+	return err
 }
 
 func networkAddress(raw, defaultPort string) string {

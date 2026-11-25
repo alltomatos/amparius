@@ -5,7 +5,7 @@ Versão 0.1 · fases com critério de saída. Nada avança sem o critério da fa
 ## Fase 0 — Fundação (1–2 semanas)
 
 - Repositório, AGENTS.md, PRD, arquitetura, DER, UML, ADRs.
-- `docker compose` com Postgres, Redis, RabbitMQ, MinIO.
+- `docker compose` com Postgres, Redis e RabbitMQ; object storage S3-compatible configurável por ambiente.
 - Esqueleto `cmd/api`, `cmd/worker`, migrações, health, observabilidade básica.
 - Esqueleto do relay em Rust com health e banco local.
 

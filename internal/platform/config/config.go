@@ -24,11 +24,10 @@ const (
 	defaultShutdownTimeout  = 15 * time.Second
 	defaultReadinessTimeout = 2 * time.Second
 
-	defaultPostgresDSN = "postgres://amparius:amparius@localhost:5432/amparius?sslmode=disable"
-	defaultRedisAddr   = "localhost:6379"
-	defaultRabbitMQURL = "amqp://amparius:amparius@localhost:5672/"
-	defaultMinIOEnd    = "localhost:9000"
-	defaultMinIOBucket = "amparius"
+	defaultPostgresDSN         = "postgres://amparius:amparius@localhost:5432/amparius?sslmode=disable"
+	defaultRedisAddr           = "localhost:6379"
+	defaultRabbitMQURL         = "amqp://amparius:amparius@localhost:5672/"
+	defaultObjectStorageRegion = "auto"
 )
 
 // Config é a configuração imutável da aplicação.
@@ -51,11 +50,12 @@ type Config struct {
 	RedisAddr       string
 	RabbitMQURL     string
 
-	MinIOEndpoint  string
-	MinIOAccessKey string
-	MinIOSecretKey string
-	MinIOBucket    string
-	MinIOUseSSL    bool
+	ObjectStorageEndpoint     string
+	ObjectStorageRegion       string
+	ObjectStorageBucket       string
+	ObjectStorageAccessKey    string
+	ObjectStorageSecretKey    string
+	ObjectStorageUsePathStyle bool
 }
 
 // Load lê a configuração do ambiente do processo.
@@ -81,7 +81,7 @@ func LoadFrom(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 
-	useSSL, err := boolean(lookup, "MINIO_USE_SSL", false)
+	usePathStyle, err := boolean(lookup, "OBJECT_STORAGE_USE_PATH_STYLE", false)
 	if err != nil {
 		return Config{}, err
 	}
@@ -104,11 +104,12 @@ func LoadFrom(lookup LookupFunc) (Config, error) {
 		RedisAddr:       text(lookup, "REDIS_ADDR", defaultRedisAddr),
 		RabbitMQURL:     text(lookup, "RABBITMQ_URL", defaultRabbitMQURL),
 
-		MinIOEndpoint:  text(lookup, "MINIO_ENDPOINT", defaultMinIOEnd),
-		MinIOAccessKey: text(lookup, "MINIO_ACCESS_KEY", ""),
-		MinIOSecretKey: text(lookup, "MINIO_SECRET_KEY", ""),
-		MinIOBucket:    text(lookup, "MINIO_BUCKET", defaultMinIOBucket),
-		MinIOUseSSL:    useSSL,
+		ObjectStorageEndpoint:     text(lookup, "OBJECT_STORAGE_ENDPOINT", ""),
+		ObjectStorageRegion:       text(lookup, "OBJECT_STORAGE_REGION", defaultObjectStorageRegion),
+		ObjectStorageBucket:       text(lookup, "OBJECT_STORAGE_BUCKET", ""),
+		ObjectStorageAccessKey:    text(lookup, "OBJECT_STORAGE_ACCESS_KEY", ""),
+		ObjectStorageSecretKey:    text(lookup, "OBJECT_STORAGE_SECRET_KEY", ""),
+		ObjectStorageUsePathStyle: usePathStyle,
 	}
 
 	if err := cfg.validate(); err != nil {

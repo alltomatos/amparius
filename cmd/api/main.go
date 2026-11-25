@@ -181,8 +181,20 @@ func newReadiness(ctx context.Context, cfg config.Config) (*readiness.Checker, f
 		postgres,
 		readiness.NewRedis(cfg.RedisAddr),
 		readiness.NewRabbitMQ(cfg.RabbitMQURL),
-		readiness.NewMinIO(cfg.MinIOEndpoint, cfg.MinIOUseSSL),
 	}
+	objectStorage, objectStorageErr := readiness.NewS3(ctx, readiness.S3Config{
+		Endpoint:     cfg.ObjectStorageEndpoint,
+		Region:       cfg.ObjectStorageRegion,
+		Bucket:       cfg.ObjectStorageBucket,
+		AccessKey:    cfg.ObjectStorageAccessKey,
+		SecretKey:    cfg.ObjectStorageSecretKey,
+		UsePathStyle: cfg.ObjectStorageUsePathStyle,
+	})
+	if objectStorageErr != nil {
+		postgres.Close()
+		return nil, func() {}, fmt.Errorf("configurar object storage: %w", objectStorageErr)
+	}
+	dependencies = append(dependencies, objectStorage)
 	closers := []func(){postgres.Close}
 	if cfg.ControlPlaneDSN != "" {
 		controlPostgres, controlErr := readiness.NewPostgres(ctx, cfg.ControlPlaneDSN)

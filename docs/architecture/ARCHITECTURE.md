@@ -266,20 +266,27 @@ documento (intenção) → cálculo (motor) → XML (gerador) → validação (X
 ## 10.1 Readiness e operação HARDEN-01C
 
 `/healthz` mede somente liveness. `/readyz` executa probes reais de PostgreSQL,
-Redis, RabbitMQ e MinIO e retorna 503 enquanto uma dependência obrigatória
+Redis, RabbitMQ e object storage S3-compatible e retorna 503 enquanto uma dependência obrigatória
 estiver indisponível; o PostgreSQL do control plane entra quando
 `AMPA_CONTROL_POSTGRES_DSN` está configurado. A resposta não expõe DSN,
 credenciais nem erro bruto.
 
 O p95 do caminho HTTP/readiness é medido por benchmark reproduzível com
 dependência sintética. Esse número não é tratado como p95 de produção; o
-smoke com Docker Compose valida a topologia real.
+smoke com Docker Compose valida a topologia local instalada; o Adapter S3 é
+validado por endpoint sintético ou R2 autorizado.
+
+O object storage é um Adapter S3-compatible configurado por
+`OBJECT_STORAGE_ENDPOINT`, `OBJECT_STORAGE_REGION`, `OBJECT_STORAGE_BUCKET`,
+`OBJECT_STORAGE_ACCESS_KEY`, `OBJECT_STORAGE_SECRET_KEY` e
+`OBJECT_STORAGE_USE_PATH_STYLE`. R2 usa região `auto`; nenhuma credencial fica
+no código ou no Compose.
 
 ## 11. Implantação
 
 | Ambiente | Topologia |
 |---|---|
-| Dev | docker compose (Postgres, Redis, RabbitMQ, MinIO) + api/worker locais |
+| Dev | docker compose (Postgres, Redis, RabbitMQ) + object storage S3-compatible configurável + api/worker locais |
 | Staging | 1 região, mesma topologia de produção, dados sintéticos |
 | Produção | **células** em VPS com Docker (ver `SCALING.md` e ADR 0005): uma VPS por conjunto de tenants, control plane separado, Postgres com PITR e réplica por célula |
 | Relay | instalado no cliente (Windows/Linux), Postgres local, serviço com auto-start |

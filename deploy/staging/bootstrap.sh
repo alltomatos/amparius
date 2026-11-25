@@ -10,7 +10,7 @@ compose() {
   docker compose --env-file .env "$@"
 }
 
-compose up -d postgres redis rabbitmq minio
+compose up -d postgres redis rabbitmq
 until compose exec -T postgres pg_isready -U "$POSTGRES_ADMIN_USER" -d amparius >/dev/null 2>&1; do
   sleep 2
 done

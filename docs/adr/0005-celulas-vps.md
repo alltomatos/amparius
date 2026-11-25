@@ -8,7 +8,7 @@ O Amparius começa em VPS com Docker, sem Kubernetes. O crescimento esperado é 
 
 ## Decisão
 
-- A unidade de escala é a **célula**: uma VPS com a pilha completa (edge, api, worker, Postgres, Redis, RabbitMQ, MinIO, backup).
+- A unidade de escala é a **célula**: uma VPS com a pilha completa (edge, api, worker, Postgres, Redis, RabbitMQ, object storage S3-compatible ou endpoint externo, backup).
 - Cada célula atende um conjunto de tenants; **nenhum dado cruza células**.
 - Um **control plane** pequeno mantém diretório de tenants, provisionamento, billing, autenticação global e status. Ele não guarda dado de negócio.
 - Roteamento por hostname no edge, com mapeamento em cache vindo do control plane.

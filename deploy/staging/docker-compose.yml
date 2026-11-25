@@ -42,23 +42,6 @@ services:
       timeout: 5s
       retries: 20
 
-  minio:
-    image: minio/minio:latest
-    restart: unless-stopped
-    command: server /data
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    ports:
-      - "127.0.0.1:${MINIO_PORT:-19000}:9000"
-    volumes:
-      - amparius_staging_miniodata:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-
   api:
     image: ${API_IMAGE:-amparius-api:staging}
     build:
@@ -74,8 +57,6 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-      minio:
-        condition: service_healthy
     environment:
       APP_ENV: development
       ENABLE_DEV_ONBOARDING: "true"
@@ -84,11 +65,14 @@ services:
       POSTGRES_DSN: postgres://${POSTGRES_APP_USER}:${POSTGRES_APP_PASSWORD}@postgres:5432/amparius?sslmode=disable
       REDIS_ADDR: redis:6379
       RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASS}@rabbitmq:5672/
-      MINIO_ENDPOINT: minio:9000
-      MINIO_BUCKET: amparius
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT}
+      OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:-auto}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET}
+      OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY}
+      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY}
+      OBJECT_STORAGE_USE_PATH_STYLE: ${OBJECT_STORAGE_USE_PATH_STYLE:-false}
     ports:
       - "18080:8080"
 
 volumes:
   amparius_staging_pgdata:
-  amparius_staging_miniodata:

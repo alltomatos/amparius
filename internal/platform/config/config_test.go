@@ -44,13 +44,18 @@ func TestLoadFromUsaPadroesDeDesenvolvimento(t *testing.T) {
 
 func TestLoadFromSobrescreveComAmbiente(t *testing.T) {
 	cfg, err := LoadFrom(lookupFrom(map[string]string{
-		"HTTP_PORT":             "9090",
-		"APP_ENV":               "test",
-		"LOG_LEVEL":             "debug",
-		"HTTP_SHUTDOWN_TIMEOUT": "30s",
-		"READINESS_TIMEOUT":     "750ms",
-		"MINIO_USE_SSL":         "true",
-		"ENABLE_DEV_ONBOARDING": "true",
+		"HTTP_PORT":                     "9090",
+		"APP_ENV":                       "test",
+		"LOG_LEVEL":                     "debug",
+		"HTTP_SHUTDOWN_TIMEOUT":         "30s",
+		"READINESS_TIMEOUT":             "750ms",
+		"OBJECT_STORAGE_USE_PATH_STYLE": "true",
+		"OBJECT_STORAGE_ENDPOINT":       "https://objects.example.test",
+		"OBJECT_STORAGE_REGION":         "auto",
+		"OBJECT_STORAGE_BUCKET":         "amparius-test",
+		"OBJECT_STORAGE_ACCESS_KEY":     "access",
+		"OBJECT_STORAGE_SECRET_KEY":     "secret",
+		"ENABLE_DEV_ONBOARDING":         "true",
 	}))
 	if err != nil {
 		t.Fatalf("LoadFrom: %v", err)
@@ -68,8 +73,11 @@ func TestLoadFromSobrescreveComAmbiente(t *testing.T) {
 	if cfg.ReadinessTimeout != 750*time.Millisecond {
 		t.Fatalf("ReadinessTimeout = %v, quer %v", cfg.ReadinessTimeout, 750*time.Millisecond)
 	}
-	if !cfg.MinIOUseSSL {
-		t.Fatal("MinIOUseSSL deveria ser true")
+	if !cfg.ObjectStorageUsePathStyle {
+		t.Fatal("ObjectStorageUsePathStyle deveria ser true")
+	}
+	if cfg.ObjectStorageEndpoint != "https://objects.example.test" || cfg.ObjectStorageBucket != "amparius-test" {
+		t.Fatalf("configuração object storage inesperada: endpoint=%q bucket=%q", cfg.ObjectStorageEndpoint, cfg.ObjectStorageBucket)
 	}
 	if !cfg.EnableDevOnboarding {
 		t.Fatal("EnableDevOnboarding deveria ser true")

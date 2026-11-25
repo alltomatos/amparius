@@ -6,13 +6,15 @@ import (
 	"net/http"
 
 	"github.com/alltomatos/amparius/internal/platform/auth"
+	"github.com/alltomatos/amparius/internal/platform/readiness"
 )
 
 // Server agrega rotas e middlewares do serviço HTTP.
 type Server struct {
-	logger  *slog.Logger
-	mux     *http.ServeMux
-	handler http.Handler
+	logger    *slog.Logger
+	mux       *http.ServeMux
+	handler   http.Handler
+	readiness *readiness.Checker
 }
 
 // Options controla dependências opcionais do servidor HTTP.
@@ -41,6 +43,7 @@ type Options struct {
 	DevelopmentFinance http.Handler
 	// DevelopmentFuneral é o handler da superfície mínima do módulo opcional.
 	DevelopmentFuneral http.Handler
+	Readiness          *readiness.Checker
 }
 
 // AuthenticatedRoute associa uma rota a uma permissão RBAC.
@@ -64,6 +67,7 @@ func New(logger *slog.Logger, options ...Options) *Server {
 	if len(options) > 0 {
 		opts = options[0]
 	}
+	s.readiness = opts.Readiness
 	s.routes(opts)
 	s.handler = chain(
 		s.mux,
@@ -153,11 +157,20 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// handleReadyz é o readiness probe. Nesta fase é um stub: ainda não há
-// dependências conectadas (Postgres/Redis/RabbitMQ/MinIO).
-func (s *Server) handleReadyz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status": "ok",
-		"checks": map[string]string{},
-	})
+// handleReadyz executa probes reais e retorna 503 enquanto alguma dependência
+// obrigatória estiver indisponível.
+func (s *Server) handleReadyz(w http.ResponseWriter, request *http.Request) {
+	if s.readiness == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"status": "not_ready",
+			"checks": map[string]string{"readiness": "not_configured"},
+		})
+		return
+	}
+	report := s.readiness.Check(request.Context())
+	status := http.StatusOK
+	if !report.Ready {
+		status = http.StatusServiceUnavailable
+	}
+	writeJSON(w, status, report)
 }

@@ -18,10 +18,11 @@ import (
 var ErrInvalidConfig = errors.New("configuração inválida")
 
 const (
-	defaultEnv             = "development"
-	defaultHTTPPort        = "8080"
-	defaultLogLevel        = "info"
-	defaultShutdownTimeout = 15 * time.Second
+	defaultEnv              = "development"
+	defaultHTTPPort         = "8080"
+	defaultLogLevel         = "info"
+	defaultShutdownTimeout  = 15 * time.Second
+	defaultReadinessTimeout = 2 * time.Second
 
 	defaultPostgresDSN = "postgres://amparius:amparius@localhost:5432/amparius?sslmode=disable"
 	defaultRedisAddr   = "localhost:6379"
@@ -39,6 +40,7 @@ type Config struct {
 	HTTPPort            string
 	LogLevel            string
 	ShutdownTimeout     time.Duration
+	ReadinessTimeout    time.Duration
 	EnableDevOnboarding bool
 
 	// Dependências externas: carregadas, ainda não conectadas.
@@ -74,6 +76,10 @@ func LoadFrom(lookup LookupFunc) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	readinessTimeout, err := duration(lookup, "READINESS_TIMEOUT", defaultReadinessTimeout)
+	if err != nil {
+		return Config{}, err
+	}
 
 	useSSL, err := boolean(lookup, "MINIO_USE_SSL", false)
 	if err != nil {
@@ -90,6 +96,7 @@ func LoadFrom(lookup LookupFunc) (Config, error) {
 		HTTPPort:            text(lookup, "HTTP_PORT", defaultHTTPPort),
 		LogLevel:            text(lookup, "LOG_LEVEL", defaultLogLevel),
 		ShutdownTimeout:     shutdownTimeout,
+		ReadinessTimeout:    readinessTimeout,
 		EnableDevOnboarding: enableDevOnboarding,
 
 		PostgresDSN:     text(lookup, "POSTGRES_DSN", defaultPostgresDSN),

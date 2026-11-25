@@ -17,7 +17,50 @@ services:
       timeout: 3s
       retries: 20
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-16379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
+    ports:
+      - "127.0.0.1:${RABBITMQ_PORT:-15672}:5672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "127.0.0.1:${MINIO_PORT:-19000}:9000"
+    volumes:
+      - amparius_staging_miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
   api:
+    image: ${API_IMAGE:-amparius-api:staging}
     build:
       context: ../..
       dockerfile: Dockerfile
@@ -27,14 +70,25 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     environment:
       APP_ENV: development
       ENABLE_DEV_ONBOARDING: "true"
       HTTP_HOST: 0.0.0.0
       HTTP_PORT: 8080
       POSTGRES_DSN: postgres://${POSTGRES_APP_USER}:${POSTGRES_APP_PASSWORD}@postgres:5432/amparius?sslmode=disable
+      REDIS_ADDR: redis:6379
+      RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASS}@rabbitmq:5672/
+      MINIO_ENDPOINT: minio:9000
+      MINIO_BUCKET: amparius
     ports:
       - "18080:8080"
 
 volumes:
   amparius_staging_pgdata:
+  amparius_staging_miniodata:

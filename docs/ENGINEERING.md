@@ -354,8 +354,10 @@ preços e vigência. `NCM`, `CST`, `cClassTrib`, código `LC 116` e a tabela
 `catalog.tax_classification` permanecem fora do escopo e o RF-010 continua
 **parcial**; nenhum código ou alíquota fiscal foi inferido, criado ou copiado.
 
-`GET /readyz` continua um stub nesta fase: responde sucesso sem verificar
-PostgreSQL, Redis, RabbitMQ ou MinIO.
+`GET /readyz` executa probes reais de PostgreSQL, Redis, RabbitMQ e MinIO e
+responde 503 enquanto qualquer dependência obrigatória falhar. O control plane
+também é verificado quando `AMPA_CONTROL_POSTGRES_DSN` está configurado. O
+endpoint não expõe DSN, credenciais nem erro bruto.
 
 ## Regras que valem para todo mundo
 
@@ -1223,3 +1225,63 @@ proibido. Contratos em `docs/contracts/relay-operations-v1.md` e
 `docs/adr/0023-relay-fila-offline-contrato-caixa.md` e
 `docs/adr/0022-relay-store-snapshot-auth-cache.md`; guia do operador em
 `docs/userguide/relay-offline.md`.
+## HARDEN-01C — readiness, backup e rollback
+
+### Readiness
+
+`GET /healthz` é liveness e não consulta dependências. `GET /readyz` consulta
+PostgreSQL, Redis, RabbitMQ e MinIO; o PostgreSQL do control plane também entra
+quando `AMPA_CONTROL_POSTGRES_DSN` está presente. O status é 200 somente com
+todos os probes em `ok`; qualquer falha retorna 503. A resposta não contém DSN,
+credenciais ou texto de erro bruto.
+
+```powershell
+$env:READINESS_TIMEOUT = '2s'
+go run ./cmd/api
+curl.exe -i http://127.0.0.1:8080/healthz
+curl.exe -i http://127.0.0.1:8080/readyz
+```
+
+### p95 reproduzível
+
+```powershell
+.\scripts\benchmark.ps1 -Iterations 1000
+```
+
+O comando imprime `readiness_p95_us`, `readiness_p95_ms` e a quantidade de
+amostras. A medição usa uma dependência sintética para isolar o caminho HTTP;
+ela não é um p95 de produção nem substitui o smoke com Docker Compose.
+
+### Backup e restore
+
+Backup de um ambiente autorizado:
+
+```powershell
+$env:AMPA_BACKUP_DSN = 'postgres://<admin>:<secret>@host:5432/amparius?sslmode=disable'
+$env:AMPA_BACKUP_FILE = 'D:\backups\amparius-2026-11-25.dump'
+.\scripts\backup-restore.ps1 backup
+```
+
+Teste end-to-end sem dados reais:
+
+```powershell
+$env:AMPA_BACKUP_TEST_ADMIN_DSN = 'postgres://<admin>:<secret>@127.0.0.1:5432/amparius?sslmode=disable'
+.\scripts\backup-restore.ps1 test
+```
+
+O teste cria uma base temporária, grava somente `synthetic-only`, faz dump,
+remove/recria, restaura, verifica e remove a base. `restore` em base existente
+exige `-AllowDestructiveRestore` e um arquivo já verificado.
+
+### Rollback
+
+```powershell
+.\scripts\rollback-staging.ps1 plan -PreviousImage amparius-api:previous -BackupFile D:\backups\staging.dump
+.\scripts\rollback-staging.ps1 apply -PreviousImage amparius-api:previous -BackupFile D:\backups\staging.dump -AllowRollback
+```
+
+O script troca somente a imagem da API e não apaga volume nem executa
+`goose down`. Rollback de schema é forward-only: preparar uma nova migration
+compatível ou executar restore deliberado com janela e evidência. O modo
+`apply` não declara probes verdes; a verificação de `/healthz` e `/readyz` deve
+ser feita após o serviço subir.

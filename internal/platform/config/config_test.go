@@ -34,6 +34,9 @@ func TestLoadFromUsaPadroesDeDesenvolvimento(t *testing.T) {
 	if cfg.ShutdownTimeout != 15*time.Second {
 		t.Fatalf("ShutdownTimeout = %v, quer %v", cfg.ShutdownTimeout, 15*time.Second)
 	}
+	if cfg.ReadinessTimeout != 2*time.Second {
+		t.Fatalf("ReadinessTimeout = %v, quer %v", cfg.ReadinessTimeout, 2*time.Second)
+	}
 	if cfg.PostgresDSN == "" || cfg.RedisAddr == "" || cfg.RabbitMQURL == "" {
 		t.Fatal("DSNs padrão não deveriam ser vazios")
 	}
@@ -45,6 +48,7 @@ func TestLoadFromSobrescreveComAmbiente(t *testing.T) {
 		"APP_ENV":               "test",
 		"LOG_LEVEL":             "debug",
 		"HTTP_SHUTDOWN_TIMEOUT": "30s",
+		"READINESS_TIMEOUT":     "750ms",
 		"MINIO_USE_SSL":         "true",
 		"ENABLE_DEV_ONBOARDING": "true",
 	}))
@@ -60,6 +64,9 @@ func TestLoadFromSobrescreveComAmbiente(t *testing.T) {
 	}
 	if cfg.ShutdownTimeout != 30*time.Second {
 		t.Fatalf("ShutdownTimeout = %v, quer %v", cfg.ShutdownTimeout, 30*time.Second)
+	}
+	if cfg.ReadinessTimeout != 750*time.Millisecond {
+		t.Fatalf("ReadinessTimeout = %v, quer %v", cfg.ReadinessTimeout, 750*time.Millisecond)
 	}
 	if !cfg.MinIOUseSSL {
 		t.Fatal("MinIOUseSSL deveria ser true")

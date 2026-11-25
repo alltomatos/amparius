@@ -3,14 +3,18 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/alltomatos/amparius/internal/platform/auth"
 	"github.com/alltomatos/amparius/internal/platform/db"
+	"github.com/alltomatos/amparius/internal/platform/readiness"
 	"github.com/google/uuid"
 )
 
@@ -32,6 +36,14 @@ func newTestServer(t *testing.T) *Server {
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	return New(logger)
 }
+
+type testReadinessDependency struct {
+	name string
+	err  error
+}
+
+func (d testReadinessDependency) Name() string                { return d.name }
+func (d testReadinessDependency) Check(context.Context) error { return d.err }
 
 func TestHealthzResponde200(t *testing.T) {
 	srv := newTestServer(t)
@@ -57,7 +69,11 @@ func TestHealthzResponde200(t *testing.T) {
 }
 
 func TestReadyzResponde200(t *testing.T) {
-	srv := newTestServer(t)
+	srv := New(slog.New(slog.NewJSONHandler(io.Discard, nil)), Options{
+		Readiness: readiness.New([]readiness.Dependency{
+			testReadinessDependency{name: "postgres"},
+		}, time.Second),
+	})
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
 
@@ -65,6 +81,22 @@ func TestReadyzResponde200(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, quer %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestReadyzResponde503QuandoDependenciaFalha(t *testing.T) {
+	srv := New(slog.New(slog.NewJSONHandler(io.Discard, nil)), Options{
+		Readiness: readiness.New([]readiness.Dependency{
+			testReadinessDependency{name: "redis", err: errors.New("falha simulada")},
+		}, time.Second),
+	})
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, quer %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	if !strings.Contains(rec.Body.String(), `"status":"not_ready"`) {
+		t.Fatalf("corpo sem status not_ready: %s", rec.Body.String())
 	}
 }
 

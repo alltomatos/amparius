@@ -173,6 +173,12 @@ Folha de pagamento, eSocial completo, contabilidade completa (diário/razão ofi
 - Retenção de tenant após 90 dias: **> 90%**.
 - Uso do copiloto: **> 40%** dos usuários ativos semanais.
 
+### HARDEN-01C - operacao verificavel
+
+- `/healthz` e liveness; `/readyz` e readiness real e retorna 503 quando uma dependencia obrigatoria falhar.
+- `READINESS_TIMEOUT` vale 2 s por padrao; o p95 do endpoint e medido por comando reproduzivel e separado do smoke de dependencias reais.
+- RPO de 5 min e RTO de 1 h exigem backup verificavel, restore sintetico e rollback de aplicacao sem `goose down`; isso nao substitui PITR/WAL.
+
 ## 9. Riscos
 
 | Risco | Mitigação |

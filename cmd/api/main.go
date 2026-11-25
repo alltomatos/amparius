@@ -22,6 +22,7 @@ import (
 	"github.com/alltomatos/amparius/internal/platform/db"
 	httpserver "github.com/alltomatos/amparius/internal/platform/http"
 	"github.com/alltomatos/amparius/internal/platform/log"
+	"github.com/alltomatos/amparius/internal/platform/readiness"
 )
 
 func main() {
@@ -42,9 +43,14 @@ func run() error {
 		return fmt.Errorf("configurar log: %w", err)
 	}
 	logger := log.New(os.Stdout, level)
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	readinessChecker, closeReadiness, err := newReadiness(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("configurar readiness: %w", err)
+	}
+	defer closeReadiness()
 
 	devOnboardingEnabled := cfg.Env == "development" && cfg.EnableDevOnboarding
 	var onboardingHandler http.Handler
@@ -120,6 +126,7 @@ func run() error {
 	server := &http.Server{
 		Addr: cfg.HTTPAddr(),
 		Handler: httpserver.New(logger, httpserver.Options{
+			Readiness:              readinessChecker,
 			DevelopmentMode:        devOnboardingEnabled,
 			DevelopmentOnboarding:  onboardingHandler,
 			DevelopmentParties:     partiesHandler,
@@ -163,4 +170,33 @@ func run() error {
 
 	logger.Info("api encerrada")
 	return nil
+}
+
+func newReadiness(ctx context.Context, cfg config.Config) (*readiness.Checker, func(), error) {
+	postgres, err := readiness.NewPostgres(ctx, cfg.PostgresDSN)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	dependencies := []readiness.Dependency{
+		postgres,
+		readiness.NewRedis(cfg.RedisAddr),
+		readiness.NewRabbitMQ(cfg.RabbitMQURL),
+		readiness.NewMinIO(cfg.MinIOEndpoint, cfg.MinIOUseSSL),
+	}
+	closers := []func(){postgres.Close}
+	if cfg.ControlPlaneDSN != "" {
+		controlPostgres, controlErr := readiness.NewPostgres(ctx, cfg.ControlPlaneDSN)
+		if controlErr != nil {
+			postgres.Close()
+			return nil, func() {}, fmt.Errorf("configurar PostgreSQL do control plane: %w", controlErr)
+		}
+		dependencies = append(dependencies, controlPostgres)
+		closers = append(closers, controlPostgres.Close)
+	}
+	closeAll := func() {
+		for _, closeDependency := range closers {
+			closeDependency()
+		}
+	}
+	return readiness.New(dependencies, cfg.ReadinessTimeout), closeAll, nil
 }

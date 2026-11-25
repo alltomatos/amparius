@@ -263,6 +263,18 @@ documento (intenção) → cálculo (motor) → XML (gerador) → validação (X
 - Alertas: fila de relay crescendo, certificado expirando, rejeição fiscal acima do baseline, erro de sync por nó.
 - Runbooks: queda de SEFAZ, certificado inválido, nó offline prolongado, divergência de saldo.
 
+## 10.1 Readiness e operação HARDEN-01C
+
+`/healthz` mede somente liveness. `/readyz` executa probes reais de PostgreSQL,
+Redis, RabbitMQ e MinIO e retorna 503 enquanto uma dependência obrigatória
+estiver indisponível; o PostgreSQL do control plane entra quando
+`AMPA_CONTROL_POSTGRES_DSN` está configurado. A resposta não expõe DSN,
+credenciais nem erro bruto.
+
+O p95 do caminho HTTP/readiness é medido por benchmark reproduzível com
+dependência sintética. Esse número não é tratado como p95 de produção; o
+smoke com Docker Compose valida a topologia real.
+
 ## 11. Implantação
 
 | Ambiente | Topologia |
@@ -273,6 +285,15 @@ documento (intenção) → cálculo (motor) → XML (gerador) → validação (X
 | Relay | instalado no cliente (Windows/Linux), Postgres local, serviço com auto-start |
 
 Capacidade inicial: 1 célula M (~120 tenants), 20 mil documentos fiscais/mês, 500 usuários simultâneos. Crescimento por adição de células; revisar após 3 meses de operação.
+
+## 11.1 Backup e rollback operacional
+
+O backup PostgreSQL usa formato custom e é verificado com `pg_restore --list`.
+O teste end-to-end cria uma base temporária com dados sintéticos, restaura e
+remove a base; não usa dados reais. Rollback de aplicação preserva um backup,
+troca somente a imagem anterior e não executa `goose down`. Migrações aplicadas
+continuam forward-only; rollback de schema exige nova migration compatível ou
+restore deliberado e auditado. Ver ADR 0025.
 
 ## 12. Falhas esperadas e resposta
 

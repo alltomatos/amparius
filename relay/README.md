@@ -29,10 +29,26 @@ ou envelope adulterado são recusados. Reaplicar o lote após reconexão não du
 evento nem regride o cursor.
 
 O receptor é em memória e não persiste estado; o adaptador HTTP autenticado e a
-reconciliação explícita continuam em fatias posteriores.
+autoridade remota do SaaS continuam em fatias posteriores.
 
 Contrato: `../docs/contracts/relay-sync-v1.md`. Decisão:
 `../docs/adr/0027-relay-protocolo-sincronizacao-versionado.md`.
+
+## RELAY-02B
+
+A reconciliação classifica operações como `master`, `money` ou `fiscal`. Mestres
+(`master_upsert`, com `base_version` inteiro) só são sincronizados após aceite
+do servidor autoritativo (`SyncOutcome::MasterApplied`). Conflitos em qualquer
+domínio marcam a operação como `conflict` e criam uma `ReviewTask` persistente,
+tenant-scoped e deduplicada por operação; nenhum payload, resposta remota ou
+PII entra na tarefa. Dinheiro e fiscal nunca usam last-write-wins.
+
+Não há endpoint para resolver tarefas, aplicação de snapshot de mestre ou
+adaptador HTTP/SaaS nesta fatia. Os testes usam transporte roteirizado e provam
+conflito, idempotência, persistência e isolamento de tenant.
+
+Contrato: `../docs/contracts/relay-sync-v1.md`. Decisão:
+`../docs/adr/0028-relay-reconciliacao-conflitos.md`.
 
 ## RELAY-01C
 

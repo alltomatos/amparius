@@ -2,6 +2,7 @@ mod auth;
 mod http;
 mod protocol;
 mod queue;
+mod reconciliation;
 mod snapshot;
 mod store;
 mod sync;
@@ -16,6 +17,7 @@ pub use queue::{
     DeviceSequencer, OperationDraft, OperationKind, OperationStatus, QueueError, QueueStatus,
     QueuedOperation, RelayMode, RelayStatus, content_hash, operation_id, unix_now,
 };
+pub use reconciliation::{ReconciliationDomain, domain_for};
 pub use snapshot::{SignedSnapshot, SnapshotError, SnapshotSigner, VerifiedSnapshot};
 pub use store::{
     LocalStore, ReviewTask, ReviewTaskKind, ReviewTaskStatus, StoreError, TemporaryRecord,

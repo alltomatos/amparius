@@ -95,8 +95,8 @@ reenvia operação já sincronizada.
 
 Limites: o receptor é uma referência em memória, sem persistência de cursor,
 sem buffer de intervalo e sem armazenamento do SaaS. O adaptador HTTP autenticado,
-TLS, retry com jitter concreto e a reconciliação explícita (RELAY-02B) continuam
-fora deste slice.
+TLS, retry com jitter concreto e a autoridade remota continuam fora deste slice;
+a política local de reconciliação está documentada na RELAY-02B abaixo.
 
 Contrato: `docs/contracts/relay-sync-v1.md`. ADR:
 `docs/adr/0027-relay-protocolo-sincronizacao-versionado.md`.
@@ -1342,3 +1342,26 @@ O script troca somente a imagem da API e não apaga volume nem executa
 compatível ou executar restore deliberado com janela e evidência. O modo
 `apply` não declara probes verdes; a verificação de `/healthz` e `/readyz` deve
 ser feita após o serviço subir.
+
+## RELAY-02B: reconciliação e conflitos explícitos
+
+O relay classifica cada operação Sync v1 em `master`, `money` ou `fiscal`. O
+servidor é autoritativo para `master_upsert`; o relay só confirma a operação
+com `MasterApplied` e não aplica uma versão local concorrente. Divergências em
+qualquer domínio marcam `conflict` e criam uma `ReviewTask` aberta, persistente,
+tenant-scoped e deduplicada por operação. A tarefa contém somente referência
+opaca e código sanitizado, sem payload, resposta remota ou PII.
+
+Conflitos de dinheiro e fiscal não usam last-write-wins. Rejeição fiscal segue
+como `failed` com `FiscalFailure`; conflito fiscal usa `FiscalConflict`. A
+resolução humana, aplicação de estado autoritativo e o adaptador HTTP/SaaS
+continuam fora da fatia.
+
+Verificação reproduzível:
+
+```powershell
+cargo fmt --manifest-path relay/Cargo.toml --check
+cargo test --manifest-path relay/Cargo.toml
+cargo clippy --manifest-path relay/Cargo.toml --all-targets --all-features -- -D warnings
+git diff --check
+```

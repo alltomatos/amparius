@@ -12,7 +12,10 @@ HTTP do SaaS nesta fatia.
 2. O transporte recebe a operação inteira, incluindo `operation_id`,
    `idempotency_key` e `content_hash`, e o envelope versionado definido abaixo.
 3. O transporte responde `applied` com `server_cursor`, ou uma rejeição classificada.
-4. `applied` marca a operação como `synced` e persiste o cursor.
+   Para `master_upsert`, o aceite precisa ser `MasterApplied` e trazer a versão
+   autoritativa do servidor.
+4. `applied` marca a operação como `synced` e persiste o cursor; `MasterApplied`
+   também persiste `authoritative_version` como evidência do aceite.
 5. Indisponibilidade ou timeout mantém a operação `pending`, incrementa `attempts` e
    registra apenas um código técnico seguro (`sync_retry:*`). A próxima execução
    reapresenta a mesma operação; não é criada uma nova sequência.
@@ -88,6 +91,29 @@ sequência esperada. O adaptador do relay deve tratar `out_of_order` como rejei�
 classificada, nunca como sucesso, e não inventa o evento faltante; o bloqueio e a
 reconciliação explícita ficam para a RELAY-02B.
 
+## Reconciliação (RELAY-02B)
+
+As operações são classificadas pela natureza do efeito:
+
+| Domínio | Operações | Regra de autoridade |
+|---|---|---|
+| `master` | `master_upsert` | servidor autoritativo; só uma confirmação do transporte sincroniza |
+| `money` | contrato e caixa | conflito bloqueia e exige revisão; nenhum valor é sobrescrito |
+| `fiscal` | `fiscal_emission` | rejeição vira `failed`/`FiscalFailure`; conflito vira revisão |
+
+`master_upsert` exige `base_version` inteiro no payload. O relay não aplica uma
+versão local concorrente nem realiza merge implícito. O transporte pode devolver
+`MasterApplied { server_cursor, authoritative_version }` quando o servidor
+aceitar a mutação; a versão autoritativa serve como evidência do aceite e não
+como dado local inventado.
+
+Para conflito, o relay grava `status=conflict`, incrementa a tentativa e cria
+uma `ReviewTask` aberta com `MasterConflict`, `MoneyConflict` ou
+`FiscalConflict`. A tarefa carrega `tenant_id`, `operation_id`, tipo e código
+sanitizado; não carrega payload, resposta remota ou PII. Reaplicar o mesmo
+conflito retorna a tarefa existente. Não há endpoint de resolução nem integração
+HTTP/SaaS nesta versão.
+
 ## Invariantes
 
 - tenant é obtido da credencial e filtrado em todas as leituras/escritas;
@@ -107,4 +133,6 @@ cargo test --manifest-path relay/Cargo.toml sync::tests
 Os testes são determinísticos, usam transportes roteirizados e um receptor em
 memória, e não comprovam conectividade real, TLS, PostgreSQL local ou resposta de
 um ambiente SaaS. O receptor de referência não persiste estado entre execuções e
-não faz buffer de intervalos; essas responsabilidades ficam para a RELAY-02B.
+não faz buffer de intervalos. A política local de conflitos e a trilha
+persistente de revisão da RELAY-02B ficam no `LocalStore`; autoridade remota,
+endpoint de resolução e integração HTTP/SaaS continuam fora desta fatia.

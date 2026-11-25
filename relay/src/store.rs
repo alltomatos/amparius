@@ -1,7 +1,9 @@
+use crate::ReconciliationDomain;
 use crate::auth::{AuthCache, AuthError, AuthenticatedSubject, CachedCredential};
 use crate::queue::{
-    DeviceSequencer, OperationDraft, OperationStatus, QueueError, QueueStatus, QueuedOperation,
-    RelayMode, RelayStatus, content_hash, operation_id, validate_draft, verify_operation,
+    DeviceSequencer, OperationDraft, OperationKind, OperationStatus, QueueError, QueueStatus,
+    QueuedOperation, RelayMode, RelayStatus, content_hash, operation_id, validate_draft,
+    verify_operation,
 };
 use crate::snapshot::{SignedSnapshot, SnapshotError, VerifiedSnapshot};
 use ed25519_dalek::VerifyingKey;
@@ -30,6 +32,9 @@ pub struct TemporaryRecord {
 #[serde(rename_all = "snake_case")]
 pub enum ReviewTaskKind {
     FiscalFailure,
+    MasterConflict,
+    MoneyConflict,
+    FiscalConflict,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -315,6 +320,7 @@ impl LocalStore {
             last_error: None,
             synced_at: None,
             server_cursor: None,
+            authoritative_version: None,
         };
 
         if let Some(sequencer) = self
@@ -469,6 +475,9 @@ impl LocalStore {
                 if operation.status == OperationStatus::Synced {
                     return Ok(());
                 }
+                if operation.kind == OperationKind::MasterUpsert {
+                    return Err(QueueError::InvalidTransition);
+                }
                 if operation.status == OperationStatus::Conflict {
                     return Err(QueueError::InvalidTransition);
                 }
@@ -476,6 +485,40 @@ impl LocalStore {
                 operation.synced_at = Some(now);
                 operation.attempts = operation.attempts.saturating_add(1);
                 operation.server_cursor = Some(cursor);
+                operation.authoritative_version = None;
+                operation.last_error = None;
+                Ok(())
+            },
+            now,
+        )
+    }
+
+    pub fn mark_operation_synced_authoritative(
+        &mut self,
+        subject: &AuthenticatedSubject,
+        target_operation_id: &str,
+        cursor: u64,
+        authoritative_version: u64,
+        now: u64,
+    ) -> Result<(), StoreError> {
+        self.update_operation(
+            subject,
+            target_operation_id,
+            |operation| {
+                if operation.status == OperationStatus::Synced {
+                    return Ok(());
+                }
+                if operation.kind != OperationKind::MasterUpsert {
+                    return Err(QueueError::InvalidTransition);
+                }
+                if operation.status == OperationStatus::Conflict {
+                    return Err(QueueError::InvalidTransition);
+                }
+                operation.status = OperationStatus::Synced;
+                operation.synced_at = Some(now);
+                operation.attempts = operation.attempts.saturating_add(1);
+                operation.server_cursor = Some(cursor);
+                operation.authoritative_version = Some(authoritative_version);
                 operation.last_error = None;
                 Ok(())
             },
@@ -604,6 +647,77 @@ impl LocalStore {
                     .review_tasks
                     .retain(|existing| existing.task_id != task.task_id);
             }
+            return Err(error);
+        }
+        Ok(task)
+    }
+
+    /// Bloqueia uma divergência sem escolher vencedor e grava sua revisão uma
+    /// única vez. O payload nunca é copiado para a tarefa: a operação opaca e
+    /// o código sanitizado são suficientes para o operador localizar o caso.
+    pub fn mark_reconciliation_conflict(
+        &mut self,
+        subject: &AuthenticatedSubject,
+        target_operation_id: &str,
+        domain: ReconciliationDomain,
+        code: &str,
+        now: u64,
+    ) -> Result<ReviewTask, StoreError> {
+        if subject.tenant_id.trim().is_empty() {
+            return Err(StoreError::Queue(QueueError::EmptyTenant));
+        }
+        let index = self
+            .data
+            .queue
+            .iter()
+            .position(|item| {
+                item.tenant_id == subject.tenant_id && item.operation_id == target_operation_id
+            })
+            .ok_or(StoreError::Queue(QueueError::NotFound))?;
+
+        if self.data.queue[index].status == OperationStatus::Synced {
+            return Err(StoreError::Queue(QueueError::InvalidTransition));
+        }
+        let task_id = review_task_id(&subject.tenant_id, target_operation_id);
+        if self.data.queue[index].status == OperationStatus::Conflict {
+            if let Some(existing) = self
+                .data
+                .review_tasks
+                .iter()
+                .find(|task| task.task_id == task_id)
+            {
+                return Ok(existing.clone());
+            }
+        }
+        if self.data.queue[index].status == OperationStatus::Failed {
+            return Err(StoreError::Queue(QueueError::InvalidTransition));
+        }
+
+        let task = ReviewTask {
+            task_id,
+            tenant_id: subject.tenant_id.clone(),
+            operation_id: target_operation_id.to_owned(),
+            kind: match domain {
+                ReconciliationDomain::Master => ReviewTaskKind::MasterConflict,
+                ReconciliationDomain::Money => ReviewTaskKind::MoneyConflict,
+                ReconciliationDomain::Fiscal => ReviewTaskKind::FiscalConflict,
+            },
+            code: safe_code(code),
+            status: ReviewTaskStatus::Open,
+            created_at: now,
+        };
+        let previous_queue = self.data.queue[index].clone();
+        self.data.queue[index].status = OperationStatus::Conflict;
+        self.data.queue[index].attempts = self.data.queue[index].attempts.saturating_add(1);
+        self.data.queue[index].last_error =
+            Some(format!("sync_conflict:{}:{}", domain.as_str(), task.code));
+        self.data.queue[index].updated_at = now;
+        self.data.review_tasks.push(task.clone());
+        if let Err(error) = self.persist() {
+            self.data.queue[index] = previous_queue;
+            self.data
+                .review_tasks
+                .retain(|existing| existing.task_id != task.task_id);
             return Err(error);
         }
         Ok(task)

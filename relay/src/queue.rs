@@ -1,4 +1,4 @@
-﻿use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -19,6 +19,7 @@ pub fn unix_now() -> u64 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationKind {
+    MasterUpsert,
     ContractCreate,
     CashOpen,
     CashMovement,
@@ -29,6 +30,7 @@ pub enum OperationKind {
 impl OperationKind {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::MasterUpsert => "master_upsert",
             Self::ContractCreate => "contract_create",
             Self::CashOpen => "cash_open",
             Self::CashMovement => "cash_movement",
@@ -66,6 +68,8 @@ pub struct QueuedOperation {
     pub last_error: Option<String>,
     pub synced_at: Option<u64>,
     pub server_cursor: Option<u64>,
+    #[serde(default)]
+    pub authoritative_version: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,6 +173,14 @@ pub fn validate_draft(draft: &OperationDraft) -> Result<(), QueueError> {
         .as_object()
         .ok_or(QueueError::InvalidPayload("payload precisa ser objeto"))?;
     match draft.kind {
+        OperationKind::MasterUpsert => {
+            let base_version = object.get("base_version").and_then(Value::as_u64).ok_or(
+                QueueError::InvalidPayload("base_version precisa ser inteiro"),
+            )?;
+            if base_version > i64::MAX as u64 {
+                return Err(QueueError::InvalidPayload("base_version invalida"));
+            }
+        }
         OperationKind::ContractCreate => {
             require_cents(object, "total_cents", 0)?;
             optional_currency(object)?;

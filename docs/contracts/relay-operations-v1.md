@@ -43,6 +43,7 @@ enxerga operações, sequência ou status de outro.
 
 | `kind` | Payload obrigatório | Regra |
 |---|---|---|
+| `master_upsert` | `base_version` inteiro | proposta de alteração de mestre; a autoridade é o servidor e a divergência exige revisão |
 | `contract_create` | `total_cents` inteiro; `currency` opcional | total `>= 0`; moeda, se presente, `BRL`; `item_count`, se presente, inteiro `> 0` |
 | `cash_open` | `opening_amount_cents` inteiro | valor `>= 0` |
 | `cash_movement` | `direction` (`in`/`out`), `amount_cents` inteiro, `reason` texto | valor `> 0`; motivo não vazio e até 200 caracteres |
@@ -92,7 +93,8 @@ sincronização carrega referências e valores operacionais, não o cadastro com
     "attempts": 0,
     "last_error": null,
     "synced_at": null,
-    "server_cursor": null
+    "server_cursor": null,
+    "authoritative_version": null
   },
   "replayed": false
 }

@@ -1,13 +1,26 @@
 use crate::{
-    AuthenticatedSubject, LocalStore, OperationStatus, QueuedOperation, StoreError, SyncEnvelope,
+    AuthenticatedSubject, LocalStore, OperationKind, OperationStatus, QueuedOperation, StoreError,
+    SyncEnvelope, domain_for,
 };
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncOutcome {
-    Applied { server_cursor: u64 },
-    FiscalRejected { code: String },
-    Conflict { code: String },
+    Applied {
+        server_cursor: u64,
+    },
+    /// Aceite explícito do servidor autoritativo para um mestre. O relay não
+    /// inventa nem aplica uma versão local concorrente.
+    MasterApplied {
+        server_cursor: u64,
+        authoritative_version: u64,
+    },
+    FiscalRejected {
+        code: String,
+    },
+    Conflict {
+        code: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -37,6 +50,7 @@ pub struct SyncReport {
     pub synced: usize,
     pub failed: usize,
     pub review_tasks: usize,
+    pub conflicts: usize,
     pub last_cursor: Option<u64>,
 }
 
@@ -78,17 +92,34 @@ where
             let envelope = match SyncEnvelope::from_operation(&operation) {
                 Ok(envelope) => envelope,
                 Err(_) => {
-                    store.mark_operation_conflict(
+                    store.mark_reconciliation_conflict(
                         subject,
                         &operation.operation_id,
+                        domain_for(operation.kind),
                         "sync_conflict:envelope_invalid",
                         now,
                     )?;
                     report.failed += 1;
+                    report.conflicts += 1;
+                    report.review_tasks += 1;
                     continue;
                 }
             };
             match self.transport.submit_versioned(&operation, &envelope) {
+                Ok(SyncOutcome::Applied { .. })
+                    if operation.kind == OperationKind::MasterUpsert =>
+                {
+                    store.mark_reconciliation_conflict(
+                        subject,
+                        &operation.operation_id,
+                        domain_for(operation.kind),
+                        "master_authority_missing",
+                        now,
+                    )?;
+                    report.failed += 1;
+                    report.conflicts += 1;
+                    report.review_tasks += 1;
+                }
                 Ok(SyncOutcome::Applied { server_cursor }) => {
                     store.mark_operation_synced(
                         subject,
@@ -99,19 +130,48 @@ where
                     report.synced += 1;
                     report.last_cursor = Some(server_cursor);
                 }
+                Ok(SyncOutcome::MasterApplied {
+                    server_cursor,
+                    authoritative_version,
+                }) if operation.kind == OperationKind::MasterUpsert => {
+                    store.mark_operation_synced_authoritative(
+                        subject,
+                        &operation.operation_id,
+                        server_cursor,
+                        authoritative_version,
+                        now,
+                    )?;
+                    report.synced += 1;
+                    report.last_cursor = Some(server_cursor);
+                }
+                Ok(SyncOutcome::MasterApplied { .. }) => {
+                    store.mark_reconciliation_conflict(
+                        subject,
+                        &operation.operation_id,
+                        domain_for(operation.kind),
+                        "master_acceptance_for_non_master",
+                        now,
+                    )?;
+                    report.failed += 1;
+                    report.conflicts += 1;
+                    report.review_tasks += 1;
+                }
                 Ok(SyncOutcome::FiscalRejected { code }) => {
                     store.mark_fiscal_failure(subject, &operation.operation_id, &code, now)?;
                     report.failed += 1;
                     report.review_tasks += 1;
                 }
                 Ok(SyncOutcome::Conflict { code }) => {
-                    store.mark_operation_conflict(
+                    store.mark_reconciliation_conflict(
                         subject,
                         &operation.operation_id,
-                        &format!("sync_conflict:{}", safe_code(&code)),
+                        domain_for(operation.kind),
+                        &safe_code(&code),
                         now,
                     )?;
                     report.failed += 1;
+                    report.conflicts += 1;
+                    report.review_tasks += 1;
                 }
                 Err(error) => {
                     store.mark_operation_retryable(
@@ -225,6 +285,15 @@ mod tests {
             entity_id: "document-1".to_owned(),
             idempotency_key: "fiscal-1".to_owned(),
             payload: json!({"document_ref": "document-1"}),
+        }
+    }
+
+    fn master() -> OperationDraft {
+        OperationDraft {
+            kind: OperationKind::MasterUpsert,
+            entity_id: "catalog-item-1".to_owned(),
+            idempotency_key: "master-1".to_owned(),
+            payload: json!({"base_version": 3, "record_ref": "catalog-item-1"}),
         }
     }
 
@@ -352,6 +421,133 @@ mod tests {
         assert_eq!(
             reopened.list_review_tasks(&operator).expect("tasks").len(),
             1
+        );
+        let _ = fs::remove_file(file);
+    }
+
+    #[test]
+    fn master_requires_authoritative_acceptance_before_sync() {
+        let file = path();
+        let mut store = LocalStore::open(&file).expect("store");
+        let operator = subject(&mut store);
+        let (operation, _) = store
+            .append_operation(&operator, "node-1", master(), 100)
+            .expect("append");
+        let transport = ScriptedTransport {
+            outcomes: VecDeque::from([Ok(SyncOutcome::MasterApplied {
+                server_cursor: 55,
+                authoritative_version: 4,
+            })]),
+            submitted: Vec::new(),
+        };
+        let mut engine = SyncEngine::new(transport);
+
+        let report = engine
+            .sync_once(&mut store, &operator, "node-1", 110)
+            .expect("authoritative sync");
+        assert_eq!(report.synced, 1);
+        assert_eq!(report.conflicts, 0);
+        let stored = store
+            .list_operations(&operator, Some("node-1"), 0, 10)
+            .expect("operations");
+        assert_eq!(stored[0].operation_id, operation.operation_id);
+        assert_eq!(stored[0].status, OperationStatus::Synced);
+        assert_eq!(stored[0].server_cursor, Some(55));
+        assert_eq!(stored[0].authoritative_version, Some(4));
+        assert!(
+            store
+                .list_review_tasks(&operator)
+                .expect("tasks")
+                .is_empty()
+        );
+        let _ = fs::remove_file(file);
+    }
+
+    #[test]
+    fn plain_applied_cannot_sync_a_master_without_authoritative_version() {
+        let file = path();
+        let mut store = LocalStore::open(&file).expect("store");
+        let operator = subject(&mut store);
+        store
+            .append_operation(&operator, "node-1", master(), 100)
+            .expect("append");
+        let transport = ScriptedTransport {
+            outcomes: VecDeque::from([Ok(SyncOutcome::Applied { server_cursor: 56 })]),
+            submitted: Vec::new(),
+        };
+        let mut engine = SyncEngine::new(transport);
+
+        let report = engine
+            .sync_once(&mut store, &operator, "node-1", 110)
+            .expect("authority rejection");
+        assert_eq!(report.synced, 0);
+        assert_eq!(report.conflicts, 1);
+        assert_eq!(
+            store.list_review_tasks(&operator).expect("tasks")[0].kind,
+            crate::ReviewTaskKind::MasterConflict
+        );
+        let _ = fs::remove_file(file);
+    }
+
+    #[test]
+    fn conflicts_in_master_money_and_fiscal_are_blocked_and_reviewed_once() {
+        let file = path();
+        let mut store = LocalStore::open(&file).expect("store");
+        let operator = subject(&mut store);
+        store
+            .append_operation(&operator, "node-1", master(), 100)
+            .expect("master");
+        store
+            .append_operation(&operator, "node-1", contract(), 100)
+            .expect("money");
+        store
+            .append_operation(&operator, "node-1", fiscal(), 100)
+            .expect("fiscal");
+        let transport = ScriptedTransport {
+            outcomes: VecDeque::from([
+                Ok(SyncOutcome::Conflict {
+                    code: "server_version_mismatch".to_owned(),
+                }),
+                Ok(SyncOutcome::Conflict {
+                    code: "money_total_mismatch".to_owned(),
+                }),
+                Ok(SyncOutcome::Conflict {
+                    code: "fiscal_authority_mismatch".to_owned(),
+                }),
+            ]),
+            submitted: Vec::new(),
+        };
+        let mut engine = SyncEngine::new(transport);
+
+        let report = engine
+            .sync_once(&mut store, &operator, "node-1", 110)
+            .expect("conflicts");
+        assert_eq!(report.failed, 3);
+        assert_eq!(report.conflicts, 3);
+        assert_eq!(report.review_tasks, 3);
+        let tasks = store.list_review_tasks(&operator).expect("tasks");
+        assert_eq!(tasks.len(), 3);
+        assert_eq!(tasks[0].kind, crate::ReviewTaskKind::MasterConflict);
+        assert_eq!(tasks[1].kind, crate::ReviewTaskKind::MoneyConflict);
+        assert_eq!(tasks[2].kind, crate::ReviewTaskKind::FiscalConflict);
+        assert!(tasks.iter().all(|task| !task.code.contains("payload")));
+        let status = store
+            .queue_status(&operator, Some("node-1"), 110)
+            .expect("status");
+        assert_eq!(status.queue.conflict, 3);
+
+        let second = engine
+            .sync_once(&mut store, &operator, "node-1", 120)
+            .expect("blocked replay");
+        assert_eq!(second.attempted, 0);
+        assert_eq!(store.list_review_tasks(&operator).expect("tasks").len(), 3);
+
+        drop(store);
+        let mut reopened = LocalStore::open(&file).expect("reopen");
+        let operator = subject(&mut reopened);
+        assert_eq!(
+            reopened.list_review_tasks(&operator).expect("tasks").len(),
+            3
         );
         let _ = fs::remove_file(file);
     }

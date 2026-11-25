@@ -67,6 +67,23 @@ não é dada como sincronizada e o suporte é acionado.
 Se uma transmissão fiscal for rejeitada, a operação fica falha e o relay cria uma tarefa de
 revisão. Isso não autoriza a emissão nem substitui a conferência do suporte.
 
+## Conflito e revisão
+
+Quando a reconexão encontra divergência, o relay não escolhe automaticamente a
+última alteração. A operação fica em **conflito** e uma tarefa de revisão é
+criada para o suporte. Isso vale para mestres, dinheiro e fiscal.
+
+- **Mestres:** o servidor é a autoridade; a alteração local só fica sincronizada
+  após aceite explícito.
+- **Dinheiro:** nenhum contrato ou caixa é sobrescrito para resolver a
+  divergência.
+- **Fiscal:** conflito exige revisão; rejeição fiscal continua bloqueada e não
+  autoriza nova emissão por conta própria.
+
+A tarefa mostra apenas uma referência opaca e um código seguro. Não contém
+payload, resposta fiscal crua ou dado pessoal. Reapresentar a mesma operação
+não abre tarefas duplicadas.
+
 ## Operação por 24 horas
 
 A loja pode ficar sem internet por pelo menos 24 horas registrando contrato e caixa. A fila

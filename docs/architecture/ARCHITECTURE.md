@@ -62,7 +62,7 @@ Versão 0.1 · 21/11/2026
 | `catalog` | produto, serviço, plano, preço, NCM/LC116 | `catalog.item.updated` |
 | `finance` | plano de contas, título, parcela, baixa, caixa, ledger | `finance.title.created`, `finance.payment.settled` |
 | `fiscal` | configuração, motor de tributos, documento, transmissão, DANFE | `fiscal.document.authorized`, `fiscal.document.rejected` |
-| `funeral` | contrato, OS, agenda de velório/sepultamento, locais e recursos, traslado (sem cremação) | `funeral.contract.created`, `funeral.schedule.created`, `funeral.schedule.cancelled` |
+| `funeral` | contrato, OS, agenda de velório/sepultamento, locais e recursos, traslado (sem cremação) | `funeral.contract.created`, `funeral.journey.created`, `funeral.schedule.created`, `funeral.schedule.cancelled` |
 | `cemetery` | cemitério, quadra, jazigo, concessão, sepultamento | `cemetery.burial.registered` |
 | `cremation` | crematório, cremação, urna, autorização (módulo próprio — ADR 0007, independente de funeral/cemetery) | `cremation.service.registered` |
 | `floriculture` | arranjo, pedido, entrega, rota, lote | `floriculture.order.dispatched` |
@@ -114,6 +114,20 @@ e não conflita com `[12:00,14:00)`.
 alteração/confirmação/cancelamento e evento v1 são transacionais. O módulo não faz JOIN
 com `party`, `cemetery`, `finance` ou `fiscal`; a integração futura ocorre por
 referência opaca e eventos versionados.
+
+### FUN-02C — jornada atômica contrato, OS e agenda
+
+Quando o atendimento precisa abrir a OS e reservar a agenda como uma decisão
+única, `funeral.Repository.CreateFuneralJourney` mantém contrato ativo, OS,
+agenda, históricos e `journey_mutation` na mesma transação. A chave da jornada
+tem hash do corpo e o replay retorna os mesmos IDs opacos; conflito de janela ou
+falha de outbox desfaz tudo.
+
+Além dos eventos v1 de OS e agenda, a operação publica
+`funeral.journey.created` com `journey_id`, `contract_id`, `service_order_id`,
+`schedule_id` e `company_id`. Nenhum evento contém descrição, nome ou outro
+texto de atendimento. A rota HTTP é dev-only e não representa emissão fiscal:
+o evento fiscal do contrato continua sendo a preparação assíncrona dessa etapa.
 
 ## 5. Dados
 

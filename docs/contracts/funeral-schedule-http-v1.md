@@ -23,6 +23,10 @@ não é publicado na outbox. Confirmação aceita somente `scheduled` e produz
 Replay com a mesma chave e conteúdo devolve `200` com o mesmo agregado. A
 mesma chave com conteúdo diferente devolve `409 IDEMPOTENCY_CONFLICT`.
 
+Na criação, `service_order_id`, quando enviado, precisa pertencer ao mesmo
+contrato, empresa e tenant. A API valida a referência antes do banco e devolve
+somente código estável, sem expor a causa SQL.
+
 ## Respostas e erros
 
 Sucesso:

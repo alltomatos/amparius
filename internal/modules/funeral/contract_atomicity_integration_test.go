@@ -138,6 +138,7 @@ func (f *atomicityFixture) close(t *testing.T) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	for _, statement := range []string{
+		"ALTER TABLE funeral.journey_mutation DISABLE TRIGGER funeral_journey_append_only",
 		"ALTER TABLE funeral.schedule_status_history DISABLE TRIGGER funeral_schedule_history_append_only",
 		"ALTER TABLE funeral.schedule_mutation DISABLE TRIGGER funeral_schedule_mutation_append_only",
 		"ALTER TABLE funeral.schedule DISABLE TRIGGER funeral_schedule_preserve",
@@ -154,6 +155,7 @@ func (f *atomicityFixture) close(t *testing.T) {
 		"ALTER TABLE outbox.event_attempt DISABLE TRIGGER event_attempt_append_only",
 		"ALTER TABLE outbox.delivery DISABLE TRIGGER delivery_append_only",
 		"ALTER TABLE outbox.event DISABLE TRIGGER event_history_preserve",
+		"DELETE FROM funeral.journey_mutation WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM funeral.schedule_status_history WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM funeral.schedule_mutation WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM funeral.schedule WHERE tenant_id = ANY($1::uuid[])",
@@ -190,6 +192,7 @@ func (f *atomicityFixture) close(t *testing.T) {
 		"ALTER TABLE outbox.event ENABLE TRIGGER event_history_preserve",
 		"ALTER TABLE funeral.location ENABLE TRIGGER funeral_location_preserve",
 		"ALTER TABLE funeral.resource ENABLE TRIGGER funeral_resource_preserve",
+		"ALTER TABLE funeral.journey_mutation ENABLE TRIGGER funeral_journey_append_only",
 		"ALTER TABLE funeral.schedule ENABLE TRIGGER funeral_schedule_preserve",
 		"ALTER TABLE funeral.schedule_mutation ENABLE TRIGGER funeral_schedule_mutation_append_only",
 		"ALTER TABLE funeral.schedule_status_history ENABLE TRIGGER funeral_schedule_history_append_only",
@@ -227,6 +230,17 @@ func (f *atomicityFixture) count(t *testing.T, query string, args ...any) int {
 	t.Helper()
 	var count int
 	if err := f.database.WithTenantTx(db.WithTenant(context.Background(), f.tenant), func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, query, args...).Scan(&count)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+func (f *atomicityFixture) countWithContext(t *testing.T, ctx context.Context, query string, args ...any) int {
+	t.Helper()
+	var count int
+	if err := f.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, query, args...).Scan(&count)
 	}); err != nil {
 		t.Fatal(err)

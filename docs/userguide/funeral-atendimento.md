@@ -78,3 +78,22 @@ confirmada continua reservando local e recurso. Sobreposição do mesmo local ou
 recurso responde `409 SCHEDULE_CONFLICT`. A agenda mantém histórico
 append-only e eventos sem PII. Mapa de cemitério, jazigo/concessão,
 recorrência e regras de horário comercial não fazem parte desta fatia.
+
+## Jornada atômica
+
+Quando o contrato já está `active` e o local/recurso já existe, a OS e a
+agenda podem ser abertas juntas:
+
+```http
+POST /_dev/funeral/contracts/{contract_id}/journey
+Idempotency-Key: journey-001
+Content-Type: application/json
+
+{"service_order":{"kind":"funeral_service","description":"atendimento inicial","scheduled_for":"2026-11-25T12:00:00-03:00"},"schedule":{"kind":"wake","location_id":"<location_id>","resource_id":"<resource_id>","starts_at":"2026-11-25T12:00:00-03:00","ends_at":"2026-11-25T14:00:00-03:00","time_zone":"America/Fortaleza"}}
+```
+
+Contrato, OS, agenda, históricos e eventos são confirmados juntos. Repetir a
+mesma chave e corpo devolve os mesmos IDs; usar a chave com outro conteúdo
+responde `409 IDEMPOTENCY_CONFLICT`. Conflito de janela responde
+`409 SCHEDULE_CONFLICT` e não deixa uma OS parcial. A resposta não expõe dados
+do cliente e os eventos v1 carregam somente IDs opacos, estados e datas.

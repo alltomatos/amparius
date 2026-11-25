@@ -181,3 +181,73 @@ func TestFuneralScheduleRealPostgresConflictIdempotencyIsolationAndCleanup(t *te
 		t.Fatalf("historico da agenda = %d, esperado 5", got)
 	}
 }
+
+func TestFuneralJourneyRealPostgresIsAtomicIdempotentAndTenantScoped(t *testing.T) {
+	fixture := newAtomicityFixture(t)
+	repository, err := funeral.NewRepository(fixture.database, fixture.events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract, err := repository.CreateContract(fixture.ctx(), fixture.input("journey-contract"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.database.WithTenantTx(fixture.ctx(), func(ctx context.Context, tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE funeral.contract SET status='active', updated_at=now() WHERE tenant_id=$1 AND company_id=$2 AND id=$3`, fixture.tenant, fixture.company, contract.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	location, err := repository.CreateLocation(fixture.ctx(), funeral.LocationCreate{Name: "Sala jornada", Kind: "wake_room", TimeZone: "America/Fortaleza", IdempotencyKey: "journey-location"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 11, 26, 15, 0, 0, 0, time.UTC)
+	input := funeral.FuneralJourneyCreate{
+		ContractID: contract.ID, ServiceOrderKind: "wake", ServiceOrderDescription: "operacao interna",
+		ScheduleKind: funeral.ScheduleKindWake, LocationID: location.ID, StartsAt: start,
+		EndsAt: start.Add(2 * time.Hour), TimeZone: "America/Fortaleza", IdempotencyKey: "journey-create",
+	}
+	journey, err := repository.CreateFuneralJourney(fixture.ctx(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if journey.ServiceOrder.ContractID != contract.ID || journey.Schedule.ContractID != contract.ID || journey.Schedule.ServiceOrderID == nil || *journey.Schedule.ServiceOrderID != journey.ServiceOrder.ID {
+		t.Fatalf("vinculos da jornada divergentes: %#v", journey)
+	}
+	replay, err := repository.CreateFuneralJourney(fixture.ctx(), input)
+	if err != nil || replay.ID != journey.ID || replay.ServiceOrder.ID != journey.ServiceOrder.ID || replay.Schedule.ID != journey.Schedule.ID {
+		t.Fatalf("replay da jornada = %#v/%v", replay, err)
+	}
+	if got := fixture.count(t, `SELECT count(*) FROM funeral.journey_mutation WHERE tenant_id=$1`, fixture.tenant); got != 1 {
+		t.Fatalf("registros de jornada = %d", got)
+	}
+	if got := fixture.count(t, `SELECT count(*) FROM funeral.service_order WHERE tenant_id=$1 AND contract_id=$2`, fixture.tenant, contract.ID); got != 1 {
+		t.Fatalf("ordens da jornada = %d", got)
+	}
+	if got := fixture.count(t, `SELECT count(*) FROM funeral.schedule WHERE tenant_id=$1 AND contract_id=$2`, fixture.tenant, contract.ID); got != 1 {
+		t.Fatalf("agendas da jornada = %d", got)
+	}
+	if got := fixture.count(t, `SELECT count(*) FROM outbox.event WHERE tenant_id=$1 AND event_type IN ('funeral.journey.created','funeral.service_order.created','funeral.schedule.created')`, fixture.tenant); got != 3 {
+		t.Fatalf("eventos da jornada = %d", got)
+	}
+	foreignCtx := db.WithCompany(db.WithTenant(context.Background(), uuid.New()), fixture.company)
+	if got := fixture.countWithContext(t, foreignCtx, `SELECT count(*) FROM funeral.journey_mutation WHERE id=$1`, journey.ID); got != 0 {
+		t.Fatalf("RLS expôs jornada a outro tenant: %d", got)
+	}
+
+	failingRepository, err := funeral.NewRepository(fixture.database, failingAppender{delegate: fixture.events, cause: errors.New("falha controlada")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.IdempotencyKey = "journey-rollback"
+	if _, err := failingRepository.CreateFuneralJourney(fixture.ctx(), input); err == nil {
+		t.Fatal("falha do outbox deveria abortar a jornada")
+	}
+	if got := fixture.count(t, `SELECT count(*) FROM funeral.journey_mutation WHERE tenant_id=$1 AND idempotency_key=$2`, fixture.tenant, input.IdempotencyKey); got != 0 {
+		t.Fatalf("jornada abortada persistiu mutation: %d", got)
+	}
+	if got := fixture.count(t, `SELECT count(*) FROM funeral.service_order WHERE tenant_id=$1 AND idempotency_key LIKE $2`, fixture.tenant, "funeral.journey:"+input.IdempotencyKey+":%"); got != 0 {
+		t.Fatalf("jornada abortada persistiu OS: %d", got)
+	}
+}

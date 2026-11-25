@@ -1,6 +1,6 @@
 # DER — Amparius
 
-Versão 0.7 · modelo lógico inicial + entidade legal, estabelecimento, onboarding, nome social (ADR 0013), entitlement (ADR 0007), provedores/modelos/cota de IA (ADR 0008), contrato funerário (ADR 0016) e ordem de serviço (ADR 0018). Diagramas em Mermaid; nomes em `snake_case`; toda tabela de negócio carrega `tenant_id`.
+Versão 0.8 · modelo lógico inicial + entidade legal, estabelecimento, onboarding, nome social (ADR 0013), entitlement (ADR 0007), provedores/modelos/cota de IA (ADR 0008), contrato funerário, ordem de serviço e jornada atômica (ADR 0021). Diagramas em Mermaid; nomes em `snake_case`; toda tabela de negócio carrega `tenant_id`.
 
 > **Decisão de nomes (ADR 0007 §7):** `COMPANY` é a **entidade legal operadora** (CNPJ raiz — a funerária, o cemitério, a floricultura). O subtipo de cadastro de PJ cliente/fornecedor, antes chamado `COMPANY`, passa a se chamar **`PARTY_COMPANY`**. Não existem duas entidades com o mesmo nome. `ESTABLISHMENT` substitui `BRANCH`.
 
@@ -42,6 +42,9 @@ erDiagram
   FUNERAL_LOCATION ||--o{ FUNERAL_SCHEDULE : hosts
   FUNERAL_RESOURCE |o--o{ FUNERAL_SCHEDULE : reserves
   FUNERAL_SCHEDULE ||--o{ SCHEDULE_STATUS_HISTORY : records
+  FUNERAL_JOURNEY ||--|| FUNERAL_CONTRACT : integrates
+  FUNERAL_JOURNEY ||--|| SERVICE_ORDER : creates
+  FUNERAL_JOURNEY ||--|| FUNERAL_SCHEDULE : reserves
 
   TENANT { uuid id PK
            text name
@@ -269,6 +272,14 @@ erDiagram
                       text idempotency_key
                       text request_hash
                       timestamptz created_at }
+  FUNERAL_JOURNEY { uuid id PK
+                    uuid tenant_id FK
+                    uuid contract_id FK
+                    uuid service_order_id FK
+                    uuid schedule_id FK
+                    text idempotency_key
+                    text request_hash
+                    timestamptz created_at }
 ```
 
 ### Contrato funerário (ADR 0016)
@@ -297,6 +308,14 @@ constraints de exclusão: não há sobreposição do mesmo local nem do mesmo
 recurso em estado `scheduled` ou `confirmed`, inclusive sob concorrência. Histórico e
 mutação são append-only; todas as cinco tabelas têm RLS por `tenant_id` e a
 aplicação filtra `company_id` pelo contexto confiável.
+
+### Jornada contrato → OS → agenda (ADR 0021)
+
+`funeral.journey_mutation` é o registro append-only da idempotência da jornada
+FUN-02C. Ele liga por UUID opaco um contrato ativo, uma OS e uma agenda criadas
+na mesma transação. A tabela tem RLS por tenant, grants mínimos para
+`amparius_app` e impede replay com payload diferente; falha de conflito ou
+outbox desfaz os três agregados.
 
 ### Nome social e nome de exibição
 

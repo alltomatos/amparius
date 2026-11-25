@@ -25,11 +25,13 @@ type AccessChecker interface {
 func NewDevelopmentHTTPHandler(checker AccessChecker, contractServices ...ContractService) http.Handler {
 	var contracts ContractService
 	var serviceOrders ServiceOrderService
+	var journeys JourneyService
 	if len(contractServices) > 0 {
 		contracts = contractServices[0]
 		serviceOrders, _ = contractServices[0].(ServiceOrderService)
+		journeys, _ = contractServices[0].(JourneyService)
 	}
-	return newDevelopmentHTTPHandler(checker, contracts, serviceOrders, nil)
+	return newDevelopmentHTTPHandler(checker, contracts, serviceOrders, journeys, nil)
 }
 
 // NewDevelopmentHTTPHandlerWithScheduling monta a superficie dev-only do
@@ -37,18 +39,34 @@ func NewDevelopmentHTTPHandler(checker AccessChecker, contractServices ...Contra
 // continuar sendo composto pelo middleware confiavel antes deste handler.
 func NewDevelopmentHTTPHandlerWithScheduling(checker AccessChecker, contracts ContractService, scheduling SchedulingService) http.Handler {
 	var serviceOrders ServiceOrderService
+	var journeys JourneyService
 	if contracts != nil {
 		serviceOrders, _ = contracts.(ServiceOrderService)
+		journeys, _ = contracts.(JourneyService)
 	}
-	return newDevelopmentHTTPHandler(checker, contracts, serviceOrders, scheduling)
+	return newDevelopmentHTTPHandler(checker, contracts, serviceOrders, journeys, scheduling)
 }
 
-func newDevelopmentHTTPHandler(checker AccessChecker, contracts ContractService, serviceOrders ServiceOrderService, scheduling SchedulingService) http.Handler {
+func newDevelopmentHTTPHandler(checker AccessChecker, contracts ContractService, serviceOrders ServiceOrderService, journeys JourneyService, scheduling SchedulingService) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Amparius-Development-Only", "true")
 		w.Header().Set("Cache-Control", "no-store")
 		if r.URL.Path == accessPath {
 			serveAccess(w, r, checker)
+			return
+		}
+		if journeys != nil && strings.HasPrefix(r.URL.Path, "/_dev/funeral/contracts/") && strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/journey") {
+			if err := checkFuneralAccess(r, checker); err != nil {
+				writeAccessError(w, err)
+				return
+			}
+			path := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSuffix(r.URL.Path, "/"), "/_dev/funeral/contracts/"), "/journey")
+			contractID, err := parseUUID(path)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "INVALID_CONTRACT_ID", "id do contrato invalido")
+				return
+			}
+			serveFuneralJourneyRoute(w, r, journeys, contractID)
 			return
 		}
 		if scheduling != nil && (strings.HasPrefix(r.URL.Path, "/_dev/funeral/locations") || strings.HasPrefix(r.URL.Path, "/_dev/funeral/resources") || strings.HasPrefix(r.URL.Path, "/_dev/funeral/schedules") || (strings.HasPrefix(r.URL.Path, "/_dev/funeral/contracts/") && strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/schedules"))) {

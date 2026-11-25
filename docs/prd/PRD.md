@@ -76,7 +76,8 @@ Folha de pagamento, eSocial completo, contabilidade completa (diário/razão ofi
 1. Atendente busca família/pessoa; se não existe, cadastra em < 60 s.
 2. Escolhe plano ou monta serviço; sistema mostra preço, impostos estimados e disponibilidade.
 3. Gera contrato, coleta assinatura, registra pagamento parcial.
-4. Agenda velório/sepultamento; reserva jazigo.
+4. Abre OS e agenda velório/sepultamento em uma jornada atômica; conflito não
+   deixa operação parcial.
 5. Emite NFS-e; XML e PDF ficam anexados ao contrato.
 
 ### J2 — Mesma jornada sem internet
@@ -125,6 +126,7 @@ Folha de pagamento, eSocial completo, contabilidade completa (diário/razão ofi
 | RF-034 | Fiscal | Gerar DANFSe/DANFE em PDF a partir do XML autorizado |
 | RF-040 | Funerário | Contrato com cliente/falecido/familiares, itens de catálogo, status auditável, valor congelado, parcelamento e ordem de serviço ligada ao contrato |
 | RF-041 | Funerário | Agenda de velório/sepultamento com locais, recursos, timezone explícito, confirmação/cancelamento auditáveis e conflito determinístico |
+| RF-042 | Funerário | Integrar contrato ativo, ordem de serviço e agenda por IDs opacos, idempotência e eventos versionados sem PII |
 | RF-050 | Cemitério | Mapa de quadras/jazigos com ocupação e concessão |
 | RF-051 | Cemitério | Registrar sepultamento, exumação e manutenção com histórico |
 | RF-060 | Floricultura | Estoque por lote/validade e baixa por composição de arranjo |

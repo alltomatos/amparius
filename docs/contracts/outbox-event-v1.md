@@ -175,6 +175,7 @@ cobrança.
 ```json
 {
   "contract_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "service_order_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
   "company_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
   "customer_party_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
   "total_amount_cents": 10000,
@@ -243,6 +244,7 @@ opacas:
 {
   "schedule_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
   "contract_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "service_order_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
   "company_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
   "kind": "wake",
   "location_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
@@ -254,7 +256,8 @@ opacas:
 }
 ```
 
-- `funeral.schedule.created`: todos os campos do exemplo;
+- `funeral.schedule.created`: todos os campos do exemplo; `service_order_id` é
+  opcional para preservar criações de agenda sem OS;
 - `funeral.schedule.updated`: `schedule_id`, `contract_id`, `company_id`,
   `kind`, `location_id`, `resource_id`, `starts_at`, `ends_at`, `time_zone`,
   `from_status` e `to_status`;
@@ -270,6 +273,25 @@ inclusive sob concorrência. A chave de criação é
 `funeral.schedule.<op>:<schedule_id>:<sha256 do request>`; confirmação usa o
 mesmo formato. Nome, kind de local, descrição, party e texto livre não entram
 no payload.
+
+### `funeral.journey.created` — v1 (FUN-02C)
+
+Agregado: `funeral.journey`. O evento confirma a criação atômica da jornada e
+carrega somente referências opacas:
+
+```json
+{
+  "journey_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "contract_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "service_order_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "schedule_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "company_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d"
+}
+```
+
+`funeral.journey.create:<sha256 do request>` é idempotente. O evento é escrito
+na mesma transação da OS, da agenda e de seus históricos; não há descrição,
+nome, documento, motivo ou outro texto livre.
 
 ## 8. Compatibilidade
 

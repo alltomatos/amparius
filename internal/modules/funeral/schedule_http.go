@@ -466,13 +466,13 @@ func scheduleResponses(items []Schedule) []map[string]any {
 func writeScheduleError(w http.ResponseWriter, err error) {
 	status, code, message := http.StatusInternalServerError, "INTERNAL_ERROR", "nao foi possivel processar a agenda"
 	switch {
-	case errors.Is(err, ErrLocationNotFound), errors.Is(err, ErrResourceNotFound), errors.Is(err, ErrScheduleNotFound), errors.Is(err, ErrContractNotFound):
+	case errors.Is(err, ErrLocationNotFound), errors.Is(err, ErrResourceNotFound), errors.Is(err, ErrScheduleNotFound), errors.Is(err, ErrContractNotFound), errors.Is(err, ErrServiceOrderNotFound):
 		status, code, message = http.StatusNotFound, "SCHEDULE_REFERENCE_NOT_FOUND", "referencia da agenda nao encontrada"
 	case errors.Is(err, ErrScheduleConflict):
 		status, code, message = http.StatusConflict, "SCHEDULE_CONFLICT", "intervalo da agenda indisponivel"
 	case errors.Is(err, ErrScheduleIdempotency):
 		status, code, message = http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency-Key ja utilizada com dados diferentes"
-	case errors.Is(err, ErrScheduleInvalid), errors.Is(err, ErrScheduleTimeZone), errors.Is(err, ErrScheduleTransition), errors.Is(err, ErrScheduleContractState):
+	case errors.Is(err, ErrScheduleInvalid), errors.Is(err, ErrScheduleTimeZone), errors.Is(err, ErrScheduleTransition), errors.Is(err, ErrScheduleContractState), errors.Is(err, ErrScheduleServiceOrder):
 		status, code, message = http.StatusBadRequest, "INVALID_SCHEDULE", "dados da agenda invalidos"
 	case errors.Is(err, ErrOutboxUnavailable):
 		status, code, message = http.StatusServiceUnavailable, "OUTBOX_UNAVAILABLE", "outbox indisponivel"

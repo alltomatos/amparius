@@ -613,6 +613,36 @@ concorrente com um vencedor e um conflito. Fora da fatia ficam recorrência,
 feriados, disponibilidade automática, mapa/concessão de cemitério,
 autenticação de produção e consumidores de negócio da outbox.
 
+### FUN-02C: jornada atômica contrato, OS e agenda
+
+`migrations/0031_funeral_journey.sql` cria `funeral.journey_mutation`, um
+registro append-only de idempotência que liga contrato, OS e agenda por UUIDs
+opacos. `POST /_dev/funeral/contracts/{id}/journey` exige contrato `active` e
+grava OS, agenda, históricos, mutation e os três eventos v1 na mesma transação.
+Replay com o mesmo corpo devolve os mesmos IDs; conteúdo divergente retorna
+`409 IDEMPOTENCY_CONFLICT`. Falha de outbox ou conflito de local/recurso faz
+rollback dos três agregados.
+
+O payload da jornada é JSON estrito e não aceita `tenant_id` ou `company_id`;
+os erros são `INVALID_JOURNEY`, `JOURNEY_REFERENCE_NOT_FOUND`,
+`SCHEDULE_CONFLICT`, `IDEMPOTENCY_CONFLICT` ou `OUTBOX_UNAVAILABLE`, sem SQL,
+PII ou texto livre. A agenda também valida previamente que a OS opcional
+pertence ao mesmo contrato, empresa e tenant.
+
+Evidência reproduzível:
+
+```powershell
+goose -dir migrations postgres 'postgres://amparius:amparius@127.0.0.1:5432/amparius?sslmode=disable' down
+goose -dir migrations postgres 'postgres://amparius:amparius@127.0.0.1:5432/amparius?sslmode=disable' up
+$env:AMPA_TEST_POSTGRES_DSN = 'postgres://amparius_app:...@127.0.0.1:5432/amparius?sslmode=disable'
+$env:AMPA_TEST_POSTGRES_ADMIN_DSN = 'postgres://amparius:...@127.0.0.1:5432/amparius?sslmode=disable'
+go test ./internal/modules/funeral -run 'TestDevelopmentFuneralJourney|TestFuneralJourneyRealPostgres' -count=1 -v
+```
+
+O E2E prova atomicidade, replay sem duplicação, IDs relacionados, eventos v1,
+RLS com `NOSUPERUSER/NOBYPASSRLS` e cleanup. Emissão fiscal, consumidor de
+negócio, autenticação de produção e relay offline continuam fora da fatia.
+
 ### Migration Finance
 
 `migrations/0003_finance.sql` cria o schema `finance` para contas, centros de

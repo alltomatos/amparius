@@ -25,6 +25,7 @@ var (
 	ErrScheduleIdempotency   = errors.New("chave de idempotencia da agenda reutilizada com conteudo diferente")
 	ErrScheduleContractState = errors.New("contrato nao esta ativo para agendamento")
 	ErrScheduleTimeZone      = errors.New("timezone da agenda invalido")
+	ErrScheduleServiceOrder  = errors.New("ordem de servico nao pertence ao contrato da agenda")
 )
 
 const (
@@ -342,6 +343,18 @@ func (r *Repository) CreateSchedule(ctx context.Context, input ScheduleCreate) (
 		if contractStatus != ContractActive {
 			return ErrScheduleContractState
 		}
+		if input.ServiceOrderID != nil {
+			var serviceOrderContract uuid.UUID
+			if err := tx.QueryRow(ctx, `SELECT contract_id FROM funeral.service_order WHERE tenant_id=$1 AND company_id=$2 AND id=$3`, tenantID, companyID, *input.ServiceOrderID).Scan(&serviceOrderContract); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return ErrServiceOrderNotFound
+				}
+				return err
+			}
+			if serviceOrderContract != input.ContractID {
+				return ErrScheduleServiceOrder
+			}
+		}
 		if input.Kind != ScheduleKindWake && input.Kind != ScheduleKindBurial {
 			return ErrScheduleInvalid
 		}
@@ -382,6 +395,17 @@ func (r *Repository) CreateSchedule(ctx context.Context, input ScheduleCreate) (
 		if err != nil {
 			return err
 		}
+		if input.ServiceOrderID != nil {
+			var payloadMap map[string]any
+			if err := json.Unmarshal(payload, &payloadMap); err != nil {
+				return err
+			}
+			payloadMap["service_order_id"] = input.ServiceOrderID.String()
+			payload, err = json.Marshal(payloadMap)
+			if err != nil {
+				return err
+			}
+		}
 		if _, err := r.eventStore.AppendTx(ctx, tx, outbox.Event{TenantID: tenantID, AggregateType: "funeral.schedule", AggregateID: id, EventType: "funeral.schedule.created", Version: 1, Payload: payload, IdempotencyKey: "funeral.schedule.create:" + hash[:32]}); err != nil {
 			return err
 		}
@@ -389,7 +413,7 @@ func (r *Repository) CreateSchedule(ctx context.Context, input ScheduleCreate) (
 	})
 	if err != nil {
 		switch {
-		case errors.Is(err, ErrScheduleIdempotency), errors.Is(err, ErrScheduleConflict), errors.Is(err, ErrContractNotFound), errors.Is(err, ErrScheduleContractState), errors.Is(err, ErrScheduleInvalid), errors.Is(err, ErrScheduleTimeZone), errors.Is(err, ErrLocationNotFound), errors.Is(err, ErrResourceNotFound):
+		case errors.Is(err, ErrScheduleIdempotency), errors.Is(err, ErrScheduleConflict), errors.Is(err, ErrContractNotFound), errors.Is(err, ErrScheduleContractState), errors.Is(err, ErrScheduleInvalid), errors.Is(err, ErrScheduleTimeZone), errors.Is(err, ErrLocationNotFound), errors.Is(err, ErrResourceNotFound), errors.Is(err, ErrServiceOrderNotFound), errors.Is(err, ErrScheduleServiceOrder):
 			return Schedule{}, err
 		default:
 			return Schedule{}, fmt.Errorf("criar agenda funeraria: %w", err)

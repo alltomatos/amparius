@@ -1,0 +1,28 @@
+{
+  "name": "iss-percentual",
+  "_comment": "SINTETICO E NAO OFICIAL: valores apenas para exercitar o motor; nao representam aliquota, servico ou municipio reais.",
+  "rule": {
+    "id": "11111111-1111-7111-8111-111111111111",
+    "tax_type": "iss",
+    "regime": "geral",
+    "scope_kind": "nfse",
+    "service_code": "99.99",
+    "municipality_code": "9999999",
+    "ncm": "",
+    "class_trib": "",
+    "basis_kind": "percentual",
+    "rate": "5.000000",
+    "source_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "version": 1
+  },
+  "request": {
+    "base_cents": 10000,
+    "rbt12_cents": 0
+  },
+  "expected": {
+    "base_cents": 10000,
+    "amount_cents": 500,
+    "rate": "5.000000",
+    "hash": "c35c6c8f3f7da4b40634ebcf243d4b90e5f105c0fb02abf0c52ebdd474bcdddd"
+  }
+}

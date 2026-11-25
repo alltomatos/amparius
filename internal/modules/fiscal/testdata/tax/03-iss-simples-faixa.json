@@ -1,0 +1,32 @@
+{
+  "name": "iss-simples-faixa",
+  "_comment": "SINTETICO E NAO OFICIAL: faixa, aliquota nominal e deducao inventadas para exercitar a formula da LC 123; nao usar como regra fiscal.",
+  "rule": {
+    "id": "33333333-3333-7333-8333-333333333333",
+    "tax_type": "iss",
+    "regime": "simples_nacional",
+    "scope_kind": "nfse",
+    "service_code": "99.99",
+    "municipality_code": "9999999",
+    "ncm": "",
+    "class_trib": "",
+    "basis_kind": "faixa_simples",
+    "rate": "6.000000",
+    "deduction_amount": "5000.00",
+    "rbt12_from": "0.00",
+    "rbt12_to": "2000000.00",
+    "simples_annex": "III",
+    "source_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "version": 1
+  },
+  "request": {
+    "base_cents": 10000,
+    "rbt12_cents": 100000000
+  },
+  "expected": {
+    "base_cents": 10000,
+    "amount_cents": 550,
+    "rate": "5.500000",
+    "hash": "02023115d46a456041098a938276217f97e7757b99ed1d631a123480e7598178"
+  }
+}

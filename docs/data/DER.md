@@ -311,7 +311,10 @@ erDiagram
              numeric base
              numeric rate
              numeric amount
-             text rule_code }
+             uuid rule_id FK
+             char rule_source_hash
+             jsonb calculation_input
+             char calculation_hash }
   EMISSION_ATTEMPT { uuid id PK
                      uuid document_id FK
                      int attempt
@@ -749,3 +752,4 @@ erDiagram
 17. **Escopo de IA em dois níveis com `NULL` explícito.** Em `ai_model_allowance`, `ai_token_quota` e `ai_usage`, `company_id IS NULL` é o escopo do tenant inteiro e `company_id` preenchido é o CNPJ; a unicidade usa índice parcial por escopo, nunca `UNIQUE` simples com `NULL`.
 18. **Contabilidade de IA é por reporte, não por FK.** `ai_usage` é upsert por `(tenant_id, company_id, period)`, índice `(tenant_id, period)` (mais `company_id` quando filtrado), particionada por mês em `period`; consumo chega do reporte da célula (agregação de `ai_run.cost`), como `user_quota.used`, e nunca é digitado. Sub-cota não pode exceder o teto global do tenant.
 19. **Ativação, cota e auditoria de entitlement são transacionais.** `entitlement.license_assignment`, `entitlement.license_pool`, `entitlement.user_quota` e `entitlement.entitlement_event` são lidos/escritos na mesma transação com `app.tenant_id`; a ocupação da cota é calculada por `count(*)` de licenças ativas sobrepostas, não por coluna. O índice único parcial impede duas licenças ativas da mesma empresa/módulo, e reativar atualiza a linha existente sem apagar histórico nem vigência. A migration control é forward-only (`0002_entitlement_activation.sql`).
+20. **Calculo tributario guarda hash do snapshot.** `fiscal.tax_calc.calculation_hash` (migration forward-only 0022) registra o SHA-256 do snapshot canonico do motor de tributos. O `calculation_input` continua sendo `jsonb`; o hash fica em coluna propria porque o PostgreSQL nao preserva a forma textual exata do snapshot. Recalcular a mesma entrada com a mesma regra reproduz o mesmo hash; a coluna e nula apenas em linhas anteriores a 0022.

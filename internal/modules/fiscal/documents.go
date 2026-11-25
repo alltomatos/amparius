@@ -50,6 +50,9 @@ type TaxCalculation struct {
 	RuleID                 *uuid.UUID
 	RuleSourceHash         *string
 	CalculationInput       json.RawMessage
+	// CalculationHash e o SHA-256 do snapshot canonico calculado pelo motor.
+	// Fica em coluna propria porque jsonb nao preserva a forma textual exata.
+	CalculationHash *string
 }
 
 type EmissionAttempt struct {
@@ -190,12 +193,12 @@ func (r *Repository) CreateTaxCalculation(ctx context.Context, calc TaxCalculati
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		return scanCalculation(tx.QueryRow(ctx, `
 INSERT INTO fiscal.tax_calc
-	(tenant_id,item_id,competence,tax_type,base,rate,amount,rule_id,rule_source_hash,calculation_input)
-VALUES ($1,$2,$3,$4,$5::numeric/100,$6::numeric,$7::numeric/100,$8,$9,$10::jsonb)
+	(tenant_id,item_id,competence,tax_type,base,rate,amount,rule_id,rule_source_hash,calculation_input,calculation_hash)
+VALUES ($1,$2,$3,$4,$5::numeric/100,$6::numeric,$7::numeric/100,$8,$9,$10::jsonb,$11)
 RETURNING id,tenant_id,item_id,competence,tax_type,(base*100)::bigint,rate::text,
- (amount*100)::bigint,rule_id,rule_source_hash,calculation_input`, tenant, calc.ItemID,
+ (amount*100)::bigint,rule_id,rule_source_hash,calculation_input,calculation_hash`, tenant, calc.ItemID,
 			calc.Competence.UTC(), calc.TaxType, calc.BaseCents, nullStringPtr(calc.Rate),
-			calc.AmountCents, nullUUIDPtr(calc.RuleID), nullStringPtr(calc.RuleSourceHash), []byte(calc.CalculationInput)), &result)
+			calc.AmountCents, nullUUIDPtr(calc.RuleID), nullStringPtr(calc.RuleSourceHash), []byte(calc.CalculationInput), nullStringPtr(calc.CalculationHash)), &result)
 	})
 	if err != nil {
 		return TaxCalculation{}, fmt.Errorf("criar snapshot tax_calc: %w", err)
@@ -275,7 +278,7 @@ func scanItem(row rowScanner, i *Item) error {
 	return row.Scan(&i.ID, &i.TenantID, &i.DocumentID, &i.Competence, &i.CatalogItemID, &i.Description, &i.Quantity, &i.UnitPriceCents, &i.TotalCents)
 }
 func scanCalculation(row rowScanner, c *TaxCalculation) error {
-	return row.Scan(&c.ID, &c.TenantID, &c.ItemID, &c.Competence, &c.TaxType, &c.BaseCents, &c.Rate, &c.AmountCents, &c.RuleID, &c.RuleSourceHash, &c.CalculationInput)
+	return row.Scan(&c.ID, &c.TenantID, &c.ItemID, &c.Competence, &c.TaxType, &c.BaseCents, &c.Rate, &c.AmountCents, &c.RuleID, &c.RuleSourceHash, &c.CalculationInput, &c.CalculationHash)
 }
 func scanAttempt(row rowScanner, a *EmissionAttempt) error {
 	return row.Scan(&a.ID, &a.TenantID, &a.DocumentID, &a.Competence, &a.Attempt, &a.IdempotencyKey, &a.Mode, &a.Result, &a.Protocol, &a.ResponseBody, &a.ResponseHash, &a.ResponseContentType, &a.HTTPStatus, &a.Environment, &a.AccessKey, &a.DPSID, &a.RequestHash, &a.AttemptedAt)
@@ -342,6 +345,9 @@ func validDecimal(value string, scale int) bool {
 }
 func validateCalculation(c TaxCalculation) error {
 	if c.ItemID == uuid.Nil || c.Competence.IsZero() || strings.TrimSpace(c.TaxType) == "" || c.BaseCents < 0 || c.AmountCents < 0 || !json.Valid(c.CalculationInput) {
+		return ErrInvalidSnapshot
+	}
+	if c.CalculationHash != nil && !fingerprintHex.MatchString(*c.CalculationHash) {
 		return ErrInvalidSnapshot
 	}
 	return nil

@@ -1,0 +1,28 @@
+{
+  "name": "cbs-percentual",
+  "_comment": "SINTETICO E NAO OFICIAL: cClassTrib e aliquota inventados para teste de forma; nao usar como regra fiscal.",
+  "rule": {
+    "id": "22222222-2222-7222-8222-222222222222",
+    "tax_type": "cbs",
+    "regime": "geral",
+    "scope_kind": "nfse",
+    "service_code": "",
+    "municipality_code": "",
+    "ncm": "12345678",
+    "class_trib": "000001",
+    "basis_kind": "percentual",
+    "rate": "0.900000",
+    "source_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "version": 1
+  },
+  "request": {
+    "base_cents": 10000,
+    "rbt12_cents": 0
+  },
+  "expected": {
+    "base_cents": 10000,
+    "amount_cents": 90,
+    "rate": "0.900000",
+    "hash": "fa82c35d73d6f141b989d06939dc7b492eb28b571ed668504c7438e06a5a8170"
+  }
+}

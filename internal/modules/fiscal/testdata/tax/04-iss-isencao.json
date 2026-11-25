@@ -1,0 +1,27 @@
+{
+  "name": "iss-isencao",
+  "_comment": "SINTETICO E NAO OFICIAL: isencao ficticia para exercitar o caminho sem aliquota.",
+  "rule": {
+    "id": "44444444-4444-7444-8444-444444444444",
+    "tax_type": "iss",
+    "regime": "geral",
+    "scope_kind": "nfse",
+    "service_code": "99.98",
+    "municipality_code": "9999999",
+    "ncm": "",
+    "class_trib": "",
+    "basis_kind": "isencao",
+    "source_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "version": 1
+  },
+  "request": {
+    "base_cents": 10000,
+    "rbt12_cents": 0
+  },
+  "expected": {
+    "base_cents": 10000,
+    "amount_cents": 0,
+    "rate": null,
+    "hash": "29e91257ef6c166b7b0de08aefa8ee46452f717769b7dc74900b3423581284e9"
+  }
+}

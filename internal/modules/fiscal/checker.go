@@ -28,6 +28,10 @@ type TaxRuleCriteria struct {
 	OperationKind, SimplesAnnex             string
 	RBT12From, RBT12To                      *string
 	BasisKind, RateUnit                     string
+	// RBT12ActualCents, quando definido, restringe as regras de faixa do
+	// Simples aquela cuja faixa [rbt12_from, rbt12_to) contem a receita bruta
+	// dos ultimos 12 meses, em centavos. Regras sem faixa continuam elegiveis.
+	RBT12ActualCents *int64
 }
 
 type TaxRule struct {
@@ -93,6 +97,10 @@ WITH compatible AS (
        AND ($15 = '' OR COALESCE(rbt12_from::text, '') = $15)
        AND ($16 = '' OR COALESCE(rbt12_to::text, '') = $16)
        AND ($17 = '' OR basis_kind = $17) AND ($18 = '' OR rate_unit = $18)
+       AND ($19::numeric IS NULL OR (
+           (rbt12_from IS NULL OR rbt12_from * 100 <= $19::numeric)
+           AND (rbt12_to IS NULL OR $19::numeric < rbt12_to * 100)
+       ))
 ), selected AS (
     SELECT * FROM compatible WHERE tenant_id = current_setting('app.tenant_id')::uuid
     UNION ALL
@@ -112,7 +120,8 @@ WITH compatible AS (
 		args := []any{competence.UTC().Format("2006-01-02"), criteria.TaxType, criteria.Regime, criteria.ScopeKind,
 			criteria.NCM, criteria.CEST, criteria.CST, criteria.ClassTrib, criteria.CFOP, criteria.ServiceCode,
 			criteria.MunicipalityCode, criteria.UF, criteria.OperationKind, criteria.SimplesAnnex,
-			stringValue(criteria.RBT12From), stringValue(criteria.RBT12To), criteria.BasisKind, criteria.RateUnit}
+			stringValue(criteria.RBT12From), stringValue(criteria.RBT12To), criteria.BasisKind, criteria.RateUnit,
+			int64Value(criteria.RBT12ActualCents)}
 		rows, err := tx.Query(ctx, query, args...)
 		if err != nil {
 			return fmt.Errorf("consultar fiscal.tax_rule: %w", err)
@@ -152,6 +161,13 @@ WITH compatible AS (
 func stringValue(value *string) string {
 	if value == nil {
 		return ""
+	}
+	return *value
+}
+
+func int64Value(value *int64) any {
+	if value == nil {
+		return nil
 	}
 	return *value
 }

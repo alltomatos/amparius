@@ -355,9 +355,11 @@ PostgreSQL, Redis, RabbitMQ ou MinIO.
 
 O control plane usa um PostgreSQL separado, acessado pelo DSN
 `AMPA_CONTROL_POSTGRES_DSN`; o DSN da célula (`AMPA_TEST_POSTGRES_DSN`) não
-pode ser reutilizado. O pacote `internal/modules/entitlement` consulta apenas
-`entitlement.module` e `entitlement.license_assignment` e não escreve
-`entitlement_event` neste slice.
+pode ser reutilizado. O pacote `internal/modules/entitlement` lê
+`entitlement.module`, `entitlement.license_assignment`, `license_pool` e
+`user_quota`, e grava `license_assignment`, `license_pool`, `user_quota` e
+`entitlement_event` somente pelo `Service` (issue #21). O `Checker` continua
+somente leitura.
 
 O catálogo permite diretamente os módulos `core` ativos. Módulos `optional`
 exigem `license_assignment.status = 'active'`, o mesmo `module_code` e
@@ -407,6 +409,55 @@ relatório deve registrar a ausência claramente. A verificação do resolver
 (`TestCompanyBelongsToTenantScopesByTenantAndRLS`) usa
 `AMPA_TEST_POSTGRES_DSN` para a célula e `AMPA_TEST_POSTGRES_ADMIN_DSN` para o
 cleanup administrativo, com o papel de aplicação `amparius_app`.
+
+#### Ciclo de vida, cotas e auditoria (#21)
+
+`entitlement.Service` (`internal/modules/entitlement/service.go`) aplica
+ativação, desativação, revogação e reativação, sempre com tenant no contexto e
+autor/origem da chamada autenticada (nunca do corpo):
+
+- `Activate` exige módulo `optional` ativo; módulo `core` falha com
+  `ErrCoreModuleImmutable`. Sem linha em `license_pool`, falha fechado com
+  `ErrQuotaNotConfigured`. A ocupação é `count(*)` de `license_assignment`
+  ativa com período sobreposto de **outras** empresas; estourar a cota falha
+  com `ErrQuotaExceeded`.
+- `Deactivate` e `Revoke` mudam apenas `status`/`updated_at`. `Deactivate`
+  sobre licença revogada falha com `ErrInvalidTransition`; repetir o mesmo
+  status é no-op (sem evento duplicado). `ErrAssignmentNotFound` cobre a
+  ausência de licença.
+- `Activate` sobre licença existente **reativa a mesma linha** preservando
+  `id`, `valid_from` e `valid_to`; datas só mudam quando informadas
+  (`ValidFrom`/`ValidTo`, ou `ClearValidTo` para abrir a vigência). Nenhuma
+  operação apaga dado de negócio.
+- Toda transição grava `entitlement.entitlement_event` na mesma transação, com
+  `actor_id`, `action` (`activated`/`deactivated`/`revoked`), `origin`
+  (`self_service`/`admin`) e `at`. Autor nulo retorna `ErrActorRequired`;
+  origem fora do catálogo retorna `ErrInvalidRequest`. Falha de banco não
+  classificada vira `ErrEntitlementUnavailable` (fail-closed).
+- `SetModuleQuota`, `ModuleQuota` (cota + uso na data), `SetUserSeats`,
+  `UserQuota` e `ReportSeatUsage` cobrem a cota por módulo e a cota de acessos.
+  `SetModuleQuota` recusa cota abaixo das licenças ativas e `SetUserSeats`
+  recusa assentos abaixo do uso (`ErrQuotaExceeded`); `ReportSeatUsage` recusa
+  `used > seats` (`ErrQuotaExceeded`) e exige cota provisionada
+  (`ErrQuotaNotConfigured`). `ListEvents` lê a auditoria sob RLS.
+
+A migration control forward-only `0002_entitlement_activation.sql` cria o
+índice único parcial `license_assignment_one_active_per_company_uq`
+(`tenant_id`, `module_code`, `company_id` `WHERE status = 'active'`) e concede
+os privilégios mínimos ao papel `amparius_control_app`, se ele existir. Ela é
+aplicada com `goose -dir migrations/control postgres "$AMPA_CONTROL_POSTGRES_DSN" up`
+usando um papel owner; o app não cria índice nem concede grant.
+
+Testes em `internal/modules/entitlement/service_integration_test.go` cobrem
+ativação/desativação/revogação/reativação com preservação de linha e vigência,
+cota por módulo, cota de assentos, defesa por `CompanyResolver`, RLS entre
+tenants e bloqueio de `UPDATE`/`DELETE` em `entitlement_event`. Rodam contra
+`AMPA_CONTROL_POSTGRES_DSN` e são `SKIP` sem ele.
+
+**Pendente:** enforcement HTTP por endpoint/evento/IA e cabeçalho de empresa
+confiável (issue #20); reporte real de assentos pela célula; auditoria de
+alteração de cota (exige nova ação no catálogo `entitlement_action`); snapshot
+assinado, invalidação e TTL no relay.
 
 ### Migration Finance
 

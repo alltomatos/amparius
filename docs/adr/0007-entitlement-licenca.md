@@ -131,3 +131,45 @@ A licença mora em um lugar só; enforcement e cache são cópias derivadas:
 ### Relay (cache de entitlement)
 
 - Cache de entitlement com TTL e versão; invalidação por versão monotônica + evento `entitlement.revoked` tratado como operação de sync prioritária; fail-closed na expiração do cache; sinalização na UI quando um módulo bloqueia por expiração.
+
+## Implementação (ENT-01C, 24/11/2026)
+
+A issue #21 entrega o ciclo de vida da licença no control plane, apenas no que o
+schema de `migrations/control/0001_entitlement.sql` já suporta.
+
+1. **Auditoria append-only na mesma transação.** `internal/modules/entitlement/service.go`
+   grava `entitlement.entitlement_event` com `tenant_id`, `module_code`,
+   `company_id`, `actor_id`, `action`, `origin` e `at` dentro da transação que
+   muda `license_assignment`. O `actor_id` vem do principal autenticado (sem FK
+   entre bancos) e `origin` é `self_service` ou `admin`; autor ausente e origem
+   desconhecida falham com erro tipado. Os triggers de `0001` bloqueiam
+   `UPDATE`/`DELETE` no evento inclusive para o owner.
+2. **Reativação sem perda de dados.** Desativar e revogar mudam apenas `status`
+   e `updated_at`: a linha, `id`, `valid_from` e `valid_to` são preservados.
+   Reativar reaproveita a mesma linha e mantém a vigência quando o chamador não
+   informa datas novas; nenhuma operação apaga dado de negócio.
+3. **Cota por módulo verificada na ativação.** A ocupação de `LICENSE_POOL` é
+   contada a partir de `LICENSE_ASSIGNMENT` com `status = 'active'` e período
+   sobreposto, nunca de coluna digitada. Sem pool provisionado, a ativação
+   falha fechada com `ErrQuotaNotConfigured`; exceder a cota falha com
+   `ErrQuotaExceeded`. Módulo `core` é imutável e fica fora da cota
+   (`ErrCoreModuleImmutable`).
+4. **Uma licença ativa por empresa e módulo.** A migration control forward-only
+   `0002_entitlement_activation.sql` cria índice único parcial em
+   `(tenant_id, module_code, company_id) WHERE status = 'active'`. Duplicidade
+   ativa preexistente faz a migration falhar de propósito e exige
+   reconciliação; histórico inativo/revogado continua livre.
+5. **Cota de usuários por reporte.** `USER_QUOTA.seats` é provisionado pelo
+   admin e `used` chega do reporte de ocupação da célula; o serviço recusa
+   `used > seats` (`ErrQuotaExceeded`) e reporte sem cota provisionada
+   (`ErrQuotaNotConfigured`). Reduzir a cota de um módulo abaixo das licenças
+   ativas também é recusado (`ErrQuotaExceeded`), para não deixar o tenant
+   acima da cota sem uma desativação explícita. A alteração de cota/assentos não gera evento nesta
+   fatia porque o catálogo `entitlement_action` cobre apenas
+   ativação/desativação/revogação.
+
+**Permanece pendente:** enforcement HTTP/endpoint e cabeçalho de empresa
+confiável (issue #20); reporte real de assentos pela célula; auditoria de
+alteração de cota (exige nova ação no catálogo); snapshot assinado, invalidação
+e TTL no relay. Nada de fiscal foi tocado.
+

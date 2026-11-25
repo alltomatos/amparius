@@ -48,15 +48,27 @@ type CompanyResolver interface {
 	CompanyBelongsToTenant(ctx context.Context, tenantID, companyID uuid.UUID) (bool, error)
 }
 
-// Option ajusta o Checker na construção.
-type Option func(*Checker)
+// Option ajusta a construção do Checker e do Service.
+type options struct {
+	companyResolver CompanyResolver
+}
+
+type Option func(*options)
+
+func newOptions(opts []Option) options {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	return o
+}
 
 // WithCompanyResolver liga a verificação de que a empresa do contexto pertence
 // ao tenant. Sem ele, o Checker confia apenas no contexto autenticado; com ele,
 // uma empresa forjada no contexto falha mesmo que exista licença para o
 // company_id informado.
 func WithCompanyResolver(resolver CompanyResolver) Option {
-	return func(c *Checker) { c.companyResolver = resolver }
+	return func(o *options) { o.companyResolver = resolver }
 }
 
 // Checker consulta exclusivamente o PostgreSQL do control plane.
@@ -70,10 +82,8 @@ func NewChecker(database *db.DB, opts ...Option) (*Checker, error) {
 	if database == nil {
 		return nil, errors.New("banco do control plane nulo")
 	}
-	checker := &Checker{database: database}
-	for _, opt := range opts {
-		opt(checker)
-	}
+	o := newOptions(opts)
+	checker := &Checker{database: database, companyResolver: o.companyResolver}
 	return checker, nil
 }
 
@@ -160,10 +170,14 @@ func (c *Checker) CheckCompany(ctx context.Context, moduleCode string, companyID
 // empresa precisa pertencer ao tenant. Falha de leitura bloqueia como
 // indisponibilidade; empresa de outro tenant bloqueia como módulo negado.
 func (c *Checker) validateCompany(ctx context.Context, tenantID, companyID uuid.UUID) error {
-	if c.companyResolver == nil {
+	return validateCompanyWith(ctx, c.companyResolver, tenantID, companyID)
+}
+
+func validateCompanyWith(ctx context.Context, resolver CompanyResolver, tenantID, companyID uuid.UUID) error {
+	if resolver == nil {
 		return nil
 	}
-	ok, err := c.companyResolver.CompanyBelongsToTenant(ctx, tenantID, companyID)
+	ok, err := resolver.CompanyBelongsToTenant(ctx, tenantID, companyID)
 	if err != nil {
 		return fmt.Errorf("%w: validar empresa do tenant: %v", ErrEntitlementUnavailable, err)
 	}

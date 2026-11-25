@@ -34,7 +34,7 @@ func (r *Repository) ResolveSubject(ctx context.Context, tenantID uuid.UUID, sub
 	var record platformauth.SubjectRecord
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
-			SELECT u.mfa_enabled,
+			SELECT u.id, u.mfa_enabled,
 			       COALESCE(array_agg(DISTINCT r.code ORDER BY r.code) FILTER (WHERE r.code IS NOT NULL), ARRAY[]::text[]),
 			       COALESCE(array_agg(DISTINCT uc.company_id ORDER BY uc.company_id) FILTER (WHERE uc.company_id IS NOT NULL), ARRAY[]::uuid[])
 			  FROM identity.app_user AS u
@@ -47,7 +47,7 @@ func (r *Repository) ResolveSubject(ctx context.Context, tenantID uuid.UUID, sub
 			 WHERE u.tenant_id = $1
 			   AND u.auth_subject = $2
 			   AND u.status = 'active'
-			 GROUP BY u.id, u.mfa_enabled`, tenantID, subject).Scan(&record.MFAEnabled, &record.Roles, &record.CompanyIDs)
+		 GROUP BY u.id, u.mfa_enabled`, tenantID, subject).Scan(&record.UserID, &record.MFAEnabled, &record.Roles, &record.CompanyIDs)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return platformauth.SubjectRecord{}, ErrAuthenticatedSubjectNotFound

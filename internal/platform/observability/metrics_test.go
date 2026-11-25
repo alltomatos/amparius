@@ -7,6 +7,17 @@ import (
 	"testing"
 )
 
+func TestTraceIDRoundTripAndValidation(t *testing.T) {
+	id := NewTraceID()
+	ctx := WithTraceID(context.Background(), id)
+	if got := TraceIDFromContext(ctx); got != id {
+		t.Fatalf("trace id perdido: %q", got)
+	}
+	if got := TraceIDFromContext(WithTraceID(context.Background(), "trace-invalido")); got != "" {
+		t.Fatalf("trace inválido aceito: %q", got)
+	}
+}
+
 func TestCorrelationIDRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	if got := CorrelationIDFromContext(ctx); got != "" {
@@ -122,5 +133,20 @@ func TestMetricsIgnoresInvalidNamesAndEscapesLabels(t *testing.T) {
 	}
 	if !strings.Contains(text, `tenant_id="a\"b\\c\n"`) {
 		t.Fatalf("label não escapado:\n%s", text)
+	}
+}
+
+func TestMetricsDropsPIILabels(t *testing.T) {
+	metrics := NewMetrics()
+	metrics.SetGauge("amparius_requests", Labels{"email": "person@example.invalid", "tenant_id": "tenant-a"}, 1)
+	var out strings.Builder
+	if err := metrics.WritePrometheus(&out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "person@example.invalid") || strings.Contains(out.String(), "email=") {
+		t.Fatalf("PII entrou na métrica: %s", out.String())
+	}
+	if !strings.Contains(out.String(), `tenant_id="tenant-a"`) {
+		t.Fatalf("label operacional ausente: %s", out.String())
 	}
 }

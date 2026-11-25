@@ -94,6 +94,7 @@ func (f MFAVerifierFunc) Verify(ctx context.Context, identity OIDCIdentity) (boo
 // SubjectRecord é a autorização persistida para um subject OIDC. Os papéis
 // efetivos vêm do banco da célula, nunca de um campo controlado pelo cliente.
 type SubjectRecord struct {
+	UserID     uuid.UUID
 	Roles      []string
 	CompanyIDs []uuid.UUID
 	MFAEnabled bool
@@ -116,6 +117,7 @@ type CompanyResolver interface {
 type Principal struct {
 	Issuer           string
 	Subject          string
+	UserID           uuid.UUID
 	TenantID         uuid.UUID
 	CompanyID        uuid.UUID
 	Roles            []string
@@ -273,6 +275,7 @@ func (s *Service) Authenticate(ctx context.Context, authorization string) (Princ
 
 	return Principal{
 		Issuer: identity.Issuer, Subject: identity.Subject,
+		UserID:   record.UserID,
 		TenantID: identity.TenantID, CompanyID: identity.CompanyID,
 		Roles: append([]string(nil), record.Roles...), MFAAuthenticated: true,
 	}, nil

@@ -45,6 +45,9 @@ request id quando disponível. Token bruto, subject, email, nome, erro do IdP e
 corpo da requisição não entram no log. A resposta de erro é genérica para não
 revelar se um subject ou empresa existe.
 
+A trilha persistente de ações, consentimento, base legal e retenção está
+definida no ADR 0030 e no contrato `docs/contracts/audit-lgpd-v1.md`.
+
 ## Consequências e pendências
 
 - O pacote e seus testes são independentes de provedor e permitem integrar o

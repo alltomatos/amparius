@@ -38,12 +38,18 @@ func requestID(next http.Handler) http.Handler {
 		}
 		w.Header().Set("X-Request-Id", id)
 		ctx := observability.WithCorrelationID(r.Context(), id)
+		traceID := traceIDFromHeader(r.Header.Get("Traceparent"))
+		if traceID == "" {
+			traceID = observability.NewTraceID()
+		}
+		w.Header().Set("X-Trace-Id", traceID)
+		ctx = observability.WithTraceID(ctx, traceID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
 // accessLog registra uma linha estruturada por requisição.
-// Não registra IP nem query string para não vazar dado pessoal.
+// Não registra IP, query string ou caminho bruto para não vazar dado pessoal.
 func accessLog(logger *slog.Logger) middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -58,14 +64,36 @@ func accessLog(logger *slog.Logger) middleware {
 			}
 			logger.LogAttrs(r.Context(), slog.LevelInfo, "http_request",
 				slog.String("method", r.Method),
-				slog.String("path", r.URL.Path),
 				slog.Int("status", status),
 				slog.Int("bytes", recorder.bytes),
 				slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 				slog.String("request_id", RequestIDFromContext(r.Context())),
+				slog.String("trace_id", observability.TraceIDFromContext(r.Context())),
 			)
 		})
 	}
+}
+
+func traceIDFromHeader(value string) string {
+	parts := strings.Split(strings.TrimSpace(value), "-")
+	if len(parts) != 4 || parts[0] != "00" || len(parts[1]) != 32 || len(parts[2]) != 16 || parts[3] == "00" {
+		return ""
+	}
+	for _, part := range parts[1:3] {
+		if !validHex(part) || strings.Trim(part, "0") == "" {
+			return ""
+		}
+	}
+	return strings.ToLower(parts[1])
+}
+
+func validHex(value string) bool {
+	for _, r := range value {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 // recoverer impede que um panic derrube o processo e devolve 500.
@@ -78,9 +106,9 @@ func recoverer(logger *slog.Logger) middleware {
 					return
 				}
 				logger.LogAttrs(r.Context(), slog.LevelError, "http_panic",
-					slog.Any("panic", recovered),
-					slog.String("path", r.URL.Path),
+					slog.String("panic_type", fmt.Sprintf("%T", recovered)),
 					slog.String("request_id", RequestIDFromContext(r.Context())),
+					slog.String("trace_id", observability.TraceIDFromContext(r.Context())),
 				)
 				writeJSON(w, http.StatusInternalServerError, map[string]string{
 					"status": "error",

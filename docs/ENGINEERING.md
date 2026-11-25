@@ -221,8 +221,9 @@ de falecido.
 
 Esta fatia cobre apenas parte do RF-004: o cadastro/consulta do falecido e a
 resolução de nomes. Familiares ficam na fatia de vínculo familiar descrita a
-seguir; consentimento, base legal e retenção definida não fazem parte deste
-slice, e nenhuma política jurídica foi inferida ou criada.
+seguir; consentimento, base legal e retenção definida são tratados pela
+plataforma de privacidade da HARDEN-01B; nenhuma política jurídica ou prazo é
+inferido pelo cadastro.
 
 ### Vínculo familiar dev-only
 
@@ -299,9 +300,9 @@ próprio, com regra de negócio e migração.
 
 RF-004 parcial. Com este vínculo, o RF-004 continua **parcial**: cadastro e
 consulta do falecido, vínculo com familiares existentes e resolução de nomes
-estão cobertos, mas consentimento, base legal e retenção definida seguem fora do
-escopo. Nenhuma política jurídica foi inferida ou criada, e o slice não registra
-consentimento nem prazo de guarda.
+estão cobertos. A HARDEN-01B agora fornece a trilha e o armazenamento de
+consentimento/base legal/retenção, mas a aplicação de política por caso de uso,
+expurgo, anonimização e atendimento ao titular continuam fora desta fatia.
 
 ### Catálogo dev-only
 

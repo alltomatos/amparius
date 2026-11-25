@@ -175,10 +175,11 @@ func (m *Metrics) record(name string, labels Labels, kind metricKind, value floa
 }
 
 func (m *Metrics) recordLocked(name string, labels Labels, kind metricKind, value float64) {
-	key := fmt.Sprintf("%d\x00%s\x00%s", kind, name, renderLabels(labels))
+	renderedLabels := renderLabels(labels)
+	key := fmt.Sprintf("%d\x00%s\x00%s", kind, name, renderedLabels)
 	item := m.series[key]
 	if item == nil {
-		item = &series{name: name, kind: kind, labels: renderLabels(labels)}
+		item = &series{name: name, kind: kind, labels: renderedLabels}
 		if kind == kindHistogram {
 			item.bucketCounts = make([]uint64, len(m.buckets))
 		}
@@ -248,9 +249,37 @@ func renderLabels(labels Labels) string {
 	sort.Strings(keys)
 	pairs := make([]string, 0, len(keys))
 	for _, key := range keys {
-		pairs = append(pairs, key+"=\""+escapeLabelValue(labels[key])+"\"")
+		value := labels[key]
+		if !safeLabelValue(key, value) {
+			continue
+		}
+		pairs = append(pairs, key+"=\""+escapeLabelValue(value)+"\"")
 	}
 	return "{" + strings.Join(pairs, ",") + "}"
+}
+
+// safeLabelValue impede que PII acabe em uma série temporal. IDs opacos,
+// códigos e labels de baixa cardinalidade continuam permitidos.
+func safeLabelValue(key, value string) bool {
+	lowerKey := strings.ToLower(key)
+	for _, token := range []string{"email", "name", "phone", "cpf", "cnpj", "address", "token", "secret", "password"} {
+		if strings.Contains(lowerKey, token) {
+			return false
+		}
+	}
+	if len(value) > 128 || strings.Contains(value, "@") {
+		return false
+	}
+	digits, letters := 0, 0
+	for _, r := range value {
+		switch {
+		case r >= '0' && r <= '9':
+			digits++
+		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'):
+			letters++
+		}
+	}
+	return letters > 0 || digits < 10 || digits > 14
 }
 
 func appendLabel(rendered, key, value string) string {

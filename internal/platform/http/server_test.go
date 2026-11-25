@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -150,8 +151,26 @@ func TestRequestIDRecebidoEPreservado(t *testing.T) {
 	}
 }
 
+func TestTraceIDGeradoEPropagadoSemPII(t *testing.T) {
+	srv := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set("Traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if got := rec.Header().Get("X-Trace-Id"); got != "0123456789abcdef0123456789abcdef" {
+		t.Fatalf("trace-id propagado = %q", got)
+	}
+
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if got := rec.Header().Get("X-Trace-Id"); len(got) != 32 || got == strings.Repeat("0", 32) {
+		t.Fatalf("trace-id gerado inválido = %q", got)
+	}
+}
+
 func TestRecovererDevolve500(t *testing.T) {
-	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
 	panicking := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("falha simulada")
 	})
@@ -163,6 +182,12 @@ func TestRecovererDevolve500(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, quer %d", rec.Code, http.StatusInternalServerError)
+	}
+	if strings.Contains(logs.String(), "falha simulada") || strings.Contains(logs.String(), `"path"`) {
+		t.Fatalf("panic ou caminho bruto entrou no log: %s", logs.String())
+	}
+	if !strings.Contains(logs.String(), `"panic_type":"string"`) {
+		t.Fatalf("tipo do panic ausente no log: %s", logs.String())
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/alltomatos/amparius/internal/platform/db"
+	"github.com/alltomatos/amparius/internal/platform/observability"
 	"github.com/google/uuid"
 )
 
@@ -88,6 +89,9 @@ func logDecision(logger *slog.Logger, r *http.Request, permission Permission, re
 	}
 	if requestID := r.Header.Get("X-Request-Id"); requestID != "" {
 		attrs = append(attrs, slog.String("request_id", requestID))
+	}
+	if traceID := observability.TraceIDFromContext(r.Context()); traceID != "" {
+		attrs = append(attrs, slog.String("trace_id", traceID))
 	}
 	logger.LogAttrs(r.Context(), slog.LevelInfo, "auth_decision", attrs...)
 }

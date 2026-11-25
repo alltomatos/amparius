@@ -654,6 +654,7 @@ erDiagram
   AI_AGENT }o--o{ KNOWLEDGE_DOC : uses
   TENANT ||--o{ MCP_SERVER : allows
   TENANT ||--o{ AUDIT_LOG : records
+  TENANT ||--o{ CONSENT_RECORD : records
 
   RELAY_NODE { uuid id PK
                uuid tenant_id FK
@@ -727,12 +728,36 @@ erDiagram
                text status }
   AUDIT_LOG { uuid id PK
               uuid tenant_id FK
-              uuid actor_id
+              uuid actor_user_id FK
+              text actor_kind
+              uuid company_id FK
               text action
-              text resource
+              text resource_type
+              uuid resource_id
+              text outcome
+              text correlation_id
+              text trace_id
               jsonb detail
-              timestamptz at }
+              timestamptz occurred_at
+              timestamptz retention_until }
+  CONSENT_RECORD { uuid id PK
+                   uuid tenant_id FK
+                   text subject_type
+                   uuid subject_id
+                   text purpose_code
+                   text legal_basis_code
+                   text status
+                   text evidence_ref
+                   uuid recorded_by_user_id FK
+                   timestamptz recorded_at
+                   timestamptz retention_until }
 ```
+
+`audit.log` e `privacy.consent_record` são append-only, têm RLS por tenant e
+não carregam PII; `detail` aceita apenas referências/códigos operacionais. A
+data `retention_until` é obrigatória e vem da política aprovada, sem prazo
+jurídico inventado pelo sistema. Ver ADR 0030 e o contrato
+`docs/contracts/audit-lgpd-v1.md`.
 
 > **`AI_AGENT.model` é código estável de modelo, não string livre.** A coluna `model` guarda o `code` do catálogo `ai.ai_model` (ex.: `gpt-4o`, `claude-sonnet-4`), nunca um nome de exibição nem um identificador de provedor. O valor é **referência por código**, resolvida no control plane e validada contra o snapshot de enforcement de IA (`AI_MODEL_ALLOWANCE`) a cada `AI_RUN` — **não há FK entre bancos**, porque `AI_MODEL` vive no control plane e `AI_AGENT` na célula (ADR 0008). Modelo fora da allowlist do snapshot faz o assistente falhar fechado (ver §5).
 

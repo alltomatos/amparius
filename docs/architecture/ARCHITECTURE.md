@@ -256,9 +256,16 @@ documento (intenção) → cálculo (motor) → XML (gerador) → validação (X
 - LGPD: inventário de dados, base legal, retenção, anonimização e trilha de consentimento para dados de familiares/falecidos.
 - Logs sem PII; acesso a dado sensível gera evento de auditoria próprio.
 
+HARDEN-01B implementa `audit.log` e `privacy.consent_record` como tabelas
+tenant-scoped, RLS e append-only. A aplicação exige `retention_until` explícito,
+propaga `X-Trace-Id` e rejeita PII em detalhes e labels; prazo, base legal,
+expurgo e anonimização continuam sob política aprovada do tenant (ADR 0030).
+
 ## 10. Observabilidade e operação
 
-- OpenTelemetry (trace, métrica, log) com `tenant_id` e `module` como atributos.
+- Trace-id W3C opaco por requisição, log JSON estruturado e métricas Prometheus
+  com labels de baixa cardinalidade (`tenant_id`, `module`, estado e resultado);
+  exportação OTLP/OpenTelemetry fica para uma decisão de topologia posterior.
 - SLOs: disponibilidade 99,9%, p95 de leitura 200 ms, fila de sync < 5 min, emissão pendente < 1% ao dia.
 - Alertas: fila de relay crescendo, certificado expirando, rejeição fiscal acima do baseline, erro de sync por nó.
 - Runbooks: queda de SEFAZ, certificado inválido, nó offline prolongado, divergência de saldo.

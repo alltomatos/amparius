@@ -4,6 +4,8 @@ package httpserver
 import (
 	"log/slog"
 	"net/http"
+
+	"github.com/alltomatos/amparius/internal/platform/auth"
 )
 
 // Server agrega rotas e middlewares do serviço HTTP.
@@ -15,6 +17,12 @@ type Server struct {
 
 // Options controla dependências opcionais do servidor HTTP.
 type Options struct {
+	// Authenticator protege rotas de produção com OIDC, MFA e RBAC. Se uma
+	// rota autenticada for registrada sem esta dependência, ela falha fechado.
+	Authenticator auth.Gate
+	// AuthenticatedRoutes são handlers de produção já prontos para receber o
+	// contexto confiável tenant/company composto pelo middleware.
+	AuthenticatedRoutes []AuthenticatedRoute
 	// DevelopmentMode habilita rotas explicitamente marcadas como dev-only.
 	DevelopmentMode bool
 	// DevelopmentOnboarding é o handler de POST /_dev/onboarding.
@@ -33,6 +41,13 @@ type Options struct {
 	DevelopmentFinance http.Handler
 	// DevelopmentFuneral é o handler da superfície mínima do módulo opcional.
 	DevelopmentFuneral http.Handler
+}
+
+// AuthenticatedRoute associa uma rota a uma permissão RBAC.
+type AuthenticatedRoute struct {
+	Pattern    string
+	Permission auth.Permission
+	Handler    http.Handler
 }
 
 // New constrói o servidor com as dependências injetadas.
@@ -67,6 +82,12 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) routes(options Options) {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
+	for _, route := range options.AuthenticatedRoutes {
+		if route.Pattern == "" || route.Handler == nil {
+			continue
+		}
+		s.mux.Handle(route.Pattern, auth.Require(options.Authenticator, route.Permission, s.logger)(route.Handler))
+	}
 	if options.DevelopmentMode && options.DevelopmentOnboarding != nil {
 		s.mux.Handle("/_dev/onboarding", options.DevelopmentOnboarding)
 	}

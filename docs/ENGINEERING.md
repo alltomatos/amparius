@@ -111,6 +111,24 @@ identificadores. `null`, vazio ou só espaços limpam para `NULL`. A alteração
 avança `version` e `updated_at` de `party.person` e de `party.party` na mesma
 transação e continua restrita ao tenant do cabeçalho.
 
+### HARDEN-01A: autenticação e autorização de produção
+
+`internal/platform/auth` fornece a fronteira fail-closed para rotas de
+produção. O bootstrap injeta um `OIDCVerifier`, um `MFAVerifier` e o resolver
+de subject da identidade. O subject só é aceito para `app_user` ativo, com
+MFA habilitado, papel persistido e vínculo `identity.user_company`; o
+`company_id` não vem do corpo nem de cabeçalho.
+
+Use `http.AuthenticatedRoute` para montar uma rota com a permissão RBAC. O
+middleware fixa `tenant_id` e `company_id` no contexto antes do caso de uso e
+retorna `401`, `403` ou `503` sem revelar PII, tokens ou detalhes do provedor.
+O contrato completo está em `docs/contracts/auth-http-v1.md` e a decisão em
+`docs/adr/0024-autenticacao-oidc-mfa-rbac-escopo.md`.
+
+O adaptador externo OIDC/MFA e a migração individual dos handlers existentes
+de `/_dev/*` para rotas autenticadas continuam pendentes; até essa integração,
+essas rotas só podem permanecer no opt-in de desenvolvimento.
+
 ### Cadastro dev-only de falecido
 
 Com o mesmo opt-in (`APP_ENV=development` e `ENABLE_DEV_ONBOARDING=true`), a API

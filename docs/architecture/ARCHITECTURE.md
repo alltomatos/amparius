@@ -245,6 +245,12 @@ documento (intenção) → cálculo (motor) → XML (gerador) → validação (X
 
 - OIDC (Keycloak ou provedor gerenciado) + MFA; sessão curta no relay com refresh.
 - RBAC (papel) + ABAC (filial, módulo, registro).
+- A API Go compõe o contexto por `internal/platform/auth`: bearer OIDC
+  validado por adaptador injetado, subject ativo, MFA elevado, papel persistido
+  sob RLS e vínculo explícito em `identity.user_company`.
+- Rotas de produção usam `http.AuthenticatedRoute`; sem adaptador ou escopo
+  válido a decisão é fail-closed. As rotas `/_dev/*` continuam opt-in e não
+  são autenticação de produção (ADR 0024).
 - Segredos em Vault/KMS; certificados criptografados com chave por tenant.
 - Criptografia em repouso e TLS 1.3 em trânsito; backups criptografados.
 - LGPD: inventário de dados, base legal, retenção, anonimização e trilha de consentimento para dados de familiares/falecidos.

@@ -1,6 +1,6 @@
 # DER — Amparius
 
-Versão 0.8 · modelo lógico inicial + entidade legal, estabelecimento, onboarding, nome social (ADR 0013), entitlement (ADR 0007), provedores/modelos/cota de IA (ADR 0008), contrato funerário, ordem de serviço e jornada atômica (ADR 0021). Diagramas em Mermaid; nomes em `snake_case`; toda tabela de negócio carrega `tenant_id`.
+Versão 0.9 · modelo lógico inicial + entidade legal, estabelecimento, onboarding, autenticação OIDC/MFA/RBAC (ADR 0024), vínculo usuário/CNPJ, nome social (ADR 0013), entitlement (ADR 0007), provedores/modelos/cota de IA (ADR 0008), contrato funerário, ordem de serviço e jornada atômica (ADR 0021). Diagramas em Mermaid; nomes em `snake_case`; toda tabela de negócio carrega `tenant_id`.
 
 > **Decisão de nomes (ADR 0007 §7):** `COMPANY` é a **entidade legal operadora** (CNPJ raiz — a funerária, o cemitério, a floricultura). O subtipo de cadastro de PJ cliente/fornecedor, antes chamado `COMPANY`, passa a se chamar **`PARTY_COMPANY`**. Não existem duas entidades com o mesmo nome. `ESTABLISHMENT` substitui `BRANCH`.
 
@@ -12,6 +12,7 @@ erDiagram
   COMPANY ||--o{ ESTABLISHMENT : has
   TENANT ||--o{ APP_USER : employs
   APP_USER }o--o{ ROLE : receives
+  APP_USER }o--o{ COMPANY : scoped_to
   ROLE }o--o{ PERMISSION : grants
   TENANT ||--o{ PARTY : owns
   PARTY ||--o| PERSON : is
@@ -87,6 +88,10 @@ erDiagram
          uuid tenant_id FK
          text code
          text name }
+  USER_COMPANY { uuid tenant_id FK
+                 uuid user_id FK
+                 uuid company_id FK
+                 timestamptz created_at }
   USER_ROLE { uuid tenant_id FK
               uuid user_id FK
               uuid role_id FK }
@@ -333,6 +338,14 @@ suas leituras resolvem `display_name` na origem.
 
 ### Onboarding inicial
 
+### Escopo de autenticação (ADR 0024)
+
+`identity.user_company` é a associação tenant-scoped que limita os CNPJs de um
+`app_user` autenticado por OIDC. O subject OIDC é resolvido apenas para usuário
+ativo; MFA habilitado e o vínculo usuário/CNPJ são pré-requisitos para compor o
+contexto seguro. Os papéis continuam em `identity.user_role`/`identity.role` e
+são avaliados pela allowlist RBAC do contrato HTTP v1.
+
 `identity.app_user` é o armazenamento mínimo do usuário do tenant. O vínculo
 do proprietário é `identity.user_role` com `role.code = 'owner'`. A migration
 `0009_identity_onboarding.sql` também cria `identity.onboarding_request`, cuja
@@ -341,8 +354,9 @@ protegido por RLS.
 
 O caminho pré-autenticação chama `identity.create_onboarding` sem receber
 `tenant_id`; o banco gera o UUID e cria tenant, empresa, estabelecimento,
-usuário e papel na mesma transação. O usuário inicial fica `pending_auth`.
-Senha, sessão, MFA e vínculo OIDC não fazem parte deste contrato.
+usuário e papel na mesma transação. O usuário inicial fica `pending_auth` e
+aguarda o provisionamento OIDC/MFA e de `identity.user_company` descrito no
+ADR 0024.
 
 ### Parcelamento e integração do contrato (ADR 0017)
 

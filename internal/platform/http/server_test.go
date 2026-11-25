@@ -1,13 +1,31 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/alltomatos/amparius/internal/platform/auth"
+	"github.com/alltomatos/amparius/internal/platform/db"
+	"github.com/google/uuid"
 )
+
+type serverGate struct {
+	principal auth.Principal
+}
+
+func (g serverGate) Authenticate(_ context.Context, value string) (auth.Principal, error) {
+	if value != "Bearer server-test-token" {
+		return auth.Principal{}, auth.ErrInvalidBearer
+	}
+	return g.principal, nil
+}
+
+func (serverGate) Allows(auth.Principal, auth.Permission) bool { return true }
 
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
@@ -113,5 +131,55 @@ func TestRecovererDevolve500(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, quer %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestAuthenticatedRouteRequiresGateAndComposesScope(t *testing.T) {
+	tenantID, companyID := uuid.New(), uuid.New()
+	srv := New(slog.New(slog.NewJSONHandler(io.Discard, nil)), Options{
+		Authenticator: serverGate{principal: auth.Principal{
+			Issuer: "https://issuer.test", Subject: "subject-1", TenantID: tenantID, CompanyID: companyID, MFAAuthenticated: true,
+		}},
+		AuthenticatedRoutes: []AuthenticatedRoute{{
+			Pattern:    "GET /api/v1/context",
+			Permission: auth.PermissionIdentityRead,
+			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got, err := db.TenantFromContext(r.Context()); err != nil || got != tenantID {
+					t.Errorf("tenant = %s/%v", got, err)
+				}
+				if got, err := db.CompanyFromContext(r.Context()); err != nil || got != companyID {
+					t.Errorf("company = %s/%v", got, err)
+				}
+				w.WriteHeader(http.StatusNoContent)
+			}),
+		}},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/context", nil)
+	req.Header.Set("Authorization", "Bearer server-test-token")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status autenticado = %d, esperado 204", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/context", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status sem credencial = %d, esperado 401", rec.Code)
+	}
+
+	// A ausência de uma implementação OIDC não abre a rota: o registro falha fechado.
+	srv = New(slog.New(slog.NewJSONHandler(io.Discard, nil)), Options{
+		AuthenticatedRoutes: []AuthenticatedRoute{{
+			Pattern: "GET /api/v1/unconfigured", Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				t.Fatal("rota sem autenticação não deveria alcançar o handler")
+			}), Permission: auth.PermissionIdentityRead,
+		}},
+	})
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/unconfigured", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status sem gate = %d, esperado 503", rec.Code)
 	}
 }

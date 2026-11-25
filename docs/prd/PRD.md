@@ -158,7 +158,7 @@ Folha de pagamento, eSocial completo, contabilidade completa (diário/razão ofi
 | Offline | mínimo 24 h de operação; sync em até 5 min após reconexão |
 | RPO/RTO | RPO 5 min; RTO 1 h |
 | Isolamento | RLS por tenant; teste automatizado de vazamento |
-| Segurança | OIDC + MFA; RBAC/ABAC; segredos em cofre; criptografia em repouso |
+| Segurança | OIDC + MFA; RBAC/ABAC; escopo tenant/CNPJ por vínculo persistido; segredos em cofre; criptografia em repouso |
 | LGPD | base legal por finalidade, retenção, anonimização, trilha de consentimento |
 | Observabilidade | trace por requisição, log estruturado, métricas por tenant |
 | Acessibilidade | WCAG 2.2 AA nas telas críticas |

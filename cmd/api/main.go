@@ -12,12 +12,14 @@ import (
 	"time"
 
 	"github.com/alltomatos/amparius/internal/modules/catalog"
+	"github.com/alltomatos/amparius/internal/modules/controlplane"
 	"github.com/alltomatos/amparius/internal/modules/entitlement"
 	"github.com/alltomatos/amparius/internal/modules/finance"
 	"github.com/alltomatos/amparius/internal/modules/funeral"
 	"github.com/alltomatos/amparius/internal/modules/identity"
 	"github.com/alltomatos/amparius/internal/modules/outbox"
 	"github.com/alltomatos/amparius/internal/modules/party"
+	platformauth "github.com/alltomatos/amparius/internal/platform/auth"
 	"github.com/alltomatos/amparius/internal/platform/config"
 	"github.com/alltomatos/amparius/internal/platform/db"
 	httpserver "github.com/alltomatos/amparius/internal/platform/http"
@@ -60,6 +62,7 @@ func run() error {
 	var catalogHandler http.Handler
 	var financeHandler http.Handler
 	var funeralHandler http.Handler
+	var authenticatedRoutes []httpserver.AuthenticatedRoute
 	if devOnboardingEnabled {
 		database, err := db.New(ctx, cfg.PostgresDSN)
 		if err != nil {
@@ -121,12 +124,38 @@ func run() error {
 		}
 		optionalHandler := funeral.NewDevelopmentHTTPHandlerWithScheduling(checker, funeralRepository, funeralRepository)
 		funeralHandler = httpserver.DevelopmentTenantCompanyContext(optionalHandler, repository)
+	} else if cfg.ControlPlaneDSN != "" {
+		database, err := db.New(ctx, cfg.PostgresDSN)
+		if err != nil {
+			return fmt.Errorf("conectar PostgreSQL da célula: %w", err)
+		}
+		defer database.Close()
+		repository, err := identity.NewRepository(database)
+		if err != nil {
+			return fmt.Errorf("criar repositório de identidade: %w", err)
+		}
+		controlDatabase, err := db.New(ctx, cfg.ControlPlaneDSN)
+		if err != nil {
+			return fmt.Errorf("conectar PostgreSQL do control plane: %w", err)
+		}
+		defer controlDatabase.Close()
+		entitlementService, err := entitlement.NewService(controlDatabase, entitlement.WithCompanyResolver(repository))
+		if err != nil {
+			return fmt.Errorf("criar serviço de entitlement: %w", err)
+		}
+		controlHandler := controlplane.NewHTTPHandler(repository, entitlementService)
+		authenticatedRoutes = []httpserver.AuthenticatedRoute{
+			{Pattern: "GET /v1/context", Permission: platformauth.PermissionContextRead, Handler: http.HandlerFunc(controlHandler.Context)},
+			{Pattern: "GET /v1/companies", Permission: platformauth.PermissionContextRead, Handler: http.HandlerFunc(controlHandler.Companies)},
+			{Pattern: "GET /v1/companies/{companyId}/entitlements", Permission: platformauth.PermissionEntitlementRead, Handler: http.HandlerFunc(controlHandler.Entitlements)},
+		}
 	}
 
 	server := &http.Server{
 		Addr: cfg.HTTPAddr(),
 		Handler: httpserver.New(logger, httpserver.Options{
 			Readiness:              readinessChecker,
+			AuthenticatedRoutes:    authenticatedRoutes,
 			DevelopmentMode:        devOnboardingEnabled,
 			DevelopmentOnboarding:  onboardingHandler,
 			DevelopmentParties:     partiesHandler,

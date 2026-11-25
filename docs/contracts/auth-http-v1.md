@@ -30,7 +30,9 @@ Depois disso, o caso de uso recebe `db.TenantFromContext`,
 | OIDC/MFA/RLS indisponível ou configuração incompleta | 503 | `AUTHENTICATION_UNAVAILABLE` |
 
 Todos os envelopes são genéricos e não incluem PII, token ou detalhes do
-provedor. Respostas carregam `Cache-Control: no-store`.
+provedor. O formato é `{ code, message, details, traceId }`; `traceId` vem do
+contexto de observabilidade quando disponível. Respostas carregam
+`Cache-Control: no-store`.
 
 ## Montagem
 

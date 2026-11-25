@@ -190,3 +190,29 @@ func TestNewServiceFailsClosedWhenDependencyIsMissing(t *testing.T) {
 		t.Fatalf("erro = %v, esperado ErrAuthenticationUnavailable", err)
 	}
 }
+
+func TestDefaultRolePolicyForControlPlaneReadRoutes(t *testing.T) {
+	policy, err := DefaultRolePolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := Principal{Subject: "subject", TenantID: uuid.New(), CompanyID: uuid.New(), MFAAuthenticated: true}
+	cases := []struct {
+		role       string
+		permission Permission
+		want       bool
+	}{
+		{role: "owner", permission: PermissionContextRead, want: true},
+		{role: "manager", permission: PermissionContextRead, want: true},
+		{role: "auditor", permission: PermissionContextRead, want: false},
+		{role: "admin", permission: PermissionEntitlementRead, want: true},
+		{role: "auditor", permission: PermissionEntitlementRead, want: true},
+		{role: "manager", permission: PermissionEntitlementRead, want: false},
+	}
+	for _, test := range cases {
+		principal.Roles = []string{test.role}
+		if got := policy.Allows(principal.Roles, test.permission); got != test.want {
+			t.Errorf("role=%s permission=%s got=%v want=%v", test.role, test.permission, got, test.want)
+		}
+	}
+}

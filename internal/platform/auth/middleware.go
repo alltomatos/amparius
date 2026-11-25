@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -28,12 +29,12 @@ func Require(gate Gate, permission Permission, logger *slog.Logger) func(http.Ha
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if permission == "" {
 				logDecision(logger, r, permission, "PERMISSION_DENIED")
-				writeAuthError(w, http.StatusForbidden, "PERMISSION_DENIED", "permissão insuficiente")
+				writeAuthError(w, r, http.StatusForbidden, "PERMISSION_DENIED", "permissão insuficiente")
 				return
 			}
 			if gate == nil {
 				logDecision(logger, r, permission, "unavailable")
-				writeAuthError(w, http.StatusServiceUnavailable, "AUTHENTICATION_UNAVAILABLE", "autenticação indisponível")
+				writeAuthError(w, r, http.StatusServiceUnavailable, "AUTHENTICATION_UNAVAILABLE", "autenticação indisponível")
 				return
 			}
 			principal, err := gate.Authenticate(r.Context(), r.Header.Get("Authorization"))
@@ -43,17 +44,17 @@ func Require(gate Gate, permission Permission, logger *slog.Logger) func(http.Ha
 				if status == http.StatusUnauthorized {
 					w.Header().Set("WWW-Authenticate", `Bearer realm="amparius"`)
 				}
-				writeAuthError(w, status, code, message)
+				writeAuthError(w, r, status, code, message)
 				return
 			}
 			if !gate.Allows(principal, permission) {
 				logDecision(logger, r, permission, "PERMISSION_DENIED")
-				writeAuthError(w, http.StatusForbidden, "PERMISSION_DENIED", "permissão insuficiente")
+				writeAuthError(w, r, http.StatusForbidden, "PERMISSION_DENIED", "permissão insuficiente")
 				return
 			}
 			if principal.Subject == "" || principal.TenantID == uuid.Nil || principal.CompanyID == uuid.Nil || !principal.MFAAuthenticated {
 				logDecision(logger, r, permission, "SCOPE_FORBIDDEN")
-				writeAuthError(w, http.StatusForbidden, "SCOPE_FORBIDDEN", "escopo não autorizado")
+				writeAuthError(w, r, http.StatusForbidden, "SCOPE_FORBIDDEN", "escopo não autorizado")
 				return
 			}
 
@@ -96,10 +97,15 @@ func logDecision(logger *slog.Logger, r *http.Request, permission Permission, re
 	logger.LogAttrs(r.Context(), slog.LevelInfo, "auth_decision", attrs...)
 }
 
-func writeAuthError(w http.ResponseWriter, status int, code, message string) {
+func writeAuthError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
-	_, _ = w.Write([]byte(`{"error":{"code":"` + code + `","message":"` + message + `"}}` + "\n"))
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"code":    code,
+		"message": message,
+		"details": map[string]any{},
+		"traceId": observability.TraceIDFromContext(r.Context()),
+	})
 }

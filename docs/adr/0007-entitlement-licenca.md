@@ -168,8 +168,38 @@ schema de `migrations/control/0001_entitlement.sql` já suporta.
    fatia porque o catálogo `entitlement_action` cobre apenas
    ativação/desativação/revogação.
 
-**Permanece pendente:** enforcement HTTP/endpoint e cabeçalho de empresa
-confiável (issue #20); reporte real de assentos pela célula; auditoria de
-alteração de cota (exige nova ação no catálogo); snapshot assinado, invalidação
-e TTL no relay. Nada de fiscal foi tocado.
+## Implementação (ENT-01B, 24/11/2026)
 
+A issue #20 fecha a primeira costura HTTP do enforcement sem inventar
+autenticação de produção:
+
+1. `internal/platform/http` compõe o contexto dev-only a partir de
+   `X-Amparius-Development-Tenant-ID` e
+   `X-Amparius-Development-Company-ID`. A empresa só é colocada no contexto
+   depois de `identity.Repository.CompanyBelongsToTenant` confirmar a relação
+   sob RLS. Ausência, formato inválido ou empresa de outro tenant não alcança o
+   handler do módulo.
+2. `GET /_dev/funeral/access` é o ponto de entrada mínimo do módulo opcional
+   `funeral`. Ele chama `entitlement.Checker.Check` antes de executar a resposta:
+   `ErrModuleDisabled` vira HTTP 403 com `ENTITLEMENT_MODULE_NOT_LICENSED`;
+   `ErrEntitlementUnavailable` vira HTTP 503 com
+   `ENTITLEMENT_UNAVAILABLE`. O control plane é conectado por
+   `AMPA_CONTROL_POSTGRES_DSN`; ausência ou falha mantém o processo vivo e
+   bloqueia fechado.
+3. A rota é registrada somente no opt-in dev-only. Nenhuma rota core é envolvida
+   pelo gate e nenhum caminho de leitura histórica de fiscal/reporting foi
+   alterado.
+
+Os testes unitários cobrem composição do contexto, tenant+empresa cruzados,
+ausência de escopo, módulo negado e indisponibilidade do control plane. A prova
+PostgreSQL/RLS existente em `internal/modules/entitlement/integration_test.go`
+verifica role sem `SUPERUSER/BYPASSRLS`, licença vigente, ausente, vencida,
+revogada, empresa de outro tenant e tenant isolado; a prova correspondente de
+`identity` valida a relação de empresa e o cleanup administrativo. Quando os
+DSNs não estão definidos, esses testes ficam explicitamente `SKIP`.
+
+**Permanece pendente:** autenticação de produção e principal/ator autenticado;
+API administrativa de licenças; reporte real de assentos pela célula; auditoria
+de alteração de cota (exige nova ação no catálogo); snapshot assinado,
+invalidação e TTL no relay; casos de uso persistentes dos módulos opcionais.
+Nada de fiscal/NFS-e foi tocado.

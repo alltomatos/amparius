@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/alltomatos/amparius/internal/modules/catalog"
+	"github.com/alltomatos/amparius/internal/modules/entitlement"
 	"github.com/alltomatos/amparius/internal/modules/finance"
+	"github.com/alltomatos/amparius/internal/modules/funeral"
 	"github.com/alltomatos/amparius/internal/modules/identity"
 	"github.com/alltomatos/amparius/internal/modules/party"
 	"github.com/alltomatos/amparius/internal/platform/config"
@@ -50,6 +52,7 @@ func run() error {
 	var familyLinksHandler http.Handler
 	var catalogHandler http.Handler
 	var financeHandler http.Handler
+	var funeralHandler http.Handler
 	if devOnboardingEnabled {
 		database, err := db.New(ctx, cfg.PostgresDSN)
 		if err != nil {
@@ -82,6 +85,27 @@ func run() error {
 			return fmt.Errorf("criar repositório financeiro: %w", err)
 		}
 		financeHandler = finance.NewDevelopmentHTTPHandler(financeRepository)
+
+		var checker funeral.AccessChecker
+		if cfg.ControlPlaneDSN != "" {
+			controlDatabase, controlErr := db.New(ctx, cfg.ControlPlaneDSN)
+			if controlErr == nil {
+				defer controlDatabase.Close()
+				controlChecker, checkerErr := entitlement.NewChecker(controlDatabase,
+					entitlement.WithCompanyResolver(repository),
+				)
+				if checkerErr != nil {
+					controlErr = checkerErr
+				} else {
+					checker = controlChecker
+				}
+			}
+			if controlErr != nil {
+				logger.Warn("control plane de entitlement indisponível")
+			}
+		}
+		optionalHandler := funeral.NewDevelopmentHTTPHandler(checker)
+		funeralHandler = httpserver.DevelopmentTenantCompanyContext(optionalHandler, repository)
 	}
 
 	server := &http.Server{
@@ -94,6 +118,7 @@ func run() error {
 			DevelopmentFamilyLinks: familyLinksHandler,
 			DevelopmentCatalog:     catalogHandler,
 			DevelopmentFinance:     financeHandler,
+			DevelopmentFuneral:     funeralHandler,
 		}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

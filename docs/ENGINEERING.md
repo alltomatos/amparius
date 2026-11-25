@@ -402,6 +402,33 @@ erro e bloqueia com `ErrEntitlementUnavailable`. O entitlement **não importa**
 `identity`; a composição injeta o resolver na construção do checker, no
 binário que já tem os dois DSNs (control plane e célula).
 
+#### Composição HTTP dev-only (ENT-01B / issue #20)
+
+Como ainda não existe autenticação de produção, a API compõe o escopo somente
+quando a superfície dev-only está habilitada (`APP_ENV=development` e
+`ENABLE_DEV_ONBOARDING=true`). `internal/platform/http` lê os headers
+`X-Amparius-Development-Tenant-ID` e `X-Amparius-Development-Company-ID`,
+coloca o tenant no contexto, valida `identity.company` pelo resolver sob RLS e
+só então fixa `company_id` com `db.WithCompany`. Os headers não são autenticação
+e não devem ser aceitos em uma rota de produção; nenhum corpo JSON pode definir
+tenant ou empresa.
+
+O control plane usa `AMPA_CONTROL_POSTGRES_DSN`, separado de `POSTGRES_DSN`. Se
+o DSN estiver ausente ou indisponível, a API permanece viva, mas o endpoint
+opcional responde fail-closed com `ENTITLEMENT_UNAVAILABLE` (HTTP 503). O
+endpoint mínimo real do módulo opcional é `GET /_dev/funeral/access`: o
+enforcement ocorre antes da resposta de domínio; licença ausente, vencida,
+revogada, módulo inativo ou empresa fora do tenant resultam em
+`ENTITLEMENT_MODULE_NOT_LICENSED` (HTTP 403), enquanto falha de
+leitura/indisponibilidade resulta em HTTP 503. Rotas core não passam por esse
+gate e continuam preservando suas leituras; nenhuma leitura histórica fiscal ou
+de reporting é bloqueada por esta composição.
+
+Esta superfície é uma costura de enforcement, não a implementação do fluxo
+produtivo de contratos funerários. A autenticação de produção, o endpoint
+administrativo de licenças e os casos de uso persistentes dos módulos opcionais
+continuam pendentes e não foram simulados.
+
 O teste de integração do control plane (`AMPA_CONTROL_POSTGRES_DSN`) deve usar
 um papel de aplicação sem `SUPERUSER` e sem `BYPASSRLS` (por exemplo,
 `amparius_control_app`). Sem esse DSN, o teste é marcado como `SKIP` e o

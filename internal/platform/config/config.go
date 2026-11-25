@@ -43,8 +43,11 @@ type Config struct {
 
 	// Dependências externas: carregadas, ainda não conectadas.
 	PostgresDSN string
-	RedisAddr   string
-	RabbitMQURL string
+	// ControlPlaneDSN é separado do banco da célula e só é usado pelo
+	// enforcement de entitlement quando a superfície correspondente está ativa.
+	ControlPlaneDSN string
+	RedisAddr       string
+	RabbitMQURL     string
 
 	MinIOEndpoint  string
 	MinIOAccessKey string
@@ -89,9 +92,10 @@ func LoadFrom(lookup LookupFunc) (Config, error) {
 		ShutdownTimeout:     shutdownTimeout,
 		EnableDevOnboarding: enableDevOnboarding,
 
-		PostgresDSN: text(lookup, "POSTGRES_DSN", defaultPostgresDSN),
-		RedisAddr:   text(lookup, "REDIS_ADDR", defaultRedisAddr),
-		RabbitMQURL: text(lookup, "RABBITMQ_URL", defaultRabbitMQURL),
+		PostgresDSN:     text(lookup, "POSTGRES_DSN", defaultPostgresDSN),
+		ControlPlaneDSN: text(lookup, "AMPA_CONTROL_POSTGRES_DSN", ""),
+		RedisAddr:       text(lookup, "REDIS_ADDR", defaultRedisAddr),
+		RabbitMQURL:     text(lookup, "RABBITMQ_URL", defaultRabbitMQURL),
 
 		MinIOEndpoint:  text(lookup, "MINIO_ENDPOINT", defaultMinIOEnd),
 		MinIOAccessKey: text(lookup, "MINIO_ACCESS_KEY", ""),

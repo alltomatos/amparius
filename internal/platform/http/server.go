@@ -31,6 +31,8 @@ type Options struct {
 	DevelopmentCatalog http.Handler
 	// DevelopmentFinance é o handler da jornada financeira mínima dev-only.
 	DevelopmentFinance http.Handler
+	// DevelopmentFuneral é o handler da superfície mínima do módulo opcional.
+	DevelopmentFuneral http.Handler
 }
 
 // New constrói o servidor com as dependências injetadas.
@@ -105,6 +107,9 @@ func (s *Server) routes(options Options) {
 		} {
 			s.mux.Handle(pattern, options.DevelopmentFinance)
 		}
+	}
+	if options.DevelopmentMode && options.DevelopmentFuneral != nil {
+		s.mux.Handle("/_dev/funeral/access", options.DevelopmentFuneral)
 	}
 }
 

@@ -15,12 +15,13 @@ import (
 )
 
 var (
-	ErrDocumentNotFound = errors.New("documento fiscal nao encontrado")
-	ErrInvalidDocument  = errors.New("documento fiscal invalido")
-	ErrInvalidSnapshot  = errors.New("snapshot fiscal invalido")
-	ErrInvalidAttempt   = errors.New("tentativa de emissao invalida")
-	ErrAttemptNotFound  = errors.New("tentativa de emissao nao encontrada")
-	ErrTenantMismatch   = errors.New("tenant da entidade diverge do contexto")
+	ErrDocumentNotFound    = errors.New("documento fiscal nao encontrado")
+	ErrInvalidDocument     = errors.New("documento fiscal invalido")
+	ErrInvalidSnapshot     = errors.New("snapshot fiscal invalido")
+	ErrInvalidAttempt      = errors.New("tentativa de emissao invalida")
+	ErrAttemptNotFound     = errors.New("tentativa de emissao nao encontrada")
+	ErrIdempotencyConflict = errors.New("conflito de idempotencia fiscal")
+	ErrTenantMismatch      = errors.New("tenant da entidade diverge do contexto")
 )
 
 type Document struct {
@@ -31,6 +32,7 @@ type Document struct {
 	TotalCents                                        int64
 	IssuedAt                                          *time.Time
 	XMLObjectRef, XMLHash                             *string
+	XMLRaw                                            []byte
 }
 
 type Item struct {
@@ -70,12 +72,14 @@ type EmissionAttempt struct {
 	AccessKey                *string
 	DPSID                    *string
 	RequestHash              *string
+	RequestXML               []byte
+	ResponseRaw              []byte
 	AttemptedAt              time.Time
 }
 
 // Colunas de transporte da migration 0008. São lidas em toda consulta de
 // tentativa para que replay e histórico preservem a trilha completa.
-const emissionAttemptColumns = `id,tenant_id,document_id,competence,attempt,idempotency_key,mode,result,protocol,response_body,response_hash,response_content_type,http_status,ambiente,chave_acesso,dps_id,request_hash,attempted_at`
+const emissionAttemptColumns = `id,tenant_id,document_id,competence,attempt,idempotency_key,mode,result,protocol,response_body,response_hash,response_content_type,request_xml,response_raw,http_status,ambiente,chave_acesso,dps_id,request_hash,attempted_at`
 
 type Repository struct{ database *db.DB }
 
@@ -98,7 +102,7 @@ func (r *Repository) GetDocument(ctx context.Context, id uuid.UUID, competence t
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		return scanDocument(tx.QueryRow(ctx, `
 SELECT id,tenant_id,company_id,establishment_id,competence,kind,COALESCE(series,''),number,status,contingency_mode,
- COALESCE(party_id, '00000000-0000-0000-0000-000000000000'::uuid),(total*100)::bigint,issued_at,xml_object_ref,xml_hash
+ COALESCE(party_id, '00000000-0000-0000-0000-000000000000'::uuid),(total*100)::bigint,issued_at,xml_object_ref,xml_hash,xml_raw
 FROM fiscal.fiscal_document WHERE tenant_id=$1 AND id=$2 AND competence=$3`, tenant, id, competence.UTC()), &result)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -137,18 +141,22 @@ func (r *Repository) CreateDocument(ctx context.Context, document Document) (Doc
 	if err := validateDocument(document); err != nil {
 		return result, err
 	}
+	if len(document.XMLRaw) > 0 && document.XMLHash == nil {
+		hash := sha256Hex(document.XMLRaw)
+		document.XMLHash = &hash
+	}
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		return scanDocument(tx.QueryRow(ctx, `
 INSERT INTO fiscal.fiscal_document
 	(tenant_id, company_id, establishment_id, competence, kind, series, number, status,
-	 contingency_mode, party_id, total, issued_at, xml_object_ref, xml_hash)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::numeric/100,$12,$13,$14)
+	 contingency_mode, party_id, total, issued_at, xml_object_ref, xml_hash, xml_raw)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::numeric/100,$12,$13,$14,$15)
 RETURNING id, tenant_id, company_id, establishment_id, competence, kind, COALESCE(series, ''), number,
- status, contingency_mode, COALESCE(party_id, '00000000-0000-0000-0000-000000000000'::uuid), (total * 100)::bigint, issued_at, xml_object_ref, xml_hash`,
+	status, contingency_mode, COALESCE(party_id, '00000000-0000-0000-0000-000000000000'::uuid), (total * 100)::bigint, issued_at, xml_object_ref, xml_hash, xml_raw`,
 			tenant, document.CompanyID, document.EstablishmentID, document.Competence.UTC(), document.Kind,
 			nullString(document.Series), document.Number, defaultString(document.Status, "draft"),
 			defaultString(document.ContingencyMode, "none"), nullUUID(document.PartyID), document.TotalCents,
-			document.IssuedAt, nullStringPtr(document.XMLObjectRef), nullStringPtr(document.XMLHash)), &result)
+			document.IssuedAt, nullStringPtr(document.XMLObjectRef), nullStringPtr(document.XMLHash), nullBytes(document.XMLRaw)), &result)
 	})
 	if err != nil {
 		return Document{}, fmt.Errorf("criar documento fiscal: %w", err)
@@ -209,6 +217,16 @@ RETURNING id,tenant_id,item_id,competence,tax_type,(base*100)::bigint,rate::text
 // RegisterEmissionAttempt is idempotent by tenant and key. A replay returns the
 // original row and never mutates an append-only emission history.
 func (r *Repository) RegisterEmissionAttempt(ctx context.Context, attempt EmissionAttempt) (EmissionAttempt, error) {
+	return r.registerEmissionAttempt(ctx, attempt, nil)
+}
+
+// RegisterEmissionAttemptWithDocument registra a tentativa e, na mesma
+// transacao, persiste o XML bruto e o status observavel do documento.
+func (r *Repository) RegisterEmissionAttemptWithDocument(ctx context.Context, attempt EmissionAttempt, xmlRaw []byte) (EmissionAttempt, error) {
+	return r.registerEmissionAttempt(ctx, attempt, xmlRaw)
+}
+
+func (r *Repository) registerEmissionAttempt(ctx context.Context, attempt EmissionAttempt, xmlRaw []byte) (EmissionAttempt, error) {
 	var result EmissionAttempt
 	tenant, err := tenantFor(ctx, attempt.TenantID)
 	if err != nil {
@@ -217,24 +235,57 @@ func (r *Repository) RegisterEmissionAttempt(ctx context.Context, attempt Emissi
 	if err := validateAttempt(attempt); err != nil {
 		return result, err
 	}
+	requestXML := xmlRaw
+	if len(requestXML) == 0 {
+		requestXML = attempt.RequestXML
+	}
+	if len(requestXML) > 0 {
+		hash := sha256Hex(requestXML)
+		if attempt.RequestHash == nil {
+			attempt.RequestHash = &hash
+		} else if *attempt.RequestHash != hash {
+			return result, fmt.Errorf("%w: request_hash nao corresponde ao XML bruto", ErrInvalidAttempt)
+		}
+		attempt.RequestXML = append([]byte(nil), requestXML...)
+	}
+	if raw := responseRaw(attempt); len(raw) > 0 {
+		hash := sha256Hex(raw)
+		if attempt.ResponseHash == nil {
+			attempt.ResponseHash = &hash
+		} else if *attempt.ResponseHash != hash {
+			return result, fmt.Errorf("%w: response_hash nao corresponde a resposta bruta", ErrInvalidAttempt)
+		}
+	}
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		row := tx.QueryRow(ctx, `
 INSERT INTO fiscal.emission_attempt
-	(tenant_id,document_id,competence,attempt,idempotency_key,mode,result,protocol,response_body,response_hash,response_content_type,http_status,ambiente,chave_acesso,dps_id,request_hash,attempted_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,COALESCE($17,now()))
+	(tenant_id,document_id,competence,attempt,idempotency_key,mode,result,protocol,response_body,response_hash,response_content_type,request_xml,response_raw,http_status,ambiente,chave_acesso,dps_id,request_hash,attempted_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,COALESCE($19,now()))
 ON CONFLICT (tenant_id,idempotency_key) DO NOTHING
 RETURNING `+emissionAttemptColumns,
 			tenant, attempt.DocumentID, attempt.Competence.UTC(), attempt.Attempt, attempt.IdempotencyKey,
 			attempt.Mode, defaultString(attempt.Result, "pending"), nullStringPtr(attempt.Protocol),
 			nullStringPtr(attempt.ResponseBody), nullStringPtr(attempt.ResponseHash), nullStringPtr(attempt.ResponseContentType),
-			intPtr(attempt.HTTPStatus), nullStringPtr(attempt.Environment), nullStringPtr(attempt.AccessKey),
-			nullStringPtr(attempt.DPSID), nullStringPtr(attempt.RequestHash), timePtr(attempt.AttemptedAt))
+			nullBytes(attempt.RequestXML), nullBytes(responseRaw(attempt)), intPtr(attempt.HTTPStatus),
+			nullStringPtr(attempt.Environment), nullStringPtr(attempt.AccessKey), nullStringPtr(attempt.DPSID),
+			nullStringPtr(attempt.RequestHash), timePtr(attempt.AttemptedAt))
 		if err := scanAttempt(row, &result); err == nil {
+			if len(requestXML) > 0 {
+				if err := updateDocumentAfterAttempt(ctx, tx, tenant, attempt, requestXML); err != nil {
+					return err
+				}
+			}
 			return nil
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		return scanAttempt(tx.QueryRow(ctx, `SELECT `+emissionAttemptColumns+` FROM fiscal.emission_attempt WHERE tenant_id=$1 AND idempotency_key=$2`, tenant, attempt.IdempotencyKey), &result)
+		if err := scanAttempt(tx.QueryRow(ctx, `SELECT `+emissionAttemptColumns+` FROM fiscal.emission_attempt WHERE tenant_id=$1 AND idempotency_key=$2`, tenant, attempt.IdempotencyKey), &result); err != nil {
+			return err
+		}
+		if !sameAttemptIdentity(attempt, result) {
+			return fmt.Errorf("%w: idempotency_key=%s", ErrIdempotencyConflict, attempt.IdempotencyKey)
+		}
+		return nil
 	})
 	if err != nil {
 		return EmissionAttempt{}, fmt.Errorf("registrar tentativa de emissao: %w", err)
@@ -272,7 +323,7 @@ func (r *Repository) ListEmissionAttempts(ctx context.Context, documentID uuid.U
 type rowScanner interface{ Scan(...any) error }
 
 func scanDocument(row rowScanner, d *Document) error {
-	return row.Scan(&d.ID, &d.TenantID, &d.CompanyID, &d.EstablishmentID, &d.Competence, &d.Kind, &d.Series, &d.Number, &d.Status, &d.ContingencyMode, &d.PartyID, &d.TotalCents, &d.IssuedAt, &d.XMLObjectRef, &d.XMLHash)
+	return row.Scan(&d.ID, &d.TenantID, &d.CompanyID, &d.EstablishmentID, &d.Competence, &d.Kind, &d.Series, &d.Number, &d.Status, &d.ContingencyMode, &d.PartyID, &d.TotalCents, &d.IssuedAt, &d.XMLObjectRef, &d.XMLHash, &d.XMLRaw)
 }
 func scanItem(row rowScanner, i *Item) error {
 	return row.Scan(&i.ID, &i.TenantID, &i.DocumentID, &i.Competence, &i.CatalogItemID, &i.Description, &i.Quantity, &i.UnitPriceCents, &i.TotalCents)
@@ -281,7 +332,43 @@ func scanCalculation(row rowScanner, c *TaxCalculation) error {
 	return row.Scan(&c.ID, &c.TenantID, &c.ItemID, &c.Competence, &c.TaxType, &c.BaseCents, &c.Rate, &c.AmountCents, &c.RuleID, &c.RuleSourceHash, &c.CalculationInput, &c.CalculationHash)
 }
 func scanAttempt(row rowScanner, a *EmissionAttempt) error {
-	return row.Scan(&a.ID, &a.TenantID, &a.DocumentID, &a.Competence, &a.Attempt, &a.IdempotencyKey, &a.Mode, &a.Result, &a.Protocol, &a.ResponseBody, &a.ResponseHash, &a.ResponseContentType, &a.HTTPStatus, &a.Environment, &a.AccessKey, &a.DPSID, &a.RequestHash, &a.AttemptedAt)
+	return row.Scan(&a.ID, &a.TenantID, &a.DocumentID, &a.Competence, &a.Attempt, &a.IdempotencyKey, &a.Mode, &a.Result, &a.Protocol, &a.ResponseBody, &a.ResponseHash, &a.ResponseContentType, &a.RequestXML, &a.ResponseRaw, &a.HTTPStatus, &a.Environment, &a.AccessKey, &a.DPSID, &a.RequestHash, &a.AttemptedAt)
+}
+
+func updateDocumentAfterAttempt(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, attempt EmissionAttempt, xmlRaw []byte) error {
+	status := ""
+	issuedAt := any(nil)
+	switch defaultString(attempt.Result, "pending") {
+	case "authorized":
+		status = "authorized"
+		issuedAt = timePtr(attempt.AttemptedAt)
+	case "rejected":
+		status = "rejected"
+	}
+	if status == "" {
+		_, err := tx.Exec(ctx, `UPDATE fiscal.fiscal_document SET xml_raw=$1, xml_hash=$2, updated_at=now()
+WHERE tenant_id=$3 AND id=$4 AND competence=$5`, xmlRaw, sha256Hex(xmlRaw), tenant, attempt.DocumentID, attempt.Competence.UTC())
+		return err
+	}
+	_, err := tx.Exec(ctx, `UPDATE fiscal.fiscal_document
+SET xml_raw=$1, xml_hash=$2, status=$3, issued_at=COALESCE($4, issued_at), updated_at=now()
+WHERE tenant_id=$5 AND id=$6 AND competence=$7`, xmlRaw, sha256Hex(xmlRaw), status, issuedAt, tenant, attempt.DocumentID, attempt.Competence.UTC())
+	return err
+}
+
+func sameAttemptIdentity(incoming, stored EmissionAttempt) bool {
+	return incoming.DocumentID == stored.DocumentID &&
+		incoming.Competence.UTC().Equal(stored.Competence.UTC()) &&
+		strings.TrimSpace(incoming.Mode) == stored.Mode &&
+		equalOptionalString(incoming.DPSID, stored.DPSID) &&
+		equalOptionalString(incoming.RequestHash, stored.RequestHash)
+}
+
+func equalOptionalString(a, b *string) bool {
+	if a == nil || strings.TrimSpace(*a) == "" {
+		return true
+	}
+	return b != nil && *a == *b
 }
 
 func intPtr(value *int) any {
@@ -304,6 +391,14 @@ func tenantFor(ctx context.Context, entity uuid.UUID) (uuid.UUID, error) {
 func validateDocument(d Document) error {
 	if d.Competence.IsZero() || d.CompanyID == uuid.Nil || d.EstablishmentID == uuid.Nil || strings.TrimSpace(d.Kind) == "" || d.TotalCents < 0 || d.TotalCents > math.MaxInt64/100 {
 		return ErrInvalidDocument
+	}
+	if len(d.XMLRaw) > 0 {
+		hash := sha256Hex(d.XMLRaw)
+		if d.XMLHash == nil {
+			d.XMLHash = &hash
+		} else if *d.XMLHash != hash {
+			return ErrInvalidDocument
+		}
 	}
 	return nil
 }
@@ -356,6 +451,12 @@ func validateAttempt(a EmissionAttempt) error {
 	if a.DocumentID == uuid.Nil || a.Competence.IsZero() || a.Attempt <= 0 || strings.TrimSpace(a.IdempotencyKey) == "" || strings.TrimSpace(a.Mode) == "" {
 		return ErrInvalidAttempt
 	}
+	if a.RequestHash != nil && !fingerprintHex.MatchString(strings.TrimSpace(*a.RequestHash)) {
+		return ErrInvalidAttempt
+	}
+	if a.ResponseHash != nil && !fingerprintHex.MatchString(strings.TrimSpace(*a.ResponseHash)) {
+		return ErrInvalidAttempt
+	}
 	return nil
 }
 func defaultString(value, fallback string) string {
@@ -388,6 +489,24 @@ func nullStringPtr(value *string) any {
 	}
 	return *value
 }
+
+func nullBytes(value []byte) any {
+	if len(value) == 0 {
+		return nil
+	}
+	return value
+}
+
+func responseRaw(attempt EmissionAttempt) []byte {
+	if len(attempt.ResponseRaw) > 0 {
+		return attempt.ResponseRaw
+	}
+	if attempt.ResponseBody != nil {
+		return []byte(*attempt.ResponseBody)
+	}
+	return nil
+}
+
 func timePtr(value time.Time) any {
 	if value.IsZero() {
 		return nil

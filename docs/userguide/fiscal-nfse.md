@@ -28,13 +28,18 @@ imposto não se estima.
 - Bloqueio explícito quando a regra não existe, com o campo faltante.
 - XML enviado e retorno da Sefin guardados como vieram, com hash, para
   auditoria e reprocessamento.
+- `Idempotency-Key` é persistida por tenant; replay devolve a tentativa original
+  e uma chave reutilizada para outro XML falha com conflito.
+- Timeout mantém a tentativa pendente e o documento não autorizado; NFS-e
+  nacional não recebe autorização offline.
 
 ## Estado atual
 
-O motor de tributos e a geração da DPS no leiaute vigente estão implementados e
-testados. A **emissão em produção ainda não está liberada**: faltam a
-persistência/idempotência (FIS-02B), o adapter de envio e fechamento (FIS-02C),
-a importação das tabelas oficiais e os testes contra o ambiente do ADN.
+O motor de tributos, a geração da DPS no leiaute vigente e a
+persistência/idempotência (FIS-02B) estão implementados e testados. A
+**emissão em produção ainda não está liberada**: falta o adapter de envio e
+fechamento (FIS-02C), a importação das tabelas oficiais e os testes contra o
+ambiente do ADN.
 
 Enquanto isso, nenhuma nota é transmitida e nenhum imposto é calculado com dado
 inventado.

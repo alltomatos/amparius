@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -187,6 +188,19 @@ func TestDocumentsRLSIdempotencyAndAppendOnly(t *testing.T) {
 	createTenant(tenantA)
 	createTenant(tenantB)
 	if err := database.WithTenantTx(db.WithTenant(ctx, tenantA), func(ctx context.Context, tx pgx.Tx) error {
+		var role string
+		var bypass, canDeleteAttempt, canUpdateAttempt, canDeleteDocument, canUpdateStatus bool
+		if err := tx.QueryRow(ctx, `SELECT current_user, rolsuper OR rolbypassrls,
+has_table_privilege(current_user, 'fiscal.emission_attempt', 'DELETE'),
+has_table_privilege(current_user, 'fiscal.emission_attempt', 'UPDATE'),
+has_table_privilege(current_user, 'fiscal.fiscal_document', 'DELETE'),
+has_column_privilege(current_user, 'fiscal.fiscal_document', 'status', 'UPDATE')
+FROM pg_roles WHERE rolname=current_user`).Scan(&role, &bypass, &canDeleteAttempt, &canUpdateAttempt, &canDeleteDocument, &canUpdateStatus); err != nil {
+			return err
+		}
+		if role != "amparius_app" || bypass || canDeleteAttempt || canUpdateAttempt || canDeleteDocument || !canUpdateStatus {
+			return fmt.Errorf("grants fiscais inesperados: role=%s bypass=%v delete_attempt=%v update_attempt=%v delete_document=%v update_status=%v", role, bypass, canDeleteAttempt, canUpdateAttempt, canDeleteDocument, canUpdateStatus)
+		}
 		if _, err := tx.Exec(ctx, `INSERT INTO identity.company (id,tenant_id,document,name,kind,status) VALUES ($1,$2,$3,'Empresa fiscal','funeral','active')`, company, tenantA, "company-"+company.String()); err != nil {
 			return err
 		}
@@ -212,16 +226,63 @@ func TestDocumentsRLSIdempotencyAndAppendOnly(t *testing.T) {
 	if _, err := repository.CreateTaxCalculation(ctxA, fiscal.TaxCalculation{ItemID: item.ID, Competence: competence, TaxType: "ibs", BaseCents: 10000, AmountCents: 100, CalculationInput: json.RawMessage(`{"version":1}`)}); err != nil {
 		t.Fatal(err)
 	}
-	first, err := repository.RegisterEmissionAttempt(ctxA, fiscal.EmissionAttempt{DocumentID: document.ID, Competence: competence, Attempt: 1, IdempotencyKey: "fiscal-test-key", Mode: "normal", ResponseBody: stringPtr("first")})
+	rawXML := []byte("<DPS>xml-bruto-imutavel</DPS>")
+	requestHash := sha256Hex(rawXML)
+	dpsID := "DPS-FISCAL-TEST"
+	first, err := repository.RegisterEmissionAttemptWithDocument(ctxA, fiscal.EmissionAttempt{
+		DocumentID: document.ID, Competence: competence, Attempt: 1, IdempotencyKey: "fiscal-test-key", Mode: "normal",
+		Result: "authorized", ResponseBody: stringPtr("first"), ResponseRaw: []byte("raw-first"), RequestHash: &requestHash, DPSID: &dpsID,
+	}, rawXML)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replay, err := repository.RegisterEmissionAttempt(ctxA, fiscal.EmissionAttempt{DocumentID: document.ID, Competence: competence, Attempt: 99, IdempotencyKey: "fiscal-test-key", Mode: "normal", ResponseBody: stringPtr("second")})
-	if err != nil || replay.ID != first.ID || replay.ResponseBody == nil || *replay.ResponseBody != "first" {
+	storedDocument, err := repository.GetDocument(ctxA, document.ID, competence)
+	if err != nil || storedDocument.Status != "authorized" || string(storedDocument.XMLRaw) != string(rawXML) || storedDocument.XMLHash == nil || *storedDocument.XMLHash != requestHash {
+		t.Fatalf("documento emitido nao preservou XML/status/hash: %+v err=%v", storedDocument, err)
+	}
+	replay, err := repository.RegisterEmissionAttempt(ctxA, fiscal.EmissionAttempt{DocumentID: document.ID, Competence: competence, Attempt: 99, IdempotencyKey: "fiscal-test-key", Mode: "normal", ResponseBody: stringPtr("second"), RequestHash: &requestHash, DPSID: &dpsID})
+	if err != nil || replay.ID != first.ID || replay.ResponseBody == nil || *replay.ResponseBody != "first" || string(replay.ResponseRaw) != "raw-first" {
 		t.Fatalf("idempotencia: first=%+v replay=%+v err=%v", first, replay, err)
+	}
+	otherHash := sha256Hex([]byte("outro XML"))
+	if _, err := repository.RegisterEmissionAttempt(ctxA, fiscal.EmissionAttempt{DocumentID: document.ID, Competence: competence, Attempt: 2, IdempotencyKey: "fiscal-test-key", Mode: "normal", RequestHash: &otherHash, DPSID: &dpsID}); !errors.Is(err, fiscal.ErrIdempotencyConflict) {
+		t.Fatalf("mesma chave com XML diferente deveria conflitar: %v", err)
+	}
+	if err := database.WithTenantTx(ctxA, func(ctx context.Context, tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SAVEPOINT append_only_attempt`); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `UPDATE fiscal.emission_attempt SET response_raw=$1 WHERE id=$2`, []byte("alterado"), first.ID)
+		if _, rollbackErr := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT append_only_attempt`); rollbackErr != nil {
+			return rollbackErr
+		}
+		if err == nil {
+			return errors.New("emission_attempt aceitou UPDATE")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.WithTenantTx(ctxA, func(ctx context.Context, tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SAVEPOINT append_only_document`); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `UPDATE fiscal.fiscal_document SET xml_raw=$1 WHERE tenant_id=$2 AND id=$3 AND competence=$4`, []byte("<DPS>adulterado</DPS>"), tenantA, document.ID, competence)
+		if _, rollbackErr := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT append_only_document`); rollbackErr != nil {
+			return rollbackErr
+		}
+		if err == nil {
+			return errors.New("fiscal_document aceitou sobrescrita do XML")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := repository.GetDocument(ctxB, document.ID, competence); !errors.Is(err, fiscal.ErrDocumentNotFound) {
 		t.Fatalf("isolamento RLS: %v", err)
+	}
+	if _, err := repository.GetEmissionAttempt(ctxB, "fiscal-test-key"); !errors.Is(err, fiscal.ErrAttemptNotFound) {
+		t.Fatalf("isolamento RLS da tentativa: %v", err)
 	}
 	if err := database.WithTenantTx(ctxA, func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `UPDATE fiscal.tax_calc SET amount=0 WHERE item_id=$1`, item.ID)

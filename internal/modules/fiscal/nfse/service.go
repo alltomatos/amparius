@@ -30,6 +30,10 @@ func (s *repositoryAttemptStore) Register(ctx context.Context, attempt fiscal.Em
 	return s.repository.RegisterEmissionAttempt(ctx, attempt)
 }
 
+func (s *repositoryAttemptStore) RegisterWithDocument(ctx context.Context, attempt fiscal.EmissionAttempt, xmlRaw []byte) (fiscal.EmissionAttempt, error) {
+	return s.repository.RegisterEmissionAttemptWithDocument(ctx, attempt, xmlRaw)
+}
+
 func (s *repositoryAttemptStore) GetByKey(ctx context.Context, idempotencyKey string) (fiscal.EmissionAttempt, error) {
 	return s.repository.GetEmissionAttempt(ctx, idempotencyKey)
 }
@@ -179,7 +183,7 @@ func (s *Service) pending(ctx context.Context, input ServiceInput, dps DPS, resu
 		IdempotencyKey: input.IdempotencyKey, Mode: "contingency", Result: "pending",
 		DPSID: ptrString(dps.IDDps), RequestHash: ptrString(dps.XMLHash),
 	}
-	if _, err := s.config.AttemptStore.Register(ctx, attempt); err != nil {
+	if _, err := registerAttemptWithDocument(s.config.AttemptStore, ctx, attempt, dps.XML); err != nil {
 		s.config.Logger.Error("nfse falha ao registrar pendencia", "document_id", input.DocumentID.String(), "erro", err.Error())
 	}
 	s.config.Logger.Warn("nfse emissao pendente sem autorizacao", "document_id", input.DocumentID.String(), "id_dps", dps.IDDps)
@@ -199,18 +203,31 @@ func (s *Service) persistAuthorization(ctx context.Context, input ServiceInput, 
 	}
 	contentType := resposta.ResponseContentType
 	protocolo := dps.IDDps
-	_, err := s.config.AttemptStore.Register(ctx, fiscal.EmissionAttempt{
+	attempt := fiscal.EmissionAttempt{
 		DocumentID: input.DocumentID, Competence: input.Competence.UTC(), Attempt: 1,
 		IdempotencyKey: input.IdempotencyKey, Mode: "normal", Result: "authorized",
 		Protocol: &protocolo, ResponseBody: &corpo, ResponseHash: &responseHash,
 		ResponseContentType: &contentType, HTTPStatus: &status, Environment: &ambiente,
 		AccessKey: &chave, DPSID: &dpsID, RequestHash: &requestHash,
+		RequestXML: append([]byte(nil), dps.XML...), ResponseRaw: append([]byte(nil), resposta.ResponseBody...),
 		AttemptedAt: s.config.Now().UTC(),
-	})
+	}
+	_, err := registerAttemptWithDocument(s.config.AttemptStore, ctx, attempt, dps.XML)
 	if err != nil {
 		return fmt.Errorf("persistir tentativa autorizada: %w", err)
 	}
 	return nil
+}
+
+type documentAttemptStore interface {
+	RegisterWithDocument(context.Context, fiscal.EmissionAttempt, []byte) (fiscal.EmissionAttempt, error)
+}
+
+func registerAttemptWithDocument(store AttemptStore, ctx context.Context, attempt fiscal.EmissionAttempt, xmlRaw []byte) (fiscal.EmissionAttempt, error) {
+	if transactional, ok := store.(documentAttemptStore); ok {
+		return transactional.RegisterWithDocument(ctx, attempt, xmlRaw)
+	}
+	return store.Register(ctx, attempt)
 }
 
 func (s *Service) resultFromAttempt(attempt fiscal.EmissionAttempt, dps DPS) ServiceResult {

@@ -871,11 +871,14 @@ campo para segredo.
 `0005_fiscal_documents.sql` acrescenta a trilha operacional fiscal: `fiscal_document`
 e `fiscal_item` particionados por competência mensal, `tax_calc` com entrada e
 hash da regra usada no snapshot, e `emission_attempt` com chave de idempotência
-por tenant e resposta bruta/hash por tentativa. As tabelas têm RLS, chaves
-compostas tenant/documento/competência para impedir referências cruzadas e
-histórico append-only onde aplicável; nenhum dado tributário ou seed de alíquota
-é inserido. A emissão guarda apenas a referência do XML em object storage e seu
-hash no documento.
+por tenant e resposta bruta/hash por tentativa. As migrations forward-only
+`0034_fiscal_emission_persistence.sql` e `0035_fiscal_authorized_xml_guard.sql`
+também preservam `xml_raw`, `request_xml` e `response_raw` byte a byte. As
+tabelas têm RLS, chaves compostas tenant/documento/competência para impedir
+referências cruzadas e histórico append-only onde aplicável; nenhum dado
+tributário ou seed de alíquota é inserido. Object storage continua disponível
+para retenção de arquivos maiores, mas a evidência bruta desta fatia fica
+persistida para auditoria e replay.
 
 ### Consulta fiscal fail-closed (FIS-01B)
 
@@ -968,9 +971,11 @@ SQL; quantidade e alíquota permanecem textuais para não usar `float`.
 
 Snapshots, itens e tentativas são somente inclusão. `RegisterEmissionAttempt`
 usa `(tenant_id, idempotency_key)` como chave de replay e devolve a tentativa
-original sem atualizar a resposta. O histórico pode ser consultado por
-documento/competência e as respostas são apenas corpo, tipo, protocolo e hash;
-segredos não fazem parte do contrato.
+original sem atualizar a resposta. Se os identificadores ou hashes da operação
+divergirem, retorna `ErrIdempotencyConflict`. `RegisterEmissionAttemptWithDocument`
+persiste tentativa, XML bruto, hash e status do documento na mesma transação;
+documento autorizado sem XML/hash é rejeitado pelo banco. O histórico pode ser
+consultado por documento/competência e os bytes não são expostos em logs.
 
 A migration 0008 adiciona à tentativa os metadados de transporte necessários
 à NFS-e (`http_status`, `ambiente`, `chave_acesso`, `dps_id` e

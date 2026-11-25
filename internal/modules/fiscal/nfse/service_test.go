@@ -126,6 +126,13 @@ func TestServicoEmissaoPersisteEIdempotente(t *testing.T) {
 	if attempt.ResponseHash == nil || *attempt.ResponseHash != nfse.SHA256Hex([]byte(*attempt.ResponseBody)) {
 		t.Fatal("response_hash nao corresponde ao corpo cru persistido")
 	}
+	storedDocument, err := repository.GetDocument(ctxTenant, document.ID, competence)
+	if err != nil || storedDocument.Status != "authorized" || len(storedDocument.XMLRaw) == 0 || string(storedDocument.XMLRaw) == "" {
+		t.Fatalf("documento nao foi fechado com XML bruto: %+v err=%v", storedDocument, err)
+	}
+	if string(attempt.RequestXML) != string(storedDocument.XMLRaw) || string(attempt.ResponseRaw) != *attempt.ResponseBody {
+		t.Fatal("bytes brutos da requisicao/resposta nao foram preservados")
+	}
 	replay, err := servico.Emit(ctxTenant, entrada)
 	if err != nil || replay.AccessKey != resultado.AccessKey {
 		t.Fatalf("replay: %+v err=%v", replay, err)

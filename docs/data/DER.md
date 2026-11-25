@@ -506,7 +506,9 @@ erDiagram
                     text contingency_mode
                     uuid party_id FK
                     numeric total
-                    timestamptz issued_at }
+                    timestamptz issued_at
+                    bytea xml_raw
+                    char xml_hash }
   FISCAL_ITEM { uuid id PK
                 uuid document_id FK
                 uuid item_id FK
@@ -526,10 +528,14 @@ erDiagram
   EMISSION_ATTEMPT { uuid id PK
                      uuid document_id FK
                      int attempt
+                     text idempotency_key
                      text mode
                      text result
                      text protocol
-                     text xml_hash }
+                     bytea request_xml
+                     bytea response_raw
+                     char request_hash
+                     char response_hash }
 ```
 
 ## 3. Setores: funerário, cemitério e floricultura

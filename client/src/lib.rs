@@ -1,10 +1,15 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
+use std::fs;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 const DEFAULT_RETRY_LIMIT: u32 = 3;
+const STORE_SCHEMA_VERSION: u16 = 1;
 const MAX_IDENTIFIER_LEN: usize = 128;
 const MAX_REASON_LEN: usize = 200;
 const MAX_PAYLOAD_BYTES: usize = 64 * 1024;
@@ -207,6 +212,33 @@ pub struct ClientMetrics {
     pub review_tasks: u64,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedQueue {
+    schema_version: u16,
+    tenant_id: String,
+    node_id: String,
+    connectivity: ConnectivityState,
+    retry_limit: u32,
+    last_seq: u64,
+    operations: Vec<QueuedOperation>,
+    review_tasks: Vec<ReviewTask>,
+    metrics: ClientMetrics,
+    integrity_hash: String,
+}
+
+#[derive(Debug, Serialize)]
+struct QueueIntegrity<'a> {
+    schema_version: u16,
+    tenant_id: &'a str,
+    node_id: &'a str,
+    connectivity: ConnectivityState,
+    retry_limit: u32,
+    last_seq: u64,
+    operations: &'a [QueuedOperation],
+    review_tasks: &'a [ReviewTask],
+    metrics: &'a ClientMetrics,
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ClientError {
     #[error("tenant_id vazio")]
@@ -237,9 +269,23 @@ pub enum ClientError {
     InvalidRetryLimit,
     #[error("sequencia do dispositivo esgotada")]
     SequenceExhausted,
+    #[error("falha de I/O no store local: {0}")]
+    Io(String),
+    #[error("store local invalido: {0}")]
+    Serialization(String),
+    #[error("schema do store local nao suportado: {0}")]
+    UnsupportedStoreVersion(u16),
+    #[error("store local corrompido: {0}")]
+    CorruptStore(&'static str),
+    #[error("tenant_id do store local nao corresponde ao contexto")]
+    TenantMismatch,
+    #[error("node_id do store local nao corresponde ao contexto")]
+    NodeMismatch,
 }
 
+#[derive(Debug, Clone)]
 pub struct ClientQueue {
+    path: Option<PathBuf>,
     tenant_id: String,
     node_id: String,
     connectivity: ConnectivityState,
@@ -275,6 +321,7 @@ impl ClientQueue {
             return Err(ClientError::InvalidRetryLimit);
         }
         Ok(Self {
+            path: None,
             tenant_id,
             node_id,
             connectivity: ConnectivityState::Online,
@@ -286,8 +333,72 @@ impl ClientQueue {
         })
     }
 
-    pub fn set_connectivity(&mut self, state: ConnectivityState) {
+    /// Abre uma fila persistida no arquivo local indicado.
+    ///
+    /// O arquivo é criado na primeira abertura. O contexto de tenant e dispositivo
+    /// é obrigatório para impedir que uma fila seja reaberta sob outra identidade.
+    pub fn open(
+        path: impl AsRef<Path>,
+        tenant_id: impl Into<String>,
+        node_id: impl Into<String>,
+    ) -> Result<Self, ClientError> {
+        Self::open_with_retry_limit(path, tenant_id, node_id, DEFAULT_RETRY_LIMIT)
+    }
+
+    pub fn open_with_retry_limit(
+        path: impl AsRef<Path>,
+        tenant_id: impl Into<String>,
+        node_id: impl Into<String>,
+        retry_limit: u32,
+    ) -> Result<Self, ClientError> {
+        let path = path.as_ref().to_path_buf();
+        let tenant_id = tenant_id.into();
+        let node_id = node_id.into();
+        let mut queue = Self::with_retry_limit(&tenant_id, &node_id, retry_limit)?;
+        recover_backup(&path).map_err(io_error)?;
+
+        if path.exists() {
+            let bytes = fs::read(&path).map_err(io_error)?;
+            let persisted: PersistedQueue = serde_json::from_slice(&bytes)
+                .map_err(|error| ClientError::Serialization(error.to_string()))?;
+            if persisted.schema_version != STORE_SCHEMA_VERSION {
+                return Err(ClientError::UnsupportedStoreVersion(
+                    persisted.schema_version,
+                ));
+            }
+            if persisted.tenant_id != tenant_id {
+                return Err(ClientError::TenantMismatch);
+            }
+            if persisted.node_id != node_id {
+                return Err(ClientError::NodeMismatch);
+            }
+            if persisted.integrity_hash != persisted_integrity_hash(&persisted)? {
+                return Err(ClientError::CorruptStore("hash de integridade"));
+            }
+            validate_persisted_queue(&persisted)?;
+            queue.path = Some(path);
+            queue.connectivity = persisted.connectivity;
+            queue.retry_limit = persisted.retry_limit;
+            queue.last_seq = persisted.last_seq;
+            queue.operations = persisted.operations;
+            queue.review_tasks = persisted.review_tasks;
+            queue.metrics = persisted.metrics;
+        } else {
+            queue.path = Some(path);
+            queue.persist_if_configured()?;
+        }
+
+        Ok(queue)
+    }
+
+    pub fn set_connectivity(&mut self, state: ConnectivityState) -> Result<(), ClientError> {
+        let before = self.clone();
         self.connectivity = state;
+        if let Err(error) = self.persist_if_configured() {
+            *self = before;
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub const fn connectivity(&self) -> ConnectivityState {
@@ -300,6 +411,7 @@ impl ClientQueue {
         draft: OperationDraft,
         now: u64,
     ) -> Result<EnqueueResult, ClientError> {
+        let before = self.clone();
         let actor_subject_id = actor_subject_id.into();
         if actor_subject_id.trim().is_empty() {
             return Err(ClientError::EmptyActor);
@@ -316,10 +428,15 @@ impl ClientQueue {
                 return Err(ClientError::IdempotencyConflict);
             }
             self.metrics.replayed += 1;
-            return Ok(EnqueueResult {
+            let result = EnqueueResult {
                 operation: existing.clone(),
                 replayed: true,
-            });
+            };
+            if let Err(error) = self.persist_if_configured() {
+                *self = before;
+                return Err(error);
+            }
+            return Ok(result);
         }
 
         let seq = self
@@ -347,10 +464,15 @@ impl ClientQueue {
         };
         self.operations.push(operation.clone());
         self.metrics.enqueued += 1;
-        Ok(EnqueueResult {
+        let result = EnqueueResult {
             operation,
             replayed: false,
-        })
+        };
+        if let Err(error) = self.persist_if_configured() {
+            *self = before;
+            return Err(error);
+        }
+        Ok(result)
     }
 
     pub fn pending(&self) -> impl Iterator<Item = &QueuedOperation> {
@@ -402,6 +524,29 @@ impl ClientQueue {
     }
 
     pub fn reconcile(
+        &mut self,
+        operation_id: &str,
+        outcome: ReconciliationOutcome,
+        now: u64,
+    ) -> Result<ReconciliationResult, ClientError> {
+        let before = self.clone();
+        let result = self.reconcile_inner(operation_id, outcome, now);
+        match result {
+            Ok(result) => {
+                if let Err(error) = self.persist_if_configured() {
+                    *self = before;
+                    return Err(error);
+                }
+                Ok(result)
+            }
+            Err(error) => {
+                *self = before;
+                Err(error)
+            }
+        }
+    }
+
+    fn reconcile_inner(
         &mut self,
         operation_id: &str,
         outcome: ReconciliationOutcome,
@@ -538,6 +683,13 @@ impl ClientQueue {
         }
     }
 
+    fn persist_if_configured(&self) -> Result<(), ClientError> {
+        if let Some(path) = &self.path {
+            persist_queue(path, self)?;
+        }
+        Ok(())
+    }
+
     fn add_review_task(
         &mut self,
         operation_index: usize,
@@ -561,6 +713,154 @@ impl ClientQueue {
         });
         true
     }
+}
+
+fn persisted_integrity_hash(data: &PersistedQueue) -> Result<String, ClientError> {
+    let integrity = QueueIntegrity {
+        schema_version: data.schema_version,
+        tenant_id: &data.tenant_id,
+        node_id: &data.node_id,
+        connectivity: data.connectivity,
+        retry_limit: data.retry_limit,
+        last_seq: data.last_seq,
+        operations: &data.operations,
+        review_tasks: &data.review_tasks,
+        metrics: &data.metrics,
+    };
+    let bytes = serde_json::to_vec(&integrity)
+        .map_err(|error| ClientError::Serialization(error.to_string()))?;
+    Ok(hex_sha256(&bytes))
+}
+
+fn validate_persisted_queue(data: &PersistedQueue) -> Result<(), ClientError> {
+    if data.retry_limit == 0 {
+        return Err(ClientError::CorruptStore("limite de retry"));
+    }
+
+    let mut operation_ids = HashSet::new();
+    let mut sequences = HashSet::new();
+    let mut idempotency_keys = HashSet::new();
+    let mut max_seq = 0;
+    for operation in &data.operations {
+        if operation.tenant_id != data.tenant_id {
+            return Err(ClientError::CorruptStore("tenant da operacao"));
+        }
+        if operation.node_id != data.node_id {
+            return Err(ClientError::CorruptStore("node da operacao"));
+        }
+        if operation.seq == 0 {
+            return Err(ClientError::CorruptStore("sequencia invalida"));
+        }
+        if !operation_ids.insert(operation.operation_id.as_str()) {
+            return Err(ClientError::CorruptStore("operation_id duplicado"));
+        }
+        if !sequences.insert(operation.seq) {
+            return Err(ClientError::CorruptStore("sequencia duplicada"));
+        }
+        if !idempotency_keys.insert(operation.idempotency_key.as_str()) {
+            return Err(ClientError::CorruptStore("idempotency_key duplicada"));
+        }
+
+        let draft = OperationDraft {
+            kind: operation.kind,
+            entity_id: operation.entity_id.clone(),
+            idempotency_key: operation.idempotency_key.clone(),
+            payload: operation.payload.clone(),
+        };
+        validate_draft(&draft).map_err(|_| ClientError::CorruptStore("operacao invalida"))?;
+        let expected_hash = content_hash(&draft)
+            .map_err(|_| ClientError::CorruptStore("hash de conteudo invalido"))?;
+        if operation.content_hash != expected_hash {
+            return Err(ClientError::CorruptStore("hash de conteudo"));
+        }
+        if operation.operation_id
+            != operation_id(
+                &operation.tenant_id,
+                &operation.node_id,
+                operation.seq,
+                &operation.content_hash,
+            )
+        {
+            return Err(ClientError::CorruptStore("operation_id invalido"));
+        }
+        max_seq = max_seq.max(operation.seq);
+    }
+    if data.last_seq < max_seq {
+        return Err(ClientError::CorruptStore("sequencia final regressiva"));
+    }
+
+    for task in &data.review_tasks {
+        if !operation_ids.contains(task.operation_id.as_str())
+            || task.task_id.trim().is_empty()
+            || sanitize_code(&task.code) != task.code
+        {
+            return Err(ClientError::CorruptStore("tarefa de revisao invalida"));
+        }
+    }
+    Ok(())
+}
+
+fn persist_queue(path: &Path, queue: &ClientQueue) -> Result<(), ClientError> {
+    let mut data = PersistedQueue {
+        schema_version: STORE_SCHEMA_VERSION,
+        tenant_id: queue.tenant_id.clone(),
+        node_id: queue.node_id.clone(),
+        connectivity: queue.connectivity,
+        retry_limit: queue.retry_limit,
+        last_seq: queue.last_seq,
+        operations: queue.operations.clone(),
+        review_tasks: queue.review_tasks.clone(),
+        metrics: queue.metrics.clone(),
+        integrity_hash: String::new(),
+    };
+    data.integrity_hash = persisted_integrity_hash(&data)?;
+    let bytes = serde_json::to_vec_pretty(&data)
+        .map_err(|error| ClientError::Serialization(error.to_string()))?;
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).map_err(io_error)?;
+    }
+    let temp_path = path.with_extension("tmp");
+    let mut file = fs::File::create(&temp_path).map_err(io_error)?;
+    file.write_all(&bytes).map_err(io_error)?;
+    file.sync_all().map_err(io_error)?;
+    replace_file(&temp_path, path).map_err(io_error)
+}
+
+fn replace_file(temp_path: &Path, destination: &Path) -> Result<(), io::Error> {
+    let backup_path = destination.with_extension("bak");
+    if destination.exists() {
+        if backup_path.exists() {
+            fs::remove_file(&backup_path)?;
+        }
+        fs::rename(destination, &backup_path)?;
+    }
+    match fs::rename(temp_path, destination) {
+        Ok(()) => {
+            let _ = fs::remove_file(backup_path);
+            Ok(())
+        }
+        Err(error) => {
+            if !destination.exists() && backup_path.exists() {
+                let _ = fs::rename(&backup_path, destination);
+            }
+            Err(error)
+        }
+    }
+}
+
+fn recover_backup(destination: &Path) -> Result<(), io::Error> {
+    let backup_path = destination.with_extension("bak");
+    if !destination.exists() && backup_path.exists() {
+        fs::rename(backup_path, destination)?;
+    }
+    Ok(())
+}
+
+fn io_error(error: io::Error) -> ClientError {
+    ClientError::Io(error.to_string())
 }
 
 pub fn unix_now() -> u64 {
@@ -755,6 +1055,23 @@ fn hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_queue_path() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        std::env::temp_dir().join(format!("amparius-client-test-{nonce}.json"))
+    }
+
+    fn cleanup_queue_path(path: &Path) {
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(path.with_extension("tmp"));
+        let _ = fs::remove_file(path.with_extension("bak"));
+    }
 
     fn contract(key: &str, total_cents: i64) -> OperationDraft {
         OperationDraft {
@@ -778,9 +1095,13 @@ mod tests {
     fn connectivity_states_are_distinct_and_visible_without_identifiers() {
         let mut queue = ClientQueue::new("tenant-a", "node-1").expect("queue");
         assert_eq!(queue.connectivity(), ConnectivityState::Online);
-        queue.set_connectivity(ConnectivityState::Offline);
+        queue
+            .set_connectivity(ConnectivityState::Offline)
+            .expect("offline");
         assert_eq!(queue.status().connectivity, ConnectivityState::Offline);
-        queue.set_connectivity(ConnectivityState::Contingency);
+        queue
+            .set_connectivity(ConnectivityState::Contingency)
+            .expect("contingency");
         let status = serde_json::to_string(&queue.status()).expect("status json");
         assert!(status.contains("contingency"));
         assert!(!status.contains("tenant-a"));
@@ -961,5 +1282,164 @@ mod tests {
             validate_draft(&contract("op-2", -1)),
             Err(ClientError::InvalidPayload("total_cents"))
         );
+    }
+
+    #[test]
+    fn persistent_queue_reopens_with_sequence_and_replay_intact() {
+        let path = temp_queue_path();
+        {
+            let mut queue = ClientQueue::open(&path, "tenant-a", "node-1").expect("open");
+            queue
+                .set_connectivity(ConnectivityState::Offline)
+                .expect("offline");
+            let first = queue
+                .enqueue("operator-1", contract("op-1", 100), 10)
+                .expect("enqueue");
+            assert_eq!(first.operation.seq, 1);
+            queue
+                .reconcile(
+                    &first.operation.operation_id,
+                    ReconciliationOutcome::Retry {
+                        reason: RetryReason::TransportTimeout,
+                    },
+                    11,
+                )
+                .expect("retry");
+        }
+
+        let mut reopened = ClientQueue::open(&path, "tenant-a", "node-1").expect("reopen");
+        assert_eq!(reopened.connectivity(), ConnectivityState::Offline);
+        assert_eq!(reopened.operations().len(), 1);
+        assert_eq!(reopened.operations()[0].seq, 1);
+        assert_eq!(reopened.operations()[0].attempts, 1);
+        let replay = reopened
+            .enqueue("operator-1", contract("op-1", 100), 12)
+            .expect("replay");
+        assert!(replay.replayed);
+        assert_eq!(replay.operation.seq, 1);
+        let next = reopened
+            .enqueue("operator-1", contract("op-2", 200), 13)
+            .expect("next");
+        assert_eq!(next.operation.seq, 2);
+        assert_eq!(reopened.status().queue.last_seq, 2);
+        cleanup_queue_path(&path);
+    }
+
+    #[test]
+    fn persistent_queue_keeps_financial_and_fiscal_review_states() {
+        let path = temp_queue_path();
+        {
+            let mut queue = ClientQueue::open(&path, "tenant-a", "node-1").expect("open");
+            let money = queue
+                .enqueue("operator-1", contract("money-1", 100), 10)
+                .expect("money enqueue");
+            queue
+                .reconcile(
+                    &money.operation.operation_id,
+                    ReconciliationOutcome::Conflict {
+                        code: "money_conflict".to_owned(),
+                    },
+                    11,
+                )
+                .expect("money conflict");
+            let fiscal = queue
+                .enqueue("operator-1", fiscal("fiscal-1"), 12)
+                .expect("fiscal enqueue");
+            queue
+                .reconcile(
+                    &fiscal.operation.operation_id,
+                    ReconciliationOutcome::FiscalRejected {
+                        code: "fiscal_rejected".to_owned(),
+                    },
+                    13,
+                )
+                .expect("fiscal rejection");
+        }
+
+        let reopened = ClientQueue::open(&path, "tenant-a", "node-1").expect("reopen");
+        assert_eq!(reopened.status().queue.conflict, 1);
+        assert_eq!(reopened.status().queue.failed, 1);
+        assert_eq!(reopened.review_tasks().len(), 2);
+        assert_eq!(
+            reopened.review_tasks()[0].kind,
+            ReviewTaskKind::MoneyConflict
+        );
+        assert_eq!(
+            reopened.review_tasks()[1].kind,
+            ReviewTaskKind::FiscalFailure
+        );
+        cleanup_queue_path(&path);
+    }
+
+    #[test]
+    fn persistent_queue_rejects_a_different_tenant_or_node_context() {
+        let path = temp_queue_path();
+        let queue = ClientQueue::open(&path, "tenant-a", "node-1").expect("open");
+        drop(queue);
+        assert!(matches!(
+            ClientQueue::open(&path, "tenant-b", "node-1"),
+            Err(ClientError::TenantMismatch)
+        ));
+        assert!(matches!(
+            ClientQueue::open(&path, "tenant-a", "node-2"),
+            Err(ClientError::NodeMismatch)
+        ));
+        cleanup_queue_path(&path);
+    }
+
+    #[test]
+    fn corrupted_store_fails_closed_without_reconstructing_queue() {
+        let path = temp_queue_path();
+        let queue = ClientQueue::open(&path, "tenant-a", "node-1").expect("open");
+        drop(queue);
+        fs::write(&path, b"{not-json").expect("corrupt");
+        assert!(matches!(
+            ClientQueue::open(&path, "tenant-a", "node-1"),
+            Err(ClientError::Serialization(_))
+        ));
+        cleanup_queue_path(&path);
+    }
+
+    #[test]
+    fn unsupported_store_version_fails_closed_before_loading_state() {
+        let path = temp_queue_path();
+        let queue = ClientQueue::open(&path, "tenant-a", "node-1").expect("open");
+        drop(queue);
+        let mut document: Value =
+            serde_json::from_slice(&fs::read(&path).expect("store bytes")).expect("document");
+        document["schema_version"] = json!(999);
+        fs::write(
+            &path,
+            serde_json::to_vec(&document).expect("document bytes"),
+        )
+        .expect("write invalid version");
+        assert!(matches!(
+            ClientQueue::open(&path, "tenant-a", "node-1"),
+            Err(ClientError::UnsupportedStoreVersion(999))
+        ));
+        cleanup_queue_path(&path);
+    }
+
+    #[test]
+    fn tampered_payload_is_rejected_by_integrity_hash() {
+        let path = temp_queue_path();
+        let mut queue = ClientQueue::open(&path, "tenant-a", "node-1").expect("open");
+        queue
+            .enqueue("operator-1", contract("op-1", 100), 10)
+            .expect("enqueue");
+        drop(queue);
+        let mut document: Value =
+            serde_json::from_slice(&fs::read(&path).expect("store bytes")).expect("document");
+        document["operations"][0]["payload"]["total_cents"] = json!(999);
+        fs::write(
+            &path,
+            serde_json::to_vec(&document).expect("document bytes"),
+        )
+        .expect("write tampered payload");
+        assert!(matches!(
+            ClientQueue::open(&path, "tenant-a", "node-1"),
+            Err(ClientError::CorruptStore("hash de integridade"))
+        ));
+        cleanup_queue_path(&path);
     }
 }

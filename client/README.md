@@ -23,14 +23,16 @@ O binário aguarda `Ctrl+C` para encerramento gracioso. A interface gráfica ser
 - A mesma `idempotency_key` com conteúdo diferente falha com `IdempotencyConflict`; dinheiro e fiscal nunca aplicam last-write-wins.
 - `ReconciliationOutcome::Conflict` e `FiscalRejected` criam tarefas explícitas de revisão sem carregar payload, resposta remota ou PII.
 - `ClientStatus` e `ClientMetrics` expõem apenas contagens, estado e códigos técnicos seguros para observabilidade.
+- `ClientQueue::open(path, tenant_id, node_id)` persiste a fila em JSON versionado com SHA-256, escrita temporária/backup e rejeição fail-closed de corrupção ou versão desconhecida.
 
-A fila ainda é somente em memória nesta fatia. Persistência durável, transporte HTTP, timeout/retry/jitter de rede e UI gráfica permanecem nas fatias do relay/cliente correspondentes.
+O arquivo local cobre a fila da estação e o reinício do cliente, mas não substitui o armazenamento durável do relay. Transporte HTTP, timeout/retry/jitter de rede e UI gráfica permanecem nas fatias correspondentes.
 
 ## Verificação
 
 ```powershell
 cargo fmt --manifest-path client/Cargo.toml -- --check
-cargo test --manifest-path client/Cargo.toml
-cargo clippy --manifest-path client/Cargo.toml --all-targets -- -D warnings
+cargo test --locked --manifest-path client/Cargo.toml
+cargo clippy --locked --manifest-path client/Cargo.toml --all-targets -- -D warnings
+git diff --check
 ```
 

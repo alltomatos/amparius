@@ -935,27 +935,27 @@ forward-only `migrations/0022_tax_calc_hash.sql` guarda `calculation_hash` em
 `tax_calc`. Testes unitarios, goldens sinteticos e integracao PostgreSQL real
 passam; detalhes em `docs/fiscal/2026-11-24-fis-02a-motor-tributos-dps.md`.
 
-**PARTIAL - cobertura da issue #25.** A DPS oficial v1.01 continua sendo
-montada por `nfse.BuildDPSOficial`, mas a emissao oficial **nao** esta
-concluida: nao existe `tax_rule` oficial importada e os 5 goldens do motor sao
-SINTETICOS, nao oficiais. Nenhuma aliquota ou codigo foi inventado.
+**PASS - DPS oficial no leiaute vigente.** Em 2026-11-25 o pacote oficial
+`NFSe-ESQUEMAS_XSD-PRODREST-v1.01-20261020` (NT 009, producao a partir de
+2026-12-01) foi adotado em `docs/fiscal/xsd-nfse-prodrest-20261020/`, com
+SHA-256 conferido. O bloqueio anterior do `TSSerieDPS` existia apenas no pacote
+20260209 (defasado) e foi corrigido pela propia Sefin. `nfse.BuildDPSOficial`
+passou a emitir `finNFSe`, monta o `Id` pela regra do `TSIdDPS` (45 posicoes) e
+aceita CNPJ alfanumerico do `TSCNPJ`. As 7 fixtures oficiais passam no lxml
+(7/7) e no validador Go; `serie=99999` continua rejeitada.
 
-**BLOCKED - DPS oficial v1.01.** O XSD oficial versionado em
-`docs/fiscal/xsd-nfse-v1.01/Schemas/1.01/tiposSimples_v1.01.xsd:158-164`
-declara `TSSerieDPS` com `pattern value="^0{0,4}\d{1,5}$"`. Em XML Schema, `^`
-e `$` sao literais; por isso qualquer serie valida (por exemplo `1`) e
-rejeitada pelo facet. O builder nao mascara e nao inventa `^1$`. Reproducao
-estrita (sai com codigo 1):
+**PARTIAL - cobertura de negocio da issue #25.** Nao existe `tax_rule` oficial
+importada e os 5 goldens do motor sao SINTETICOS. A emissao real continua
+dependendo de FIS-02B/02C e do gate por data de competencia (pacote 20260209
+para competencias antigas, NT 009 a partir de 2026-12-01). Detalhes em
+`docs/fiscal/2026-11-25-fis-02a-leiaute-nt009.md` e ADR 0031.
+
+Reproducao:
 
 ```powershell
-.\scripts\validate-nfse-dps-official.ps1
+.\scripts\validate-nfse-dps-official.ps1   # 0/7 rejeitadas, exit 0
+.\scripts\validate-nfse-xsd-parity.ps1      # serie=1 aceita; 99999 rejeitada
 ```
-
-Saida atual: 6/6 fixtures rejeitadas por `serie/pattern`, com lxml/libxml2.
-Fontes oficiais necessarias para desbloquear: correcao/errata oficial do XSD
-v1.01 (ou Nota Tecnica da SEFIN) para `TSSerieDPS`, ou confirmacao oficial de
-que o facet esta correto e qual valor de serie ele aceita. Ate la, a DPS
-oficial permanece BLOQUEADA e a issue #25 nao deve ser declarada concluida.
 
 ### Contrato Go de documentos fiscais
 

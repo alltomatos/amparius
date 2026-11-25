@@ -367,13 +367,14 @@ func (s *xsdSchemaSet) load(rel string) error {
 
 // compileXSDPattern compila o subconjunto de pattern usado pelo pacote oficial.
 // Ao contrario de regexp de Go, o regex de XML Schema nao possui ancoras ^/$:
-// esses caracteres sao literais. O schema oficial v1.01 usa ambos no pattern
-// de TSSerieDPS; preserva-los como literais reproduz o comportamento do
-// libxml2, enquanto as ancoras externas preservam a semantica de valor inteiro
-// do facet pattern.
+// fora de uma classe de caracteres esses simbolos sao literais. Dentro de uma
+// classe, porem, "^" logo apos "[" e o operador de negacao (ex.: [^\s]) e deve
+// ser preservado. As ancoras externas preservam a semantica de valor inteiro do
+// facet pattern.
 func compileXSDPattern(pattern string) (*regexp.Regexp, error) {
 	var translated strings.Builder
 	escaped := false
+	inClass := false
 	for _, r := range pattern {
 		if escaped {
 			translated.WriteRune(r)
@@ -385,7 +386,13 @@ func compileXSDPattern(pattern string) (*regexp.Regexp, error) {
 			escaped = true
 			continue
 		}
-		if r == '^' || r == '$' {
+		switch r {
+		case '[':
+			inClass = true
+		case ']':
+			inClass = false
+		}
+		if !inClass && (r == '^' || r == '$') {
 			translated.WriteByte('\\')
 		}
 		translated.WriteRune(r)

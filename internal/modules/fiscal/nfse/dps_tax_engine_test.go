@@ -2,7 +2,6 @@ package nfse_test
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -70,15 +69,10 @@ func TestDPSOficialAceitaValorMonetarioDoMotor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resultado.Valid {
-		t.Fatal("o gap conhecido de serie deveria permanecer visivel")
+	if !resultado.Valid {
+		t.Fatalf("DPS com valor do motor deveria ser aceita pelo XSD vigente: %v", resultado.Errors)
 	}
-	for _, problema := range resultado.Errors {
-		if !strings.Contains(problema, "serie") {
-			t.Fatalf("XSD acusou erro alem do gap de serie: %v", resultado.Errors)
-		}
-	}
-	if !errors.Is(nfse.ClassifyXSDIncompatibility(resultado), nfse.ErrXSDIncompatible) {
-		t.Fatal("incompatibilidade deveria ser classificada")
+	if err := nfse.ClassifyXSDIncompatibility(resultado); err != nil {
+		t.Fatalf("DPS valida nao deveria ser classificada como incompativel: %v", err)
 	}
 }

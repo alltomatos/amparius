@@ -1,3 +1,6 @@
+> HIST?RICO: pacote 20260209 superado pelo leiaute NT 009 (20261020),
+> adotado em `docs/fiscal/xsd-nfse-prodrest-20261020`. N?o usar para emiss?o nova.
+
 ﻿# XSD NFS-e Nacional v1.01 — manifesto de verificação
 
 - Fonte oficial: https://www.gov.br/nfse/pt-br/biblioteca/documentacao-tecnica/documentacao-atual/nfse-esquemas_xsd-v1-01-20260209.zip

@@ -1,13 +1,13 @@
 {
   "_comment": "Fixture SINTETICA e NAO OFICIAL para exercitar a forma de cTribMun. O valor 123 nao representa codigo municipal real, existencia, vigencia ou aplicabilidade fiscal.",
-  "id": "DPS000000000000000000000000000000000000000123",
+  "id": "DPS230440020000000000019100001000000000000123",
   "versao": "1.01",
   "tp_amb": "2",
-  "dh_emi": "2026-11-24T12:00:00-03:00",
+  "dh_emi": "2026-12-01T12:00:00-03:00",
   "ver_aplic": "amparius-teste-1",
   "serie": "1",
   "n_dps": "123",
-  "d_compet": "2026-11-24",
+  "d_compet": "2026-12-01",
   "tp_emit": "1",
   "c_loc_emi": "2304400",
   "prestador": {
@@ -27,5 +27,6 @@
     "trib_issqn": "1",
     "tp_ret_issqn": "1",
     "ind_tot_trib": "0"
-  }
+  },
+  "fin_nfse": "0"
 }

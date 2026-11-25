@@ -1,13 +1,13 @@
 {
   "_comment": "Fixture SINTETICA do choice cNaoNIF em prest/toma/interm. Os codigos 2|1|0 pertencem a enumeracao oficial do XSD e existem apenas para exercitar as tres alternativas; nao ha dado de pessoa, empresa ou regra fiscal.",
-  "id": "DPS000000000000000000000000000000000000000013",
+  "id": "DPS230440020000000000000000001000000000000013",
   "versao": "1.01",
   "tp_amb": "2",
-  "dh_emi": "2026-11-24T12:00:00-03:00",
+  "dh_emi": "2026-12-01T12:00:00-03:00",
   "ver_aplic": "amparius-teste-1",
   "serie": "1",
   "n_dps": "13",
-  "d_compet": "2026-11-24",
+  "d_compet": "2026-12-01",
   "tp_emit": "1",
   "c_loc_emi": "2304400",
   "prestador": {
@@ -36,5 +36,6 @@
     "trib_issqn": "1",
     "tp_ret_issqn": "1",
     "ind_tot_trib": "0"
-  }
+  },
+  "fin_nfse": "0"
 }

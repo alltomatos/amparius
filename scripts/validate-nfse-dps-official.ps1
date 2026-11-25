@@ -1,6 +1,6 @@
-# Valida estritamente as fixtures de DPS oficial contra o XSD v1.01.
-# Diferente de validate-nfse-xsd-parity.ps1, este script NAO tolera o gap do
-# facet TSSerieDPS: ele sai com codigo 1 enquanto uma serie valida for rejeitada.
+# Valida estritamente as fixtures de DPS oficial contra o leiaute oficial
+# vigente (pacote de Produção Restrita v1.01-20261020 / NT 009).
+# Sai com codigo 1 se qualquer fixture for rejeitada.
 #
 # Uso: .\scripts\validate-nfse-dps-official.ps1
 # Requer Python 3 com lxml.
@@ -13,7 +13,7 @@ Set-Location $root
 from pathlib import Path
 from lxml import etree
 
-schema = etree.XMLSchema(etree.parse("docs/fiscal/xsd-nfse-v1.01/Schemas/1.01/DPS_v1.01.xsd"))
+schema = etree.XMLSchema(etree.parse("docs/fiscal/xsd-nfse-prodrest-20261020/DPS_v1.01.xsd"))
 fixtures = sorted(Path("internal/modules/fiscal/nfse/testdata/official").glob("*.xml"))
 if not fixtures:
     raise SystemExit("ERRO: nenhuma fixture XML oficial encontrada")

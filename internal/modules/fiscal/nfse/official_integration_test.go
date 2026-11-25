@@ -17,8 +17,7 @@ import (
 )
 
 // Negativos de XSD sobre a DPS oficial: mutacoes no XML continuam rejeitadas
-// pelo schema local, inclusive quando a fixture base ja esta bloqueada pelo
-// facet oficial de serie.
+// pelo schema local vigente (NT 009).
 func TestDPSOficialNegativosDeXSD(t *testing.T) {
 	validador := novoValidadorOficial(t)
 	input := carregarFixtureOficial(t)
@@ -33,10 +32,10 @@ func TestDPSOficialNegativosDeXSD(t *testing.T) {
 	}{
 		{"versao fora do pattern", func(s string) string { return strings.Replace(s, `versao="1.01"`, `versao="9.99"`, 1) }},
 		{"Id fora do pattern", func(s string) string {
-			return strings.Replace(s, `Id="DPS000000000000000000000000000000000000000000"`, `Id="DPS-CURTO"`, 1)
+			return strings.Replace(s, `Id="DPS230440020000000000019100001000000000000001"`, `Id="DPS-CURTO"`, 1)
 		}},
 		{"sem infDPS", func(s string) string {
-			return strings.Replace(s, `<infDPS Id="DPS000000000000000000000000000000000000000000">`, ``, 1)
+			return strings.Replace(s, `<infDPS Id="DPS230440020000000000019100001000000000000001">`, ``, 1)
 		}},
 		{"tpAmb fora da enumeracao", func(s string) string { return strings.Replace(s, `<tpAmb>2</tpAmb>`, `<tpAmb>9</tpAmb>`, 1) }},
 		{"CNPJ fora do pattern", func(s string) string { return strings.Replace(s, `<CNPJ>00000000000191</CNPJ>`, `<CNPJ>ABC</CNPJ>`, 1) }},
@@ -143,9 +142,9 @@ func (s *adapterSpy) MunicipalParameters(ctx context.Context, municipalityCode, 
 	return s.delegate.MunicipalParameters(ctx, municipalityCode, serviceCode, competence)
 }
 
-// O Service deve falhar fechado antes do adapter quando o XSD oficial rejeita
-// a serie semantica da fixture. Nao se registra tentativa nem se transmite.
-func TestServicoComDPSOficialBloqueiaSerieIncompativel(t *testing.T) {
+// O Service deve falhar fechado antes do adapter quando a serie esta fora do
+// TSSerieDPS vigente. Nao se registra tentativa nem se transmite.
+func TestServicoComSerieForaDoFacetBloqueiaAntesDoAdapter(t *testing.T) {
 	dsn, adminDSN := os.Getenv("AMPA_TEST_POSTGRES_DSN"), os.Getenv("AMPA_TEST_POSTGRES_ADMIN_DSN")
 	if dsn == "" || adminDSN == "" {
 		t.Skip("AMPA_TEST_POSTGRES_DSN e AMPA_TEST_POSTGRES_ADMIN_DSN sao necessarios")
@@ -172,6 +171,7 @@ func TestServicoComDPSOficialBloqueiaSerieIncompativel(t *testing.T) {
 		t.Fatal(err)
 	}
 	official := carregarFixtureOficial(t)
+	official.Serie = "99999"
 	servico, err := nfse.NewService(nfse.ServiceConfig{
 		Repository: repository, Adapter: nfse.NewFakeAdapter(nfse.FakeConfig{}),
 		Validator:    novoValidadorOficial(t),
@@ -187,7 +187,7 @@ func TestServicoComDPSOficialBloqueiaSerieIncompativel(t *testing.T) {
 	}
 	resultado, err := servico.Emit(ctxTenant, entrada)
 	if !errors.Is(err, nfse.ErrInvalidDPS) {
-		t.Fatalf("serie incompativel deveria bloquear a emissao: %v", err)
+		t.Fatalf("serie fora do facet deveria bloquear a emissao: %v", err)
 	}
 	if resultado != (nfse.ServiceResult{}) {
 		t.Fatalf("emissao bloqueada nao deveria produzir resultado: %+v", resultado)
@@ -197,7 +197,7 @@ func TestServicoComDPSOficialBloqueiaSerieIncompativel(t *testing.T) {
 	}
 }
 
-func TestServicoComDPSOficialBloqueiaAntesDaContingencia(t *testing.T) {
+func TestServicoComEntradaInvalidaBloqueiaAntesDaContingencia(t *testing.T) {
 	dsn, adminDSN := os.Getenv("AMPA_TEST_POSTGRES_DSN"), os.Getenv("AMPA_TEST_POSTGRES_ADMIN_DSN")
 	if dsn == "" || adminDSN == "" {
 		t.Skip("AMPA_TEST_POSTGRES_DSN e AMPA_TEST_POSTGRES_ADMIN_DSN sao necessarios")
@@ -224,7 +224,7 @@ func TestServicoComDPSOficialBloqueiaAntesDaContingencia(t *testing.T) {
 		t.Fatal(err)
 	}
 	official := carregarFixtureOficial(t)
-	official.ID = "DPS000000000000000000000000000000000000000001"
+	official.FinNFSe = "9"
 	servico, err := nfse.NewService(nfse.ServiceConfig{
 		Repository: repository,
 		Adapter:    nfse.NewFakeAdapter(nfse.FakeConfig{TimeoutOn: []string{official.ID}}),
@@ -240,7 +240,7 @@ func TestServicoComDPSOficialBloqueiaAntesDaContingencia(t *testing.T) {
 	}
 	resultado, err := servico.Emit(ctxTenant, entrada)
 	if !errors.Is(err, nfse.ErrInvalidDPS) {
-		t.Fatalf("serie incompativel deveria bloquear antes do timeout: %v", err)
+		t.Fatalf("entrada invalida deveria bloquear antes do timeout: %v", err)
 	}
 	if resultado != (nfse.ServiceResult{}) {
 		t.Fatalf("emissao bloqueada nao deveria entrar em contingencia: %+v", resultado)

@@ -2,10 +2,11 @@
 
 Data: 2026-11-24
 Issue: #25 (parent #5 MVP-FIS-02)
-Estado: **PARCIAL**. O motor tributário e a migration 0022 têm evidência
-(PASS), mas a DPS oficial v1.01 permanece **BLOQUEADA** pelo facet
-`TSSerieDPS` e os goldens do motor são sintéticos. A issue #25 **não** está
-concluída. Sem commit/push nesta etapa.
+Estado: **HIST?RICO (2026-11-24)**. Este documento registra o bloqueio ent?o
+existente no pacote XSD 20260209. Em 2026-11-25 o pacote oficial NT 009
+(20261020) foi adotado e a DPS passou a validar 7/7; ver
+`2026-11-25-fis-02a-leiaute-nt009.md` e ADR 0031. O motor e a migration 0022
+continuam PASS; os goldens do motor seguem sint?ticos.
 
 ## Objetivo
 

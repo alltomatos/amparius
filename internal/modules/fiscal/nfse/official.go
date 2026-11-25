@@ -3,6 +3,7 @@ package nfse
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -13,7 +14,7 @@ import (
 // aqui: o builder so serializa e falha fechado quando algo falta.
 //
 // Os campos usam os nomes do leiaute oficial v1.01 (TCDPS/TCInfDPS em
-// docs/fiscal/xsd-nfse-v1.01/Schemas/1.01/tiposComplexos_v1.01.xsd).
+// docs/fiscal/xsd-nfse-prodrest-20261020/tiposComplexos_v1.01.xsd).
 type OfficialDPSInput struct {
 	// Identificacao e controle
 	ID       string `json:"id"`
@@ -25,6 +26,7 @@ type OfficialDPSInput struct {
 	NDPS     string `json:"n_dps"`
 	DCompet  string `json:"d_compet"`
 	TpEmit   string `json:"tp_emit"`
+	FinNFSe  string `json:"fin_nfse"`
 	CLocEmi  string `json:"c_loc_emi"`
 
 	Prestador     OfficialPrestador `json:"prestador"`
@@ -134,6 +136,7 @@ func BuildDPSOficial(ctx context.Context, input OfficialDPSInput) (DPS, error) {
 	b.WriteString(elem("nDPS", input.NDPS))
 	b.WriteString(elem("dCompet", input.DCompet))
 	b.WriteString(elem("tpEmit", input.TpEmit))
+	b.WriteString(elem("finNFSe", input.FinNFSe))
 	b.WriteString(elem("cLocEmi", input.CLocEmi))
 	b.WriteString(`<prest>`)
 	b.WriteString(elem(input.Prestador.DocumentoTipo, input.Prestador.Documento))
@@ -207,6 +210,7 @@ func validateOfficialInput(input OfficialDPSInput) error {
 		{"Id", input.ID}, {"versao", input.Versao}, {"tpAmb", input.TpAmb},
 		{"dhEmi", input.DhEmi}, {"verAplic", input.VerAplic}, {"serie", input.Serie},
 		{"nDPS", input.NDPS}, {"dCompet", input.DCompet}, {"tpEmit", input.TpEmit},
+		{"finNFSe", input.FinNFSe},
 		{"cLocEmi", input.CLocEmi},
 		{"prest.documento_tipo", input.Prestador.DocumentoTipo},
 		{"prest.documento", input.Prestador.Documento},
@@ -230,6 +234,12 @@ func validateOfficialInput(input OfficialDPSInput) error {
 	}
 	if _, err := time.Parse("2006-01-02", input.DCompet); err != nil {
 		return fmt.Errorf("%w: dCompet invalido: %v", ErrInvalidDPS, err)
+	}
+	if err := validateOfficialFinNFSe(input.FinNFSe); err != nil {
+		return err
+	}
+	if err := validateOfficialID(input); err != nil {
+		return err
 	}
 	if err := validateOfficialPessoa(input.Tomador, "toma"); err != nil {
 		return err
@@ -261,6 +271,96 @@ func validateOfficialInput(input OfficialDPSInput) error {
 	}
 	return nil
 }
+
+// validateOfficialFinNFSe reproduz somente a enumeracao de TSRTCFinNFSe no
+// leiaute NT 009. O unico valor publicado hoje e "0" (NFS-e regular).
+func validateOfficialFinNFSe(value string) error {
+	if value != "0" {
+		return fmt.Errorf("%w: finNFSe fora da enumeracao 0: %s", ErrInvalidDPS, value)
+	}
+	return nil
+}
+
+// officialDPSIDPattern e o TSIdDPS do pacote oficial NT 009: 45 posicoes,
+// "DPS" + Cod.Mun(7) + Tipo de Inscricao(1) + Inscricao(14) + Serie(5) + Num.DPS(15).
+var officialDPSIDPattern = regexp.MustCompile(`^DPS[0-9]{7}(1[0-9]{14}|2[0-9A-Z]{14})[0-9]{20}$`)
+
+// validateOfficialID confere a forma do Id e, quando o emitente e o proprio
+// prestador (tpEmit=1) com CNPJ/CPF, exige que ele corresponda a formacao
+// documentada no TSIdDPS. Para NIF/cNaoNIF nao ha regra publicada de
+// inscricao no Id; nesse caso so a forma do pattern e verificada.
+func validateOfficialID(input OfficialDPSInput) error {
+	if !officialDPSIDPattern.MatchString(input.ID) {
+		return fmt.Errorf("%w: Id fora do TSIdDPS de 45 posicoes", ErrInvalidDPS)
+	}
+	if input.TpEmit != "1" {
+		return nil
+	}
+	tpInsc, inscricao, ok := officialInscricaoFromPrestador(input.Prestador)
+	if !ok {
+		return nil
+	}
+	esperado, err := BuildDPSID(input.CLocEmi, tpInsc, inscricao, input.Serie, input.NDPS)
+	if err != nil {
+		return err
+	}
+	if input.ID != esperado {
+		return fmt.Errorf("%w: Id diverge da formacao oficial: %s != %s", ErrInvalidDPS, input.ID, esperado)
+	}
+	return nil
+}
+
+func officialInscricaoFromPrestador(p OfficialPrestador) (tpInsc, inscricao string, ok bool) {
+	switch p.DocumentoTipo {
+	case "CNPJ":
+		return "2", p.Documento, true
+	case "CPF":
+		return "1", p.Documento, true
+	}
+	return "", "", false
+}
+
+// BuildDPSID monta o Id da DPS pela regra de formacao documentada no TSIdDPS
+// do leiaute oficial. Nao valida existencia, vigencia nem digito verificador da
+// inscricao: apenas monta e confere a forma publicada.
+func BuildDPSID(cLocEmi, tpInsc, inscricao, serie, nDPS string) (string, error) {
+	if !isOfficialDigits(cLocEmi, 7) {
+		return "", fmt.Errorf("%w: Id: cLocEmi deve ter 7 digitos", ErrInvalidDPS)
+	}
+	var inscricao14 string
+	switch tpInsc {
+	case "1":
+		if !isOfficialDigits(inscricao, officialCPFLen) {
+			return "", fmt.Errorf("%w: Id: CPF deve ter 11 digitos", ErrInvalidDPS)
+		}
+		inscricao14 = strings.Repeat("0", officialCNPJLen-officialCPFLen) + inscricao
+	case "2":
+		if !isOfficialCNPJ(inscricao) {
+			return "", fmt.Errorf("%w: Id: CNPJ deve ter 14 caracteres [0-9A-Z]", ErrInvalidDPS)
+		}
+		inscricao14 = inscricao
+	default:
+		return "", fmt.Errorf("%w: Id: tipo de inscricao deve ser 1 (CPF) ou 2 (CNPJ)", ErrInvalidDPS)
+	}
+	if !officialSerieDPSPattern.MatchString(serie) {
+		return "", fmt.Errorf("%w: Id: serie fora do TSSerieDPS: %s", ErrInvalidDPS, serie)
+	}
+	if !officialNumDPSPattern.MatchString(nDPS) {
+		return "", fmt.Errorf("%w: Id: nDPS fora do TSNumDPS: %s", ErrInvalidDPS, nDPS)
+	}
+	id := "DPS" + cLocEmi + tpInsc + inscricao14 +
+		strings.Repeat("0", 5-len(serie)) + serie +
+		strings.Repeat("0", 15-len(nDPS)) + nDPS
+	if !officialDPSIDPattern.MatchString(id) {
+		return "", fmt.Errorf("%w: Id montado fora do TSIdDPS: %s", ErrInvalidDPS, id)
+	}
+	return id, nil
+}
+
+var (
+	officialSerieDPSPattern = regexp.MustCompile(`^([0-9]{1,4}|[0-8][0-9]{4})$`)
+	officialNumDPSPattern   = regexp.MustCompile(`^[1-9][0-9]{0,14}$`)
+)
 
 // validateOfficialCTribNac reproduz somente a forma de TSCodTribNac do XSD
 // oficial v1.01. Nao verifica existencia, vigencia ou aplicabilidade fiscal.
@@ -386,8 +486,8 @@ func validateOfficialDocumento(tipo, valor, grupo string) error {
 	campo := grupo + ".documento"
 	switch tipo {
 	case "CNPJ":
-		if !isOfficialDigits(valor, officialCNPJLen) {
-			return fmt.Errorf("%w: %s (%s) deve ter exatamente %d digitos", ErrInvalidDPS, campo, tipo, officialCNPJLen)
+		if !isOfficialCNPJ(valor) {
+			return fmt.Errorf("%w: %s (%s) deve ter exatamente %d caracteres [0-9A-Z]", ErrInvalidDPS, campo, tipo, officialCNPJLen)
 		}
 	case "CPF":
 		if !isOfficialDigits(valor, officialCPFLen) {
@@ -406,6 +506,23 @@ func validateOfficialDocumento(tipo, valor, grupo string) error {
 		}
 	}
 	return nil
+}
+
+// isOfficialCNPJ reflete TSCNPJ do leiaute NT 009: 14 caracteres ASCII de
+// [0-9A-Z] (CNPJ alfanumerico em producao desde 2026-08-10). Nao valida
+// digito verificador; essa checagem pertence ao modulo party.
+func isOfficialCNPJ(valor string) bool {
+	if len(valor) != officialCNPJLen {
+		return false
+	}
+	for i := 0; i < len(valor); i++ {
+		c := valor[i]
+		if (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func isOfficialDigits(valor string, tamanho int) bool {

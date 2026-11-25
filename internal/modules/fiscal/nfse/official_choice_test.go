@@ -14,8 +14,7 @@ import (
 // Cobre o xs:choice de documento nos tres grupos de pessoa da DPS v1.01.
 // Cada fixture sintetica usa o mesmo tipo em prest, toma e interm, de modo
 // que um caso feliz prova a geracao do elemento correto uma vez por grupo.
-// O facet de serie continua bloqueando o XSD: os testes nao mascaram esse
-// gap nem exigem que a DPS inteira seja aceita.
+// A DPS inteira precisa ser aceita pelo leiaute oficial vigente (NT 009).
 func TestBuildDPSOficialChoiceDeDocumento(t *testing.T) {
 	validador := novoValidadorOficial(t)
 	casos := []struct {
@@ -66,16 +65,8 @@ func TestBuildDPSOficialChoiceDeDocumento(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if resultado.Valid {
-				t.Fatal("fixture nao deveria passar inteira: facet de serie continua bloqueando")
-			}
-			if len(resultado.Errors) == 0 {
-				t.Fatal("diagnostico do XSD ausente")
-			}
-			for _, problema := range resultado.Errors {
-				if !strings.Contains(problema, "serie") {
-					t.Fatalf("choice %s gerou erro alem do bloqueio de serie: %v", caso.tipo, resultado.Errors)
-				}
+			if !resultado.Valid {
+				t.Fatalf("choice %s deveria passar inteiro no XSD vigente: %v", caso.tipo, resultado.Errors)
 			}
 		})
 	}
@@ -101,6 +92,7 @@ func TestBuildDPSOficialChoiceAceitaBordas(t *testing.T) {
 			copia := clonarOfficialDPSInput(t, base)
 			copia.Prestador.DocumentoTipo = caso.tipo
 			copia.Prestador.Documento = caso.valor
+			recalcularID(t, &copia)
 			if _, err := nfse.BuildDPSOficial(context.Background(), copia); err != nil {
 				t.Fatalf("borda de %s deveria ser aceita: %v", caso.tipo, err)
 			}
@@ -116,7 +108,6 @@ func TestBuildDPSOficialChoiceRejeitaDocumentoInvalido(t *testing.T) {
 	}{
 		{"CNPJ com 13 digitos", "CNPJ", "1234567890123"},
 		{"CNPJ com 15 digitos", "CNPJ", "123456789012345"},
-		{"CNPJ alfanumerico", "CNPJ", "1234567890123A"},
 		{"CPF com 10 digitos", "CPF", "1234567890"},
 		{"CPF com 12 digitos", "CPF", "123456789012"},
 		{"CPF alfanumerico", "CPF", "1234567890A"},
@@ -175,6 +166,7 @@ func TestBuildDPSOficialChoiceNormalizaTipoComEspacos(t *testing.T) {
 				OpSimpNac:     input.Prestador.OpSimpNac,
 				RegEspTrib:    input.Prestador.RegEspTrib,
 			}
+			recalcularID(t, &input)
 			input.Tomador = &nfse.OfficialPessoa{DocumentoTipo: caso.bruto, Documento: caso.valor, Nome: "Tomador sintetico"}
 			input.Intermediario = &nfse.OfficialPessoa{DocumentoTipo: caso.bruto, Documento: caso.valor, Nome: "Intermediario sintetico"}
 
@@ -194,10 +186,8 @@ func TestBuildDPSOficialChoiceNormalizaTipoComEspacos(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, problema := range resultado.Errors {
-				if !strings.Contains(problema, "serie") {
-					t.Fatalf("tipo normalizado %s gerou erro alem do bloqueio de serie: %v", caso.esperado, resultado.Errors)
-				}
+			if !resultado.Valid {
+				t.Fatalf("tipo normalizado %s deveria passar no XSD vigente: %v", caso.esperado, resultado.Errors)
 			}
 		})
 	}
@@ -231,4 +221,24 @@ func TestBuildDPSOficialChoiceRejeitaDocumentoVazio(t *testing.T) {
 			})
 		}
 	}
+}
+
+// recalcularID mantem o Id coerente com o prestador quando o teste troca o
+// documento do emitente. A regra de formacao vem do TSIdDPS oficial.
+func recalcularID(t *testing.T, input *nfse.OfficialDPSInput) {
+	t.Helper()
+	tpInsc := ""
+	switch strings.TrimSpace(input.Prestador.DocumentoTipo) {
+	case "CNPJ":
+		tpInsc = "2"
+	case "CPF":
+		tpInsc = "1"
+	default:
+		return
+	}
+	id, err := nfse.BuildDPSID(input.CLocEmi, tpInsc, input.Prestador.Documento, input.Serie, input.NDPS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.ID = id
 }

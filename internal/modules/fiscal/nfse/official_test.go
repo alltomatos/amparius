@@ -31,7 +31,7 @@ func carregarFixtureOficialArquivo(t *testing.T, nome string) nfse.OfficialDPSIn
 	return input
 }
 
-func TestBuildDPSOficialComRamosOpcionaisPreservaGapDeSerie(t *testing.T) {
+func TestBuildDPSOficialComRamosOpcionaisValidaNoXSDVigente(t *testing.T) {
 	validador := novoValidadorOficial(t)
 	input := carregarFixtureOficialArquivo(t, "dps-opcionais.json")
 	esperado, err := os.ReadFile(filepath.Join("testdata", "official", "dps-opcionais.xml"))
@@ -49,8 +49,8 @@ func TestBuildDPSOficialComRamosOpcionaisPreservaGapDeSerie(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resultado.Valid || !strings.Contains(strings.Join(resultado.Errors, " "), "serie") {
-		t.Fatalf("gap de serie do XSD deveria ser diagnosticado sem mascarar os ramos opcionais: %v", resultado.Errors)
+	if !resultado.Valid {
+		t.Fatalf("DPS com ramos opcionais deveria ser aceita pelo XSD oficial: %v", resultado.Errors)
 	}
 	for _, elemento := range []string{"<toma>", "<interm>", "<infoCompl>", "<idDocTec>", "<docRef>", "<xPed>", "<xInfComp>"} {
 		if !strings.Contains(string(dps.XML), elemento) {
@@ -125,10 +125,7 @@ func TestBuildDPSOficialValidaNomeDeTomaEIntermNosLimitesXSD(t *testing.T) {
 				if err != nil {
 					t.Fatalf("nome de %d caracteres deveria ser aceito: %v", len([]rune(caso.nome)), err)
 				}
-				// Neutraliza somente o bloqueio de serie documentado: assim o
-				// caso de borda tambem prova a aceitacao pelo XSD v1.01 local.
-				xml := strings.Replace(string(dps.XML), "<serie>1</serie>", "<serie>^1$</serie>", 1)
-				resultado, err := validador.ValidateDPS(context.Background(), nfse.DPS{XML: []byte(xml), IDDps: dps.IDDps})
+				resultado, err := validador.ValidateDPS(context.Background(), dps)
 				if err != nil || !resultado.Valid {
 					t.Fatalf("nome de %d caracteres deveria passar no XSD: %+v err=%v", len([]rune(caso.nome)), resultado, err)
 				}
@@ -172,10 +169,7 @@ func TestBuildDPSOficialValidaXDescServNosLimitesTSDesc2000(t *testing.T) {
 				t.Fatalf("xDescServ com %d runas deveria ser aceito: %v", len([]rune(caso.descricao)), err)
 			}
 
-			// Neutraliza somente o bloqueio conhecido de serie; o caso continua
-			// provando o facet TSDesc2000 no XSD v1.01 local.
-			xml := strings.Replace(string(dps.XML), "<serie>1</serie>", "<serie>^1$</serie>", 1)
-			resultado, err := validador.ValidateDPS(context.Background(), nfse.DPS{XML: []byte(xml), IDDps: dps.IDDps})
+			resultado, err := validador.ValidateDPS(context.Background(), dps)
 			if err != nil || !resultado.Valid {
 				t.Fatalf("xDescServ com %d runas deveria passar no XSD: %+v err=%v", len([]rune(caso.descricao)), resultado, err)
 			}
@@ -221,10 +215,7 @@ func TestBuildDPSOficialValidaFormatoDeCTribNac(t *testing.T) {
 				t.Fatalf("cTribNac %q nao foi preservado no XML", caso.valor)
 			}
 
-			// Neutraliza somente o bloqueio conhecido de serie; o caso continua
-			// provando o pattern TSCodTribNac no XSD v1.01 local.
-			xml := strings.Replace(string(dps.XML), "<serie>1</serie>", "<serie>^1$</serie>", 1)
-			resultado, err := validador.ValidateDPS(context.Background(), nfse.DPS{XML: []byte(xml), IDDps: dps.IDDps})
+			resultado, err := validador.ValidateDPS(context.Background(), dps)
 			if err != nil || !resultado.Valid {
 				t.Fatalf("cTribNac %q deveria passar no XSD: %+v err=%v", caso.valor, resultado, err)
 			}
@@ -255,10 +246,7 @@ func TestBuildDPSOficialCTribMunOpcionalEOrdenado(t *testing.T) {
 		ultima = posicao
 	}
 
-	// Neutraliza somente o bloqueio conhecido de serie=1; o caso continua
-	// provando a aceitacao estrutural de cTribMun pelo XSD local.
-	xml = strings.Replace(xml, "<serie>1</serie>", "<serie>^1$</serie>", 1)
-	resultado, err := validador.ValidateDPS(context.Background(), nfse.DPS{XML: []byte(xml), IDDps: dps.IDDps})
+	resultado, err := validador.ValidateDPS(context.Background(), dps)
 	if err != nil || !resultado.Valid {
 		t.Fatalf("cTribMun sintetico deveria passar no XSD: %+v err=%v", resultado, err)
 	}
@@ -387,10 +375,7 @@ func TestBuildDPSOficialValidaFacetsTextuaisDeInfoCompl(t *testing.T) {
 				t.Fatal("whitespace interno de xInfComp foi normalizado")
 			}
 
-			// Neutraliza somente o bloqueio conhecido de serie; o caso continua
-			// provando o facet textual correspondente no XSD v1.01 local.
-			xml := strings.Replace(string(dps.XML), "<serie>1</serie>", "<serie>^1$</serie>", 1)
-			resultado, err := validador.ValidateDPS(context.Background(), nfse.DPS{XML: []byte(xml), IDDps: dps.IDDps})
+			resultado, err := validador.ValidateDPS(context.Background(), dps)
 			if err != nil || !resultado.Valid {
 				t.Fatalf("%s com %d runas deveria passar no XSD: %+v err=%v", caso.campo, len([]rune(caso.valor)), resultado, err)
 			}
@@ -422,7 +407,7 @@ func clonarOfficialDPSInput(t *testing.T, input nfse.OfficialDPSInput) nfse.Offi
 	return copia
 }
 
-func TestBuildDPSOficialDetectaSerieIncompativelComXSD(t *testing.T) {
+func TestBuildDPSOficialSerieValidaNoLeiauteVigente(t *testing.T) {
 	validador := novoValidadorOficial(t)
 	input := carregarFixtureOficial(t)
 	dps, err := nfse.BuildDPSOficial(context.Background(), input)
@@ -439,8 +424,8 @@ func TestBuildDPSOficialDetectaSerieIncompativelComXSD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resultado.Valid || !strings.Contains(strings.Join(resultado.Errors, " "), "serie") {
-		t.Fatalf("serie=1 deveria ser rejeitada pelo facet oficial: %v", resultado.Errors)
+	if !resultado.Valid {
+		t.Fatalf("serie=1 deveria ser aceita pelo TSSerieDPS vigente: %v", resultado.Errors)
 	}
 	if !strings.Contains(string(dps.XML), `<infDPS Id="`) {
 		t.Fatal("XML oficial deve usar infDPS com Id")
@@ -469,10 +454,10 @@ func TestGoldenOficialContraXSD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resultado.Valid || !strings.Contains(strings.Join(resultado.Errors, " "), "serie") {
-		t.Fatalf("golden oficial deveria manter o bloqueio do facet de serie: %+v", resultado)
+	if !resultado.Valid {
+		t.Fatalf("golden oficial deveria ser aceito pelo XSD vigente: %+v", resultado)
 	}
-	t.Logf("casos oficiais aceitos pelo XSD v1.01: 0/1; bloqueio documentado no facet TSSerieDPS")
+	t.Logf("casos oficiais aceitos pelo XSD v1.01 NT 009: 1/1")
 }
 
 func TestBuildDPSOficialDeterministico(t *testing.T) {

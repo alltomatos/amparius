@@ -37,9 +37,9 @@ func TestValidadorLocalRejeitaXMLInvalido(t *testing.T) {
 	}
 }
 
-// Caminho do pacote oficial relativo a raiz do repositorio. Nenhum download:
-// os arquivos ja estao versionados e o MANIFEST confere os 10 hashes + ZIP.
-var xsdRootRel = filepath.Join("..", "..", "..", "..", "docs", "fiscal", "xsd-nfse-v1.01", "Schemas", "1.01")
+// Caminho do pacote oficial vigente relativo a raiz do repositorio. Nenhum
+// download: os XSDs e o ZIP estao versionados e o MANIFEST confere os hashes.
+var xsdRootRel = filepath.Join("..", "..", "..", "..", "docs", "fiscal", "xsd-nfse-prodrest-20261020")
 
 const xsdEntry = "DPS_v1.01.xsd"
 
@@ -127,33 +127,30 @@ func TestXSDOficialVersaoDosSchemas(t *testing.T) {
 	}
 }
 
-func TestXSDOficialParidadeDoFacetSerie(t *testing.T) {
+func TestXSDOficialAceitaSerieDoLeiauteVigente(t *testing.T) {
 	validador := novoValidadorOficial(t)
 	input := carregarFixtureOficial(t)
 	dps, err := nfse.BuildDPSOficial(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	resultado, err := validador.ValidateDPS(context.Background(), dps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resultado.Valid || !strings.Contains(strings.Join(resultado.Errors, " "), "serie") {
-		t.Fatalf("serie=1 deveria reproduzir a rejeicao do motor XSD: %+v", resultado)
+	if !resultado.Valid {
+		t.Fatalf("serie=1 deveria ser aceita pelo TSSerieDPS vigente: %+v", resultado)
 	}
 
-	// Em XML Schema, ^ e $ sao literais. O proprio facet oficial, portanto,
-	// aceita ^1$ (ate 5 caracteres), embora isso nao seja uma serie semantica
-	// valida. O caso prova que o validador Go nao trata esses caracteres como
-	// ancoras de regexp Go.
-	xmlComFacetLiteral := strings.Replace(string(dps.XML), "<serie>1</serie>", "<serie>^1$</serie>", 1)
-	resultado, err = validador.ValidateDPS(context.Background(), nfse.DPS{XML: []byte(xmlComFacetLiteral), IDDps: dps.IDDps})
+	// O leiaute NT 009 corrigiu o pattern quebrado: [0-9]{1,4}|[0-8][0-9]{4}.
+	// Uma serie de cinco digitos iniciada em 9 fica fora do facet.
+	comSerieInvalida := strings.Replace(string(dps.XML), "<serie>1</serie>", "<serie>99999</serie>", 1)
+	resultado, err = validador.ValidateDPS(context.Background(), nfse.DPS{XML: []byte(comSerieInvalida), IDDps: dps.IDDps})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !resultado.Valid {
-		t.Fatalf("facet oficial deveria aceitar ^1$ como literal: %v", resultado.Errors)
+	if resultado.Valid || !strings.Contains(strings.Join(resultado.Errors, " "), "serie") {
+		t.Fatalf("serie=99999 deveria ser rejeitada pelo TSSerieDPS: %+v", resultado.Errors)
 	}
 }
 
@@ -164,7 +161,7 @@ func TestXSDOficialCompilaTiposAninhados(t *testing.T) {
 	validador := novoValidadorOficial(t)
 	base := `<DPS xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.01"><infDPS Id="%s"><tpAmb>2</tpAmb></infDPS></DPS>`
 	comIdValido, err := validador.ValidateDPS(context.Background(), nfse.DPS{
-		XML: []byte(fmt.Sprintf(base, "DPS000000000000000000000000000000000000000000")),
+		XML: []byte(fmt.Sprintf(base, "DPS230440020000000000019100001000000000000001")),
 	})
 	if err != nil {
 		t.Fatal(err)

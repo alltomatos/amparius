@@ -86,6 +86,21 @@ mesma cobrança ou documento. Os consumidores financeiros e fiscais ainda são
 uma fatia posterior; o worker atual não deve marcar esses eventos como efeito
 de negócio concluído.
 
+### FUN-01C — fronteira da ordem de serviço
+
+`funeral.service_order` é um agregado operacional do contrato. A criação exige
+contrato ativo e grava OS, histórico inicial e evento em uma única transação.
+Update e conclusão usam `service_order_mutation` para replay idempotente; o
+histórico permanece append-only. A consulta filtra tenant pela RLS e empresa
+pelo contexto confiável.
+
+Os eventos `funeral.service_order.created`,
+`funeral.service_order.updated`, `funeral.service_order.status_changed` e
+`funeral.service_order.completed` v1 não
+carregam descrição, nomes ou qualquer dado de party. Não existe JOIN com
+`party`, `finance` ou `fiscal` no módulo funeral. Consumidores de negócio e
+sincronização do relay continuam sendo fatias posteriores.
+
 ## 5. Dados
 
 - **PostgreSQL** com schema por módulo e `tenant_id` em toda tabela de negócio; **RLS** obrigatória.

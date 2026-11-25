@@ -206,6 +206,48 @@ func (r *Repository) List(ctx context.Context, limit int) ([]Party, error) {
 	return result, nil
 }
 
+// Search procura parties do tenant por nome civil, nome social ou documento.
+// A consulta retorna apenas dados já autorizados pelo tenant; não cria cadastro.
+func (r *Repository) Search(ctx context.Context, query string, limit int) ([]Party, error) {
+	tenantID, err := db.TenantFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	query = strings.TrimSpace(query)
+	if query == "" || len([]rune(query)) > maxPartyNameLength {
+		return nil, ErrInvalidSearch
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	var result []Party
+	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT p.id, p.tenant_id, p.kind, p.name, COALESCE(p.document, ''), p.status, pe.social_name
+			FROM party.party p
+			LEFT JOIN party.person pe ON pe.tenant_id = p.tenant_id AND pe.party_id = p.id
+			WHERE p.tenant_id = $1 AND (p.name ILIKE '%' || $2 || '%' OR COALESCE(pe.social_name, '') ILIKE '%' || $2 || '%' OR COALESCE(p.document, '') ILIKE '%' || $2 || '%')
+			ORDER BY p.updated_at DESC, p.id LIMIT $3`, tenantID, query, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var item Party
+			var social pgtype.Text
+			if err := rows.Scan(&item.ID, &item.TenantID, &item.Kind, &item.Name, &item.Document, &item.Status, &social); err != nil {
+				return err
+			}
+			item.SocialName = socialNameFromText(social)
+			result = append(result, item)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("buscar parties: %w", err)
+	}
+	return result, nil
+}
+
 func normalizeSocialName(kind string, socialName *string) *string {
 	if kind != KindPerson || socialName == nil {
 		return nil

@@ -24,8 +24,10 @@ type AccessChecker interface {
 // composto pelo middleware de autenticação antes deste handler.
 func NewDevelopmentHTTPHandler(checker AccessChecker, contractServices ...ContractService) http.Handler {
 	var contracts ContractService
+	var serviceOrders ServiceOrderService
 	if len(contractServices) > 0 {
 		contracts = contractServices[0]
+		serviceOrders, _ = contractServices[0].(ServiceOrderService)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Amparius-Development-Only", "true")
@@ -39,7 +41,19 @@ func NewDevelopmentHTTPHandler(checker AccessChecker, contractServices ...Contra
 				writeAccessError(w, err)
 				return
 			}
+			if serviceOrders != nil && (strings.Contains(r.URL.Path, "/service-orders") || strings.HasPrefix(r.URL.Path, "/_dev/funeral/service-orders")) {
+				serveServiceOrderRoute(w, r, serviceOrders)
+				return
+			}
 			serveContracts(w, r, contracts)
+			return
+		}
+		if serviceOrders != nil && strings.HasPrefix(r.URL.Path, "/_dev/funeral/service-orders") {
+			if err := checkFuneralAccess(r, checker); err != nil {
+				writeAccessError(w, err)
+				return
+			}
+			serveServiceOrderRoute(w, r, serviceOrders)
 			return
 		}
 		writeError(w, http.StatusNotFound, "FUNERAL_ROUTE_NOT_FOUND", "rota não encontrada")

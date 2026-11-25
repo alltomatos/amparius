@@ -205,6 +205,35 @@ oficiais vigentes para a competência e falha fechado quando não houver regra.
 
 Chave: `fiscal.document.requested:<contract_id>`.
 
+### `funeral.service_order.*` — v1 (FUN-01C)
+
+Agregado: `funeral.service_order`. Os três eventos usam payload sem PII:
+
+```json
+{
+  "service_order_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "contract_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "company_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "status": "open",
+  "from_status": "open",
+  "to_status": "completed"
+}
+```
+
+- `funeral.service_order.created`: `service_order_id`, `contract_id`,
+  `company_id`, `status` e `scheduled_for`.
+- `funeral.service_order.updated`: `service_order_id`, `contract_id`,
+  `company_id`, `from_status` e `to_status` (iguais quando a alteração é
+  somente operacional).
+- `funeral.service_order.status_changed`: os IDs e `from_status`/`to_status`
+  de uma transição explícita de estado.
+- `funeral.service_order.completed`: os mesmos IDs e `from_status`/`to_status`.
+
+Descrição, nomes e motivo textual não entram no payload. A criação usa
+`funeral.service_order.create:<sha256 do request>`; update e conclusão usam
+`funeral.service_order.<op>:<service_order_id>:<sha256 do request>`. O hash
+mantém as chaves estáveis e dentro do limite de 200 caracteres da outbox.
+
 ## 8. Compatibilidade
 
 - Campo **novo e opcional** entra na mesma `event_version`.

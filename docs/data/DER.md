@@ -1,6 +1,6 @@
 # DER — Amparius
 
-Versão 0.6 · modelo lógico inicial + entidade legal, estabelecimento, onboarding, nome social (ADR 0013), entitlement (ADR 0007), provedores/modelos/cota de IA (ADR 0008) e contrato funerário (ADR 0016). Diagramas em Mermaid; nomes em `snake_case`; toda tabela de negócio carrega `tenant_id`.
+Versão 0.7 · modelo lógico inicial + entidade legal, estabelecimento, onboarding, nome social (ADR 0013), entitlement (ADR 0007), provedores/modelos/cota de IA (ADR 0008), contrato funerário (ADR 0016) e ordem de serviço (ADR 0018). Diagramas em Mermaid; nomes em `snake_case`; toda tabela de negócio carrega `tenant_id`.
 
 > **Decisão de nomes (ADR 0007 §7):** `COMPANY` é a **entidade legal operadora** (CNPJ raiz — a funerária, o cemitério, a floricultura). O subtipo de cadastro de PJ cliente/fornecedor, antes chamado `COMPANY`, passa a se chamar **`PARTY_COMPANY`**. Não existem duas entidades com o mesmo nome. `ESTABLISHMENT` substitui `BRANCH`.
 
@@ -34,6 +34,8 @@ erDiagram
   FUNERAL_CONTRACT ||--o{ CONTRACT_FAMILY_MEMBER : includes
   FUNERAL_CONTRACT ||--o{ CONTRACT_STATUS_HISTORY : records
   FUNERAL_CONTRACT ||--o{ CONTRACT_INSTALLMENT : schedules
+  FUNERAL_CONTRACT ||--o{ SERVICE_ORDER : opens
+  SERVICE_ORDER ||--o{ SERVICE_ORDER_STATUS_HISTORY : records
 
   TENANT { uuid id PK
            text name
@@ -180,6 +182,34 @@ erDiagram
                          numeric amount
                          date due_date
                          text status }
+  SERVICE_ORDER { uuid id PK
+                  uuid tenant_id FK
+                  uuid company_id FK
+                  uuid contract_id FK
+                  text kind
+                  text description
+                  text status
+                  timestamptz scheduled_for
+                  timestamptz completed_at
+                  text idempotency_key
+                  text request_hash
+                  int version
+                  timestamptz created_at
+                  timestamptz updated_at }
+  SERVICE_ORDER_STATUS_HISTORY { uuid id PK
+                                 uuid tenant_id FK
+                                 uuid service_order_id FK
+                                 text from_status
+                                 text to_status
+                                 text reason
+                                 timestamptz changed_at }
+  SERVICE_ORDER_MUTATION { uuid id PK
+                           uuid tenant_id FK
+                           uuid service_order_id FK
+                           text operation
+                           text idempotency_key
+                           text request_hash
+                           timestamptz created_at }
 ```
 
 ### Contrato funerário (ADR 0016)
@@ -190,6 +220,14 @@ cliente é uma `party`, o falecido é um `deceased` e os familiares são
 item e o valor em centavos para preservar o contrato mesmo que o catálogo mude.
 `contract_status_history` é append-only; o agregado e as referências têm RLS
 por tenant e também filtram a empresa do contexto na aplicação.
+
+### Ordem de serviço (ADR 0018)
+
+`funeral.service_order` é a unidade operacional aberta a partir de um contrato
+ativo. A descrição e o tipo são dados da OS, não uma cópia de party; a outbox
+publica somente IDs opacos, estados e datas. `service_order_status_history` e
+`service_order_mutation` são append-only e têm RLS por tenant. A empresa do
+contexto limita leitura e escrita na aplicação.
 
 ### Nome social e nome de exibição
 
@@ -430,8 +468,11 @@ erDiagram
                  numeric monthly
                  text coverage }
   SERVICE_ORDER { uuid id PK
+                  uuid tenant_id FK
+                  uuid company_id FK
                   uuid contract_id FK
                   text kind
+                  text description
                   text status
                   timestamptz scheduled_for }
   WAKE { uuid id PK

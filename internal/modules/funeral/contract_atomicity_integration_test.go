@@ -138,6 +138,9 @@ func (f *atomicityFixture) close(t *testing.T) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	for _, statement := range []string{
+		"ALTER TABLE funeral.service_order_status_history DISABLE TRIGGER service_order_status_append_only",
+		"ALTER TABLE funeral.service_order_mutation DISABLE TRIGGER service_order_mutation_append_only",
+		"ALTER TABLE funeral.service_order DISABLE TRIGGER service_order_history_preserve",
 		"ALTER TABLE funeral.contract_status_history DISABLE TRIGGER contract_status_append_only",
 		"ALTER TABLE funeral.contract_installment DISABLE TRIGGER contract_installment_append_only",
 		"ALTER TABLE funeral.contract_family_member DISABLE TRIGGER contract_family_append_only",
@@ -147,6 +150,9 @@ func (f *atomicityFixture) close(t *testing.T) {
 		"ALTER TABLE outbox.delivery DISABLE TRIGGER delivery_append_only",
 		"ALTER TABLE outbox.event DISABLE TRIGGER event_history_preserve",
 		"DELETE FROM funeral.contract_status_history WHERE tenant_id = ANY($1::uuid[])",
+		"DELETE FROM funeral.service_order_mutation WHERE tenant_id = ANY($1::uuid[])",
+		"DELETE FROM funeral.service_order_status_history WHERE tenant_id = ANY($1::uuid[])",
+		"DELETE FROM funeral.service_order WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM funeral.contract_installment WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM funeral.contract_family_member WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM funeral.contract_item WHERE tenant_id = ANY($1::uuid[])",
@@ -162,6 +168,9 @@ func (f *atomicityFixture) close(t *testing.T) {
 		"DELETE FROM identity.company WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM identity.tenant WHERE id = ANY($1::uuid[])",
 		"ALTER TABLE funeral.contract_status_history ENABLE TRIGGER contract_status_append_only",
+		"ALTER TABLE funeral.service_order_status_history ENABLE TRIGGER service_order_status_append_only",
+		"ALTER TABLE funeral.service_order_mutation ENABLE TRIGGER service_order_mutation_append_only",
+		"ALTER TABLE funeral.service_order ENABLE TRIGGER service_order_history_preserve",
 		"ALTER TABLE funeral.contract_installment ENABLE TRIGGER contract_installment_append_only",
 		"ALTER TABLE funeral.contract_family_member ENABLE TRIGGER contract_family_append_only",
 		"ALTER TABLE funeral.contract_item ENABLE TRIGGER contract_item_append_only",

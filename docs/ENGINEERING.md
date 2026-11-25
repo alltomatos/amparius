@@ -517,6 +517,52 @@ go test ./internal/modules/funeral ./internal/modules/finance -count=1
 go test ./internal/modules/funeral -run 'TestFuneralContract' -count=1 -v
 ```
 
+### FUN-01C: ordem de serviço e jornada de atendimento
+
+`funeral.service_order` abre a execução operacional de um contrato `active`.
+Os estados são `open`, `in_progress`, `completed` e `cancelled`; a conclusão
+é uma operação própria e estados terminais não reabrem. O histórico fica em
+`funeral.service_order_status_history`, protegido por trigger append-only.
+
+A criação usa `Idempotency-Key` e `request_hash`. Atualizações e conclusões
+registram `funeral.service_order_mutation`, permitindo replay idêntico sem
+duplicar alteração, histórico ou evento. A empresa não é recebida no corpo:
+é resolvida do contexto e filtrada em toda leitura/escrita junto com RLS por
+tenant.
+
+As rotas dev-only são:
+
+- `POST /_dev/funeral/contracts/{contract_id}/service-orders` para abrir;
+- `GET /_dev/funeral/contracts/{contract_id}/service-orders` para listar;
+- `GET/PATCH /_dev/funeral/service-orders/{id}` para consultar/atualizar;
+- `PATCH /_dev/funeral/service-orders/{id}/status` para avançar o estado;
+- `POST /_dev/funeral/service-orders/{id}/complete` para concluir.
+
+A busca de cadastro (`GET /_dev/parties?q=...` ou `query=...`) e o POST de
+party existentes completam a jornada de busca/cadastro até contrato, parcela e
+OS. JSON é estrito, respostas têm `no-store` e erros não expõem PII.
+
+Eventos v1 (`funeral.service_order.created`, `.updated`, `.status_changed` e
+`.completed`) são
+gravados na mesma transação e levam apenas referências opacas, status e datas.
+Não há regra fiscal, cobrança, consumidor de negócio ou operação de agenda
+implícita nesta fatia.
+
+Evidência reproduzível, com o Postgres local e `amparius_app` sem
+`SUPERUSER/BYPASSRLS`:
+
+```powershell
+goose -dir migrations postgres 'postgres://amparius:amparius@127.0.0.1:5432/amparius?sslmode=disable' validate
+goose -dir migrations postgres 'postgres://amparius:amparius@127.0.0.1:5432/amparius?sslmode=disable' up
+$env:AMPA_TEST_POSTGRES_DSN = 'postgres://amparius_app:...@127.0.0.1:5432/amparius?sslmode=disable'
+$env:AMPA_TEST_POSTGRES_ADMIN_DSN = 'postgres://amparius:...@127.0.0.1:5432/amparius?sslmode=disable'
+go test ./internal/modules/funeral -count=1
+```
+
+O teste real confirmou abertura, update, conclusão, replay sem duplicação,
+isolamento por empresa e cleanup. Benchmark de carga de produção e
+consumidores de negócio da outbox permanecem fora do aceite desta fatia.
+
 ### Migration Finance
 
 `migrations/0003_finance.sql` cria o schema `finance` para contas, centros de

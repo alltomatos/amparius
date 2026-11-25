@@ -26,6 +26,9 @@ const (
 // repositório.
 var ErrInvalidPartyRequest = errors.New("cadastro de party inválido")
 
+// ErrInvalidSearch classifica uma busca vazia ou acima do limite da API.
+var ErrInvalidSearch = errors.New("busca de party inválida")
+
 // ErrInvalidDevelopmentTenant classifica o cabeçalho de tenant dev-only.
 var ErrInvalidDevelopmentTenant = errors.New("tenant de desenvolvimento inválido")
 
@@ -42,6 +45,12 @@ type Getter interface {
 // Updater é o contrato de alteração do nome social desta fatia.
 type Updater interface {
 	UpdateSocialName(context.Context, uuid.UUID, *string) (Party, error)
+}
+
+// Searcher é opcional para manter compatibilidade com serviços de teste que
+// implementam apenas o contrato original de cadastro/leitura.
+type Searcher interface {
+	Search(context.Context, string, int) ([]Party, error)
 }
 
 // Service agrega os contratos usados pelo handler de desenvolvimento.
@@ -106,6 +115,32 @@ func NewDevelopmentHTTPHandler(service Service) http.Handler {
 				w.Header().Set("Allow", http.MethodGet+", "+http.MethodPatch)
 				writeDevelopmentPartyError(w, http.StatusMethodNotAllowed, "método não permitido")
 			}
+			return
+		}
+		if r.Method == http.MethodGet {
+			searcher, ok := service.(Searcher)
+			if !ok {
+				writeDevelopmentPartyError(w, http.StatusServiceUnavailable, "busca de party indisponível")
+				return
+			}
+			query := strings.TrimSpace(r.URL.Query().Get("q"))
+			if query == "" {
+				query = strings.TrimSpace(r.URL.Query().Get("query"))
+			}
+			found, err := searcher.Search(db.WithTenant(r.Context(), tenantID), query, 25)
+			if err != nil {
+				if errors.Is(err, ErrInvalidSearch) {
+					writeDevelopmentPartyError(w, http.StatusBadRequest, "busca de party inválida")
+				} else {
+					writeDevelopmentPartyError(w, http.StatusInternalServerError, "não foi possível buscar parties")
+				}
+				return
+			}
+			items := make([]developmentPartyResponse, 0, len(found))
+			for _, item := range found {
+				items = append(items, developmentPartyFromModel(item))
+			}
+			writeDevelopmentPartyJSON(w, http.StatusOK, map[string]any{"status": "ok", "parties": items})
 			return
 		}
 		handleDevelopmentPartyCreate(w, r, service, tenantID)

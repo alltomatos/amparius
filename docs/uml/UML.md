@@ -195,6 +195,20 @@ stateDiagram-v2
   online --> [*]: desligado
 ```
 
+### 5.4 Ordem de serviço
+
+```mermaid
+stateDiagram-v2
+  [*] --> open: contrato active
+  open --> in_progress: iniciar atendimento
+  open --> completed: concluir
+  open --> cancelled: cancelar
+  in_progress --> completed: concluir
+  in_progress --> cancelled: cancelar
+  completed --> [*]
+  cancelled --> [*]
+```
+
 ## 6. Classes — núcleo financeiro
 
 ```mermaid

@@ -12,6 +12,7 @@ ARG SERVICE=api
 WORKDIR /src
 
 COPY go.mod ./
+COPY go.sum ./
 COPY cmd ./cmd
 COPY internal ./internal
 

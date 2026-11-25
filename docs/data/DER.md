@@ -33,6 +33,7 @@ erDiagram
   FAMILY_LINK ||--o{ CONTRACT_FAMILY_MEMBER : included
   FUNERAL_CONTRACT ||--o{ CONTRACT_FAMILY_MEMBER : includes
   FUNERAL_CONTRACT ||--o{ CONTRACT_STATUS_HISTORY : records
+  FUNERAL_CONTRACT ||--o{ CONTRACT_INSTALLMENT : schedules
 
   TENANT { uuid id PK
            text name
@@ -172,6 +173,13 @@ erDiagram
                             text to_status
                             text reason
                             timestamptz changed_at }
+  CONTRACT_INSTALLMENT { uuid id PK
+                         uuid tenant_id FK
+                         uuid contract_id FK
+                         int number
+                         numeric amount
+                         date due_date
+                         text status }
 ```
 
 ### Contrato funerário (ADR 0016)
@@ -209,6 +217,17 @@ O caminho pré-autenticação chama `identity.create_onboarding` sem receber
 `tenant_id`; o banco gera o UUID e cria tenant, empresa, estabelecimento,
 usuário e papel na mesma transação. O usuário inicial fica `pending_auth`.
 Senha, sessão, MFA e vínculo OIDC não fazem parte deste contrato.
+
+### Parcelamento e integração do contrato (ADR 0017)
+
+`funeral.contract_installment` é o snapshot comercial append-only. A soma de
+suas parcelas é exatamente `contract.total_amount`; o restante de centavos é
+distribuído nas primeiras parcelas. O funeral não cria `finance.title` nem
+`finance.installment`: publica `finance.title.requested` v1 e
+`fiscal.document.requested` v1 na outbox, ambos com idempotência por contrato.
+O consumidor financeiro deve deduplicar pelo evento antes de criar a cobrança;
+o consumidor fiscal deve resolver tributos nas tabelas oficiais datadas. Não
+existe JOIN entre schemas.
 
 ## 2. Espinha dorsal: financeiro e fiscal
 

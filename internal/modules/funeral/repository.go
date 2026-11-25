@@ -47,12 +47,29 @@ type ContractItemCreate struct {
 	UnitAmountCents int64     `json:"unit_amount_cents"`
 }
 
+// ContractPaymentPlan define a regra comercial de geração do snapshot de
+// parcelas. Baixa, juros e descontos continuam pertencendo ao financeiro.
+type ContractPaymentPlan struct {
+	InstallmentCount int
+	FirstDueDate     time.Time
+	IntervalMonths   int
+}
+
+type ContractInstallment struct {
+	ID, TenantID, ContractID uuid.UUID
+	Number                   int
+	AmountCents              int64
+	DueDate                  time.Time
+	Status                   string
+}
+
 type ContractCreate struct {
 	CompanyID       uuid.UUID
 	CustomerPartyID uuid.UUID            `json:"customer_party_id"`
 	DeceasedID      uuid.UUID            `json:"deceased_id"`
 	FamilyLinkIDs   []uuid.UUID          `json:"family_link_ids"`
 	Items           []ContractItemCreate `json:"items"`
+	PaymentPlan     *ContractPaymentPlan
 	IdempotencyKey  string
 }
 
@@ -77,6 +94,7 @@ type Contract struct {
 	IdempotencyKey                                       string
 	CreatedAt, UpdatedAt                                 time.Time
 	Items                                                []ContractItem
+	Installments                                         []ContractInstallment
 	FamilyLinkIDs                                        []uuid.UUID
 	StatusHistory                                        []ContractStatusChange
 }
@@ -205,6 +223,23 @@ func (r *Repository) CreateContract(ctx context.Context, input ContractCreate) (
 				return err
 			}
 		}
+		now := time.Now().UTC()
+		installments, err := buildInstallments(totalCents(input.Items), input.PaymentPlan, now)
+		if err != nil {
+			return err
+		}
+		for _, installment := range installments {
+			amount, err := centsToNumeric(installment.AmountCents)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO funeral.contract_installment
+				(tenant_id,contract_id,number,amount,due_date,status)
+				VALUES ($1,$2,$3,$4::numeric,$5,$6)`, tenantID, insertedID,
+				installment.Number, amount, installment.DueDate.UTC().Format("2006-01-02"), installment.Status); err != nil {
+				return err
+			}
+		}
 		for _, familyLinkID := range input.FamilyLinkIDs {
 			if _, err := tx.Exec(ctx, `INSERT INTO funeral.contract_family_member (tenant_id,contract_id,family_link_id) VALUES ($1,$2,$3)`, tenantID, insertedID, familyLinkID); err != nil {
 				return err
@@ -225,6 +260,38 @@ func (r *Repository) CreateContract(ctx context.Context, input ContractCreate) (
 			TenantID: tenantID, AggregateType: "funeral.contract", AggregateID: insertedID,
 			EventType: "funeral.contract.created", Version: 1, Payload: payload,
 			IdempotencyKey: "funeral.contract.create:" + input.IdempotencyKey,
+		}); err != nil {
+			return err
+		}
+		billingPayload, err := json.Marshal(map[string]any{
+			"contract_id": insertedID.String(), "company_id": companyID.String(),
+			"customer_party_id":  input.CustomerPartyID.String(),
+			"total_amount_cents": totalCents(input.Items),
+			"installments":       installmentEventPayload(installments),
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := r.eventStore.AppendTx(ctx, tx, outbox.Event{
+			TenantID: tenantID, AggregateType: "funeral.contract", AggregateID: insertedID,
+			EventType: "finance.title.requested", Version: 1, Payload: billingPayload,
+			IdempotencyKey: "finance.title.requested:" + insertedID.String(),
+		}); err != nil {
+			return err
+		}
+		fiscalPayload, err := json.Marshal(map[string]any{
+			"contract_id": insertedID.String(), "company_id": companyID.String(),
+			"customer_party_id":  input.CustomerPartyID.String(),
+			"competence":         now.Format("2006-01-02"),
+			"total_amount_cents": totalCents(input.Items),
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := r.eventStore.AppendTx(ctx, tx, outbox.Event{
+			TenantID: tenantID, AggregateType: "funeral.contract", AggregateID: insertedID,
+			EventType: "fiscal.document.requested", Version: 1, Payload: fiscalPayload,
+			IdempotencyKey: "fiscal.document.requested:" + insertedID.String(),
 		}); err != nil {
 			return err
 		}
@@ -353,7 +420,59 @@ func validateCreate(input ContractCreate) error {
 	if _, err := centsToNumeric(totalCents(input.Items)); err != nil {
 		return ErrInvalidContract
 	}
+	if err := validatePaymentPlan(input.PaymentPlan); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validatePaymentPlan(plan *ContractPaymentPlan) error {
+	if plan == nil {
+		return nil
+	}
+	if plan.InstallmentCount < 1 || plan.InstallmentCount > 120 || plan.FirstDueDate.IsZero() || plan.IntervalMonths < 1 || plan.IntervalMonths > 12 {
+		return ErrInvalidContract
+	}
+	return nil
+}
+
+func buildInstallments(total int64, plan *ContractPaymentPlan, now time.Time) ([]ContractInstallment, error) {
+	count := 1
+	firstDueDate := time.Date(now.UTC().Year(), now.UTC().Month(), now.UTC().Day(), 0, 0, 0, 0, time.UTC)
+	intervalMonths := 1
+	if plan != nil {
+		if err := validatePaymentPlan(plan); err != nil {
+			return nil, err
+		}
+		count, firstDueDate, intervalMonths = plan.InstallmentCount, plan.FirstDueDate.UTC(), plan.IntervalMonths
+		firstDueDate = time.Date(firstDueDate.Year(), firstDueDate.Month(), firstDueDate.Day(), 0, 0, 0, 0, time.UTC)
+	}
+	base, remainder := total/int64(count), total%int64(count)
+	result := make([]ContractInstallment, 0, count)
+	for number := 1; number <= count; number++ {
+		amount := base
+		if int64(number) <= remainder {
+			amount++
+		}
+		result = append(result, ContractInstallment{
+			Number: number, AmountCents: amount,
+			DueDate: firstDueDate.AddDate(0, intervalMonths*(number-1), 0),
+			Status:  "scheduled",
+		})
+	}
+	return result, nil
+}
+
+func installmentEventPayload(installments []ContractInstallment) []map[string]any {
+	result := make([]map[string]any, 0, len(installments))
+	for _, installment := range installments {
+		result = append(result, map[string]any{
+			"number":       installment.Number,
+			"amount_cents": installment.AmountCents,
+			"due_date":     installment.DueDate.UTC().Format("2006-01-02"),
+		})
+	}
+	return result
 }
 
 func validateReferences(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, input ContractCreate) error {
@@ -428,6 +547,27 @@ func loadContractTx(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, resu
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	result.Installments = nil
+	rows, err = tx.Query(ctx, `SELECT id,tenant_id,contract_id,number,amount::text,due_date,status FROM funeral.contract_installment WHERE tenant_id=$1 AND contract_id=$2 ORDER BY number`, tenantID, id)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var installment ContractInstallment
+		var amount string
+		if err := rows.Scan(&installment.ID, &installment.TenantID, &installment.ContractID, &installment.Number, &amount, &installment.DueDate, &installment.Status); err != nil {
+			return err
+		}
+		installment.AmountCents, err = numericToCents(amount)
+		if err != nil {
+			return err
+		}
+		result.Installments = append(result.Installments, installment)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
 	result.FamilyLinkIDs = nil
 	rows, err = tx.Query(ctx, `SELECT family_link_id FROM funeral.contract_family_member WHERE tenant_id=$1 AND contract_id=$2 ORDER BY id`, tenantID, id)
 	if err != nil {
@@ -471,8 +611,17 @@ func contractRequestHash(input ContractCreate) (string, error) {
 		DeceasedID      uuid.UUID            `json:"deceased_id"`
 		FamilyLinkIDs   []uuid.UUID          `json:"family_link_ids"`
 		Items           []ContractItemCreate `json:"items"`
+		PaymentPlan     any                  `json:"payment_plan,omitempty"`
 	}
-	b, err := json.Marshal(hashInput{input.CompanyID, input.CustomerPartyID, input.DeceasedID, input.FamilyLinkIDs, input.Items})
+	var paymentPlan any
+	if input.PaymentPlan != nil {
+		paymentPlan = map[string]any{
+			"installment_count": input.PaymentPlan.InstallmentCount,
+			"first_due_date":    input.PaymentPlan.FirstDueDate.UTC().Format("2006-01-02"),
+			"interval_months":   input.PaymentPlan.IntervalMonths,
+		}
+	}
+	b, err := json.Marshal(hashInput{input.CompanyID, input.CustomerPartyID, input.DeceasedID, input.FamilyLinkIDs, input.Items, paymentPlan})
 	if err != nil {
 		return "", err
 	}

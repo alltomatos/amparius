@@ -165,6 +165,46 @@ Notas de consumo: `status` usa o domínio `funeral_contract_status`
 (`draft`, `active`, `completed`, `cancelled`); `reason` do histórico não é
 publicado para não carregar texto livre.
 
+### `finance.title.requested` — v1
+
+Agregado: `funeral.contract`. O módulo funerário publica a solicitação para o
+financeiro criar um título e suas parcelas. O consumidor deve usar a chave do
+evento como idempotência do título e `(title_id, number)` para não duplicar a
+cobrança.
+
+```json
+{
+  "contract_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "company_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "customer_party_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "total_amount_cents": 10000,
+  "installments": [
+    {"number": 1, "amount_cents": 3334, "due_date": "2026-12-15"},
+    {"number": 2, "amount_cents": 3333, "due_date": "2027-01-15"}
+  ]
+}
+```
+
+Chave: `finance.title.requested:<contract_id>`.
+
+### `fiscal.document.requested` — v1
+
+Agregado: `funeral.contract`. O evento solicita a criação do documento fiscal,
+mas não calcula nem transporta tributos. O consumidor consulta as regras
+oficiais vigentes para a competência e falha fechado quando não houver regra.
+
+```json
+{
+  "contract_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "company_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "customer_party_id": "0190f3c8-6d3b-7c1a-9b8e-2f4d5a6b7c8d",
+  "competence": "2026-11-25",
+  "total_amount_cents": 10000
+}
+```
+
+Chave: `fiscal.document.requested:<contract_id>`.
+
 ## 8. Compatibilidade
 
 - Campo **novo e opcional** entra na mesma `event_version`.

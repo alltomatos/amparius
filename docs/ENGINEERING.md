@@ -486,6 +486,37 @@ confiável (issue #20); reporte real de assentos pela célula; auditoria de
 alteração de cota (exige nova ação no catálogo `entitlement_action`); snapshot
 assinado, invalidação e TTL no relay.
 
+### FUN-01B: parcelamento e eventos do contrato funerário
+
+`funeral.contract_installment` guarda o snapshot append-only do plano de
+parcelas. `ContractPaymentPlan` gera até 120 parcelas com divisão inteira em
+centavos, distribui o resto nas primeiras parcelas e calcula vencimentos com
+`AddDate`; a soma nunca diverge do total congelado do contrato. Sem plano
+explícito, o contrato recebe uma parcela única na data UTC da criação.
+
+A criação grava contrato, parcelas e três eventos na mesma transação:
+`funeral.contract.created` v1, `finance.title.requested` v1 e
+`fiscal.document.requested` v1. As duas solicitações usam chaves estáveis por
+contrato. O payload contém apenas UUIDs, estados, datas e valores em centavos;
+o evento fiscal não contém alíquota, CST, cClassTrib ou regra estimada.
+
+`migrations/0027_funeral_contract_installments.sql` habilita RLS e concede ao
+`amparius_app` somente `SELECT, INSERT` em `funeral.contract_installment`.
+Também adiciona chave de idempotência opcional a `finance.title` para o
+consumidor financeiro deduplicar antes de criar cobrança. Os consumidores de
+negócio ainda não estão ligados ao worker; esta fatia entrega o contrato de
+evento e deixa explícito esse limite.
+
+Evidência unitária e PostgreSQL real:
+
+```powershell
+$env:AMPA_TEST_POSTGRES_DSN = 'postgres://amparius_app:...@127.0.0.1:5432/amparius?sslmode=disable'
+$env:AMPA_TEST_POSTGRES_ADMIN_DSN = 'postgres://amparius:...@127.0.0.1:5432/amparius?sslmode=disable'
+goose -dir migrations postgres 'postgres://amparius:...@127.0.0.1:5432/amparius?sslmode=disable' up
+go test ./internal/modules/funeral ./internal/modules/finance -count=1
+go test ./internal/modules/funeral -run 'TestFuneralContract' -count=1 -v
+```
+
 ### Migration Finance
 
 `migrations/0003_finance.sql` cria o schema `finance` para contas, centros de

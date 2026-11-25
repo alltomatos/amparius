@@ -75,6 +75,17 @@ Versão 0.1 · 21/11/2026
 
 Regras: schema por módulo, sem `JOIN` cruzado em código de módulo, integração por serviço público ou evento versionado.
 
+### FUN-01B — fronteira do parcelamento
+
+O módulo `funeral` mantém somente o snapshot em
+`funeral.contract_installment`. A criação publica
+`finance.title.requested` v1 e `fiscal.document.requested` v1 pela outbox;
+nenhum módulo faz JOIN ou escrita direta no schema vizinho. As chaves de
+idempotência são derivadas do `contract_id`, evitando duas solicitações para a
+mesma cobrança ou documento. Os consumidores financeiros e fiscais ainda são
+uma fatia posterior; o worker atual não deve marcar esses eventos como efeito
+de negócio concluído.
+
 ## 5. Dados
 
 - **PostgreSQL** com schema por módulo e `tenant_id` em toda tabela de negócio; **RLS** obrigatória.

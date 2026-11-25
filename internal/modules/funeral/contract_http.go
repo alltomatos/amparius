@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/alltomatos/amparius/internal/platform/db"
 	"github.com/google/uuid"
@@ -19,6 +20,13 @@ type contractCreatePayload struct {
 	DeceasedID      string                      `json:"deceased_id"`
 	FamilyLinkIDs   []string                    `json:"family_link_ids"`
 	Items           []contractItemCreatePayload `json:"items"`
+	PaymentPlan     *paymentPlanPayload         `json:"payment_plan"`
+}
+
+type paymentPlanPayload struct {
+	InstallmentCount *int    `json:"installment_count"`
+	FirstDueDate     *string `json:"first_due_date"`
+	IntervalMonths   *int    `json:"interval_months"`
 }
 
 type contractItemCreatePayload struct {
@@ -150,6 +158,20 @@ func contractCreateFromPayload(payload contractCreatePayload) (ContractCreate, e
 		}
 		input.Items = append(input.Items, ContractItemCreate{CatalogItemID: id, Quantity: *raw.Quantity, UnitAmountCents: *raw.UnitAmountCents})
 	}
+	if payload.PaymentPlan != nil {
+		if payload.PaymentPlan.InstallmentCount == nil || payload.PaymentPlan.FirstDueDate == nil || payload.PaymentPlan.IntervalMonths == nil {
+			return ContractCreate{}, ErrInvalidContract
+		}
+		firstDueDate, err := time.Parse("2006-01-02", strings.TrimSpace(*payload.PaymentPlan.FirstDueDate))
+		if err != nil {
+			return ContractCreate{}, ErrInvalidContract
+		}
+		input.PaymentPlan = &ContractPaymentPlan{
+			InstallmentCount: *payload.PaymentPlan.InstallmentCount,
+			FirstDueDate:     firstDueDate.UTC(),
+			IntervalMonths:   *payload.PaymentPlan.IntervalMonths,
+		}
+	}
 	return input, nil
 }
 
@@ -182,6 +204,14 @@ func contractResponse(contract Contract) map[string]any {
 			"total_amount_cents": item.TotalAmountCents,
 		})
 	}
+	installments := make([]map[string]any, 0, len(contract.Installments))
+	for _, installment := range contract.Installments {
+		installments = append(installments, map[string]any{
+			"id": installment.ID.String(), "number": installment.Number,
+			"amount_cents": installment.AmountCents,
+			"due_date":     installment.DueDate.Format("2006-01-02"), "status": installment.Status,
+		})
+	}
 	history := make([]map[string]any, 0, len(contract.StatusHistory))
 	for _, change := range contract.StatusHistory {
 		history = append(history, map[string]any{
@@ -198,7 +228,7 @@ func contractResponse(contract Contract) map[string]any {
 		"customer_party_id": contract.CustomerPartyID.String(), "deceased_id": contract.DeceasedID.String(),
 		"status": contract.Status, "total_amount_cents": contract.TotalAmountCents,
 		"idempotency_key": contract.IdempotencyKey, "family_link_ids": family,
-		"items": items, "status_history": history,
+		"items": items, "installments": installments, "status_history": history,
 	}
 }
 

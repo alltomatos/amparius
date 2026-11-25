@@ -139,6 +139,7 @@ func (f *atomicityFixture) close(t *testing.T) {
 	defer func() { _ = tx.Rollback(ctx) }()
 	for _, statement := range []string{
 		"ALTER TABLE funeral.contract_status_history DISABLE TRIGGER contract_status_append_only",
+		"ALTER TABLE funeral.contract_installment DISABLE TRIGGER contract_installment_append_only",
 		"ALTER TABLE funeral.contract_family_member DISABLE TRIGGER contract_family_append_only",
 		"ALTER TABLE funeral.contract_item DISABLE TRIGGER contract_item_append_only",
 		"ALTER TABLE funeral.contract DISABLE TRIGGER contract_history_preserve",
@@ -146,6 +147,7 @@ func (f *atomicityFixture) close(t *testing.T) {
 		"ALTER TABLE outbox.delivery DISABLE TRIGGER delivery_append_only",
 		"ALTER TABLE outbox.event DISABLE TRIGGER event_history_preserve",
 		"DELETE FROM funeral.contract_status_history WHERE tenant_id = ANY($1::uuid[])",
+		"DELETE FROM funeral.contract_installment WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM funeral.contract_family_member WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM funeral.contract_item WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM funeral.contract WHERE tenant_id = ANY($1::uuid[])",
@@ -160,6 +162,7 @@ func (f *atomicityFixture) close(t *testing.T) {
 		"DELETE FROM identity.company WHERE tenant_id = ANY($1::uuid[])",
 		"DELETE FROM identity.tenant WHERE id = ANY($1::uuid[])",
 		"ALTER TABLE funeral.contract_status_history ENABLE TRIGGER contract_status_append_only",
+		"ALTER TABLE funeral.contract_installment ENABLE TRIGGER contract_installment_append_only",
 		"ALTER TABLE funeral.contract_family_member ENABLE TRIGGER contract_family_append_only",
 		"ALTER TABLE funeral.contract_item ENABLE TRIGGER contract_item_append_only",
 		"ALTER TABLE funeral.contract ENABLE TRIGGER contract_history_preserve",
@@ -225,8 +228,8 @@ func TestFuneralContractEventAtomicityAndPayloadPrivacy(t *testing.T) {
 	if contracts := fixture.count(t, `SELECT count(*) FROM funeral.contract WHERE tenant_id=$1`, fixture.tenant); contracts != 1 {
 		t.Fatalf("contratos = %d, esperado 1", contracts)
 	}
-	if events := fixture.count(t, `SELECT count(*) FROM outbox.event WHERE tenant_id=$1 AND aggregate_id=$2`, fixture.tenant, created.ID); events != 1 {
-		t.Fatalf("eventos = %d, esperado 1", events)
+	if events := fixture.count(t, `SELECT count(*) FROM outbox.event WHERE tenant_id=$1 AND aggregate_id=$2`, fixture.tenant, created.ID); events != 3 {
+		t.Fatalf("eventos = %d, esperado 3", events)
 	}
 	var payload string
 	if err := fixture.database.WithTenantTx(db.WithTenant(context.Background(), fixture.tenant), func(ctx context.Context, tx pgx.Tx) error {
@@ -255,8 +258,8 @@ func TestFuneralContractEventAtomicityAndPayloadPrivacy(t *testing.T) {
 	if contracts := fixture.count(t, `SELECT count(*) FROM funeral.contract WHERE tenant_id=$1`, fixture.tenant); contracts != 1 {
 		t.Fatalf("replay duplicou contrato: %d", contracts)
 	}
-	if events := fixture.count(t, `SELECT count(*) FROM outbox.event WHERE tenant_id=$1`, fixture.tenant); events != 1 {
-		t.Fatalf("replay duplicou evento: %d", events)
+	if events := fixture.count(t, `SELECT count(*) FROM outbox.event WHERE tenant_id=$1`, fixture.tenant); events != 3 {
+		t.Fatalf("replay duplicou eventos: %d", events)
 	}
 
 	// Falha depois do append desfaz o agregado e o evento.
@@ -270,8 +273,8 @@ func TestFuneralContractEventAtomicityAndPayloadPrivacy(t *testing.T) {
 	if contracts := fixture.count(t, `SELECT count(*) FROM funeral.contract WHERE tenant_id=$1`, fixture.tenant); contracts != 1 {
 		t.Fatalf("falha depois do evento deixou agregado: %d contrato(s)", contracts)
 	}
-	if events := fixture.count(t, `SELECT count(*) FROM outbox.event WHERE tenant_id=$1`, fixture.tenant); events != 1 {
-		t.Fatalf("falha depois do evento deixou evento: %d", events)
+	if events := fixture.count(t, `SELECT count(*) FROM outbox.event WHERE tenant_id=$1`, fixture.tenant); events != 3 {
+		t.Fatalf("falha depois do evento deixou eventos: %d", events)
 	}
 
 	// Falha antes do append também não grava o agregado.
@@ -285,8 +288,8 @@ func TestFuneralContractEventAtomicityAndPayloadPrivacy(t *testing.T) {
 	if contracts := fixture.count(t, `SELECT count(*) FROM funeral.contract WHERE tenant_id=$1`, fixture.tenant); contracts != 1 {
 		t.Fatalf("falha antes do evento deixou agregado: %d", contracts)
 	}
-	if events := fixture.count(t, `SELECT count(*) FROM outbox.event WHERE tenant_id=$1`, fixture.tenant); events != 1 {
-		t.Fatalf("falha antes do evento deixou evento: %d", events)
+	if events := fixture.count(t, `SELECT count(*) FROM outbox.event WHERE tenant_id=$1`, fixture.tenant); events != 3 {
+		t.Fatalf("falha antes do evento deixou eventos: %d", events)
 	}
 
 	// Rollback direto de uma transação que muda status e publica evento desfaz
@@ -317,7 +320,7 @@ func TestFuneralContractEventAtomicityAndPayloadPrivacy(t *testing.T) {
 	if status != funeral.ContractDraft {
 		t.Fatalf("rollback deixou status %q, esperado draft", status)
 	}
-	if events := fixture.count(t, `SELECT count(*) FROM outbox.event WHERE tenant_id=$1`, fixture.tenant); events != 1 {
-		t.Fatalf("rollback deixou evento: %d", events)
+	if events := fixture.count(t, `SELECT count(*) FROM outbox.event WHERE tenant_id=$1`, fixture.tenant); events != 3 {
+		t.Fatalf("rollback deixou eventos: %d", events)
 	}
 }

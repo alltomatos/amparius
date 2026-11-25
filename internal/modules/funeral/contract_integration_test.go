@@ -82,6 +82,7 @@ func TestFuneralContractHTTPIntegrationRLSIdempotencyAndCleanup(t *testing.T) {
 		defer func() { _ = tx.Rollback(cleanupCtx) }()
 		for _, statement := range []string{
 			"ALTER TABLE funeral.contract_status_history DISABLE TRIGGER contract_status_append_only",
+			"ALTER TABLE funeral.contract_installment DISABLE TRIGGER contract_installment_append_only",
 			"ALTER TABLE funeral.contract_family_member DISABLE TRIGGER contract_family_append_only",
 			"ALTER TABLE funeral.contract_item DISABLE TRIGGER contract_item_append_only",
 			"ALTER TABLE funeral.contract DISABLE TRIGGER contract_history_preserve",
@@ -89,6 +90,7 @@ func TestFuneralContractHTTPIntegrationRLSIdempotencyAndCleanup(t *testing.T) {
 			"ALTER TABLE outbox.delivery DISABLE TRIGGER delivery_append_only",
 			"ALTER TABLE outbox.event DISABLE TRIGGER event_history_preserve",
 			"DELETE FROM funeral.contract_status_history WHERE tenant_id = ANY($1::uuid[])",
+			"DELETE FROM funeral.contract_installment WHERE tenant_id = ANY($1::uuid[])",
 			"DELETE FROM funeral.contract_family_member WHERE tenant_id = ANY($1::uuid[])",
 			"DELETE FROM funeral.contract_item WHERE tenant_id = ANY($1::uuid[])",
 			"DELETE FROM funeral.contract WHERE tenant_id = ANY($1::uuid[])",
@@ -103,6 +105,7 @@ func TestFuneralContractHTTPIntegrationRLSIdempotencyAndCleanup(t *testing.T) {
 			"DELETE FROM identity.company WHERE tenant_id = ANY($1::uuid[])",
 			"DELETE FROM identity.tenant WHERE id = ANY($1::uuid[])",
 			"ALTER TABLE funeral.contract_status_history ENABLE TRIGGER contract_status_append_only",
+			"ALTER TABLE funeral.contract_installment ENABLE TRIGGER contract_installment_append_only",
 			"ALTER TABLE funeral.contract_family_member ENABLE TRIGGER contract_family_append_only",
 			"ALTER TABLE funeral.contract_item ENABLE TRIGGER contract_item_append_only",
 			"ALTER TABLE funeral.contract ENABLE TRIGGER contract_history_preserve",
@@ -186,29 +189,40 @@ func TestFuneralContractHTTPIntegrationRLSIdempotencyAndCleanup(t *testing.T) {
 		handler.ServeHTTP(rec, req)
 		return rec
 	}
-	body := fmt.Sprintf(`{"customer_party_id":"%s","deceased_id":"%s","family_link_ids":["%s"],"items":[{"catalog_item_id":"%s","quantity":1,"unit_amount_cents":15000}]}`, customerA, deceasedA, familyLinkA, itemA)
+	body := fmt.Sprintf(`{"customer_party_id":"%s","deceased_id":"%s","family_link_ids":["%s"],"items":[{"catalog_item_id":"%s","quantity":1,"unit_amount_cents":10000}],"payment_plan":{"installment_count":3,"first_due_date":"2026-12-15","interval_months":1}}`, customerA, deceasedA, familyLinkA, itemA)
 	created := request(http.MethodPost, "/_dev/funeral/contracts", tenantA, companyA, "contract-integration-001", body)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("POST contrato = %d: %s", created.Code, created.Body.String())
 	}
 	var envelope struct {
 		Contract struct {
-			ID      string `json:"id"`
-			Total   int64  `json:"total_amount_cents"`
-			History []any  `json:"status_history"`
+			ID           string `json:"id"`
+			Total        int64  `json:"total_amount_cents"`
+			Installments []struct {
+				Number int   `json:"number"`
+				Amount int64 `json:"amount_cents"`
+			} `json:"installments"`
+			History []any `json:"status_history"`
 		} `json:"contract"`
 	}
 	if err := json.Unmarshal(created.Body.Bytes(), &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.Contract.Total != 15000 || len(envelope.Contract.History) != 1 {
+	if envelope.Contract.Total != 10000 || len(envelope.Contract.History) != 1 || len(envelope.Contract.Installments) != 3 {
 		t.Fatalf("contrato criado = %#v", envelope.Contract)
+	}
+	var installmentTotal int64
+	for _, installment := range envelope.Contract.Installments {
+		installmentTotal += installment.Amount
+	}
+	if installmentTotal != envelope.Contract.Total {
+		t.Fatalf("soma das parcelas = %d, total = %d", installmentTotal, envelope.Contract.Total)
 	}
 	contractID := envelope.Contract.ID
 	if replay := request(http.MethodPost, "/_dev/funeral/contracts", tenantA, companyA, "contract-integration-001", body); replay.Code != http.StatusCreated {
 		t.Fatalf("replay = %d: %s", replay.Code, replay.Body.String())
 	}
-	if conflict := request(http.MethodPost, "/_dev/funeral/contracts", tenantA, companyA, "contract-integration-001", strings.Replace(body, "15000", "16000", 1)); conflict.Code != http.StatusConflict {
+	if conflict := request(http.MethodPost, "/_dev/funeral/contracts", tenantA, companyA, "contract-integration-001", strings.Replace(body, "10000", "11000", 1)); conflict.Code != http.StatusConflict {
 		t.Fatalf("conflito de idempotencia = %d: %s", conflict.Code, conflict.Body.String())
 	}
 	if foreign := request(http.MethodGet, "/_dev/funeral/contracts/"+contractID, tenantB, companyB, "", ""); foreign.Code != http.StatusNotFound {
@@ -221,19 +235,40 @@ func TestFuneralContractHTTPIntegrationRLSIdempotencyAndCleanup(t *testing.T) {
 	if read.Code != http.StatusOK || !strings.Contains(read.Body.String(), `"to_status":"active"`) {
 		t.Fatalf("consulta com historico = %d: %s", read.Code, read.Body.String())
 	}
-	var partyCount, eventCount int
+	var partyCount, eventCount, billingEventCount, fiscalEventCount int
 	if err := appDatabase.WithTenantTx(db.WithTenant(ctx, tenantA), func(ctx context.Context, tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM party.party WHERE tenant_id=$1`, tenantA).Scan(&partyCount); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `SELECT count(*) FROM outbox.event WHERE tenant_id=$1 AND aggregate_id=$2`, tenantA, uuid.MustParse(contractID)).Scan(&eventCount)
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM outbox.event WHERE tenant_id=$1 AND aggregate_id=$2`, tenantA, uuid.MustParse(contractID)).Scan(&eventCount); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM outbox.event WHERE tenant_id=$1 AND aggregate_id=$2 AND event_type='finance.title.requested' AND event_version=1`, tenantA, uuid.MustParse(contractID)).Scan(&billingEventCount); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `SELECT count(*) FROM outbox.event WHERE tenant_id=$1 AND aggregate_id=$2 AND event_type='fiscal.document.requested' AND event_version=1`, tenantA, uuid.MustParse(contractID)).Scan(&fiscalEventCount)
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if partyCount != 3 {
 		t.Fatalf("contrato criou party implicitamente: count=%d", partyCount)
 	}
-	if eventCount != 2 {
-		t.Fatalf("eventos do contrato = %d, esperado 2", eventCount)
+	if eventCount != 4 {
+		t.Fatalf("eventos do contrato = %d, esperado 4", eventCount)
+	}
+	if billingEventCount != 1 || fiscalEventCount != 1 {
+		t.Fatalf("eventos de integração = finance %d, fiscal %d", billingEventCount, fiscalEventCount)
+	}
+	var ownInstallments, foreignInstallments int
+	if err := appDatabase.WithTenantTx(db.WithTenant(ctx, tenantA), func(ctx context.Context, tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM funeral.contract_installment WHERE tenant_id=$1`, tenantA).Scan(&ownInstallments); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `SELECT count(*) FROM funeral.contract_installment WHERE tenant_id=$1`, tenantB).Scan(&foreignInstallments)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if ownInstallments != 3 || foreignInstallments != 0 {
+		t.Fatalf("RLS de parcelas = próprio %d, estrangeiro %d", ownInstallments, foreignInstallments)
 	}
 }

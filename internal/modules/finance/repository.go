@@ -20,6 +20,7 @@ var (
 	ErrInvalidAmount         = errors.New("valor monetário inválido")
 	ErrTenantMismatch        = errors.New("tenant da entidade diverge do contexto")
 	ErrInvalidIdempotencyKey = errors.New("chave de idempotencia invalida")
+	ErrIdempotencyConflict   = errors.New("chave de idempotencia reutilizada com conteudo diferente")
 )
 
 type Account struct {
@@ -27,11 +28,11 @@ type Account struct {
 	Code, Name, Type, Status string
 }
 type Title struct {
-	ID, TenantID, PartyID       uuid.UUID
-	Direction                   string
-	AmountCents                 int64
-	DueDate                     time.Time
-	Status, Origin, Description string
+	ID, TenantID, PartyID                       uuid.UUID
+	Direction                                   string
+	AmountCents                                 int64
+	DueDate                                     time.Time
+	Status, Origin, Description, IdempotencyKey string
 }
 type Installment struct {
 	ID, TenantID, TitleID uuid.UUID
@@ -238,6 +239,9 @@ func (r *Repository) ListAccounts(ctx context.Context, limit int) ([]Account, er
 }
 
 func (r *Repository) CreateTitle(ctx context.Context, title Title) (Title, error) {
+	if strings.TrimSpace(title.IdempotencyKey) != "" {
+		return r.CreateTitleIdempotent(ctx, title.IdempotencyKey, title)
+	}
 	tenantID, err := tenantFor(ctx, title.TenantID)
 	if err != nil {
 		return Title{}, err
@@ -248,11 +252,66 @@ func (r *Repository) CreateTitle(ctx context.Context, title Title) (Title, error
 	}
 	title.TenantID = tenantID
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `INSERT INTO finance.title (tenant_id,direction,party_id,amount,due_date,status,origin,description) VALUES ($1,$2,$3,$4::numeric,$5,$6,$7,$8) RETURNING id`, tenantID, title.Direction, optionalUUID(title.PartyID), amount, title.DueDate, title.Status, title.Origin, optionalString(title.Description)).Scan(&title.ID)
+		return tx.QueryRow(ctx, `INSERT INTO finance.title (tenant_id,direction,party_id,amount,due_date,status,origin,description,idempotency_key) VALUES ($1,$2,$3,$4::numeric,$5,$6,$7,$8,$9) RETURNING id`, tenantID, title.Direction, optionalUUID(title.PartyID), amount, title.DueDate, title.Status, title.Origin, optionalString(title.Description), optionalString(title.IdempotencyKey)).Scan(&title.ID)
 	})
 	if err != nil {
 		return Title{}, fmt.Errorf("criar título: %w", err)
 	}
+	return title, nil
+}
+
+// CreateTitleIdempotent cria ou devolve o mesmo título para uma chave estável.
+// A comparação impede que uma chave de evento seja reutilizada para outra
+// cobrança.
+func (r *Repository) CreateTitleIdempotent(ctx context.Context, key string, title Title) (Title, error) {
+	tenantID, err := tenantFor(ctx, title.TenantID)
+	if err != nil {
+		return Title{}, err
+	}
+	key, err = idempotencyKey(key)
+	if err != nil {
+		return Title{}, err
+	}
+	amount, err := centsToNumeric(title.AmountCents)
+	if err != nil {
+		return Title{}, err
+	}
+	title.TenantID, title.IdempotencyKey = tenantID, key
+	requested := title
+	var storedAmount, storedDescription string
+	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		insert := `INSERT INTO finance.title
+			(tenant_id,direction,party_id,amount,due_date,status,origin,description,idempotency_key)
+			VALUES ($1,$2,$3,$4::numeric,$5,$6,$7,$8,$9)
+			ON CONFLICT (tenant_id,idempotency_key) DO NOTHING
+			RETURNING id,tenant_id,COALESCE(party_id,'00000000-0000-0000-0000-000000000000'::uuid),direction,amount::text,due_date,status,origin,COALESCE(description,''),idempotency_key`
+		err := tx.QueryRow(ctx, insert, tenantID, title.Direction, optionalUUID(title.PartyID), amount, title.DueDate, title.Status, title.Origin, optionalString(title.Description), key).
+			Scan(&title.ID, &title.TenantID, &title.PartyID, &title.Direction, &storedAmount, &title.DueDate, &title.Status, &title.Origin, &storedDescription, &title.IdempotencyKey)
+		if err == nil {
+			title.Description = storedDescription
+			return nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		return tx.QueryRow(ctx, `SELECT id,tenant_id,COALESCE(party_id,'00000000-0000-0000-0000-000000000000'::uuid),direction,amount::text,due_date,status,origin,COALESCE(description,''),idempotency_key FROM finance.title WHERE tenant_id=$1 AND idempotency_key=$2`, tenantID, key).
+			Scan(&title.ID, &title.TenantID, &title.PartyID, &title.Direction, &storedAmount, &title.DueDate, &title.Status, &title.Origin, &storedDescription, &title.IdempotencyKey)
+	})
+	if err != nil {
+		return Title{}, fmt.Errorf("criar título idempotente: %w", err)
+	}
+	storedCents, err := numericToCents(storedAmount)
+	if err != nil {
+		return Title{}, fmt.Errorf("converter título: %w", err)
+	}
+	if title.Direction != requested.Direction || title.PartyID != requested.PartyID ||
+		title.DueDate.UTC().Format("2006-01-02") != requested.DueDate.UTC().Format("2006-01-02") || title.Status != requested.Status ||
+		title.Origin != requested.Origin || storedCents != requested.AmountCents ||
+		storedDescription != requested.Description {
+		return Title{}, ErrIdempotencyConflict
+	}
+	title.AmountCents = storedCents
+	title.Description = storedDescription
 	return title, nil
 }
 
@@ -264,7 +323,7 @@ func (r *Repository) GetTitleByID(ctx context.Context, id uuid.UUID) (Title, err
 	var result Title
 	var amount string
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT id,tenant_id,COALESCE(party_id,'00000000-0000-0000-0000-000000000000'::uuid),direction,amount::text,due_date,status,origin,COALESCE(description,'') FROM finance.title WHERE id=$1 AND tenant_id=$2`, id, tenantID).Scan(&result.ID, &result.TenantID, &result.PartyID, &result.Direction, &amount, &result.DueDate, &result.Status, &result.Origin, &result.Description)
+		return tx.QueryRow(ctx, `SELECT id,tenant_id,COALESCE(party_id,'00000000-0000-0000-0000-000000000000'::uuid),direction,amount::text,due_date,status,origin,COALESCE(description,''),COALESCE(idempotency_key,'') FROM finance.title WHERE id=$1 AND tenant_id=$2`, id, tenantID).Scan(&result.ID, &result.TenantID, &result.PartyID, &result.Direction, &amount, &result.DueDate, &result.Status, &result.Origin, &result.Description, &result.IdempotencyKey)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Title{}, ErrNotFound
@@ -286,7 +345,7 @@ func (r *Repository) ListTitles(ctx context.Context, limit int) ([]Title, error)
 	}
 	result := []Title{}
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT id,tenant_id,COALESCE(party_id,'00000000-0000-0000-0000-000000000000'::uuid),direction,amount::text,due_date,status,origin,COALESCE(description,'') FROM finance.title WHERE tenant_id=$1 ORDER BY due_date,id LIMIT $2`, tenantID, listLimit(limit))
+		rows, err := tx.Query(ctx, `SELECT id,tenant_id,COALESCE(party_id,'00000000-0000-0000-0000-000000000000'::uuid),direction,amount::text,due_date,status,origin,COALESCE(description,''),COALESCE(idempotency_key,'') FROM finance.title WHERE tenant_id=$1 ORDER BY due_date,id LIMIT $2`, tenantID, listLimit(limit))
 		if err != nil {
 			return err
 		}
@@ -294,7 +353,7 @@ func (r *Repository) ListTitles(ctx context.Context, limit int) ([]Title, error)
 		for rows.Next() {
 			var item Title
 			var amount string
-			if err := rows.Scan(&item.ID, &item.TenantID, &item.PartyID, &item.Direction, &amount, &item.DueDate, &item.Status, &item.Origin, &item.Description); err != nil {
+			if err := rows.Scan(&item.ID, &item.TenantID, &item.PartyID, &item.Direction, &amount, &item.DueDate, &item.Status, &item.Origin, &item.Description, &item.IdempotencyKey); err != nil {
 				return err
 			}
 			item.AmountCents, err = numericToCents(amount)

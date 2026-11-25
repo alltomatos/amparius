@@ -107,11 +107,11 @@ sincronização do relay continuam sendo fatias posteriores.
 com o nome IANA `time_zone` explícito. Cada agenda referencia o contrato e o
 local por UUID opaco, podendo também referenciar uma OS e um recurso do local.
 As constraints de exclusão do PostgreSQL impedem sobreposição de local ou
-recurso, inclusive em duas inserções concorrentes; `[14:00,15:00)` é adjacente
+recurso em estado `scheduled` ou `confirmed`, inclusive em duas inserções concorrentes; `[14:00,15:00)` é adjacente
 e não conflita com `[12:00,14:00)`.
 
 `schedule_status_history` e `schedule_mutation` são append-only, e a criação,
-alteração/cancelamento e evento v1 são transacionais. O módulo não faz JOIN
+alteração/confirmação/cancelamento e evento v1 são transacionais. O módulo não faz JOIN
 com `party`, `cemetery`, `finance` ou `fiscal`; a integração futura ocorre por
 referência opaca e eventos versionados.
 

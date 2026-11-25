@@ -32,6 +32,7 @@ const (
 	ScheduleKindBurial = "burial"
 
 	ScheduleScheduled = "scheduled"
+	ScheduleConfirmed = "confirmed"
 	ScheduleCancelled = "cancelled"
 	ScheduleCompleted = "completed"
 )
@@ -467,7 +468,7 @@ func (r *Repository) UpdateSchedule(ctx context.Context, input SchedulePatch) (S
 	if err := validateSchedulePatch(input); err != nil {
 		return Schedule{}, err
 	}
-	hash := schedulePatchHash(input)
+	hash := mutationHash(input.ID, "update", schedulePatchHash(input))
 	return r.mutateSchedule(ctx, tenantID, companyID, input.ID, "update", input.IdempotencyKey, hash, func(ctx context.Context, tx pgx.Tx, current Schedule) error {
 		if current.Status != ScheduleScheduled {
 			return ErrScheduleTransition
@@ -519,24 +520,60 @@ func (r *Repository) UpdateSchedule(ctx context.Context, input SchedulePatch) (S
 }
 
 func (r *Repository) CancelSchedule(ctx context.Context, id uuid.UUID, key string) (Schedule, error) {
+	return r.CancelScheduleWithReason(ctx, id, key, "")
+}
+
+// ConfirmSchedule confirma uma reserva agendada. A operação é idempotente por
+// (tenant, operação, Idempotency-Key) e mantém o recurso reservado.
+func (r *Repository) ConfirmSchedule(ctx context.Context, id uuid.UUID, key string) (Schedule, error) {
+	return r.ConfirmScheduleWithReason(ctx, id, key, "")
+}
+
+// ConfirmScheduleWithReason confirma uma reserva e registra o motivo no
+// histórico append-only. O motivo nunca é publicado na outbox.
+func (r *Repository) ConfirmScheduleWithReason(ctx context.Context, id uuid.UUID, key, reason string) (Schedule, error) {
 	tenantID, companyID, err := scheduleScope(ctx, uuid.Nil)
 	if err != nil {
 		return Schedule{}, err
 	}
 	key = strings.TrimSpace(key)
-	if key == "" || len([]rune(key)) > 200 || id == uuid.Nil {
+	reason = strings.TrimSpace(reason)
+	if key == "" || len([]rune(key)) > 200 || len([]rune(reason)) > 500 || id == uuid.Nil {
 		return Schedule{}, ErrScheduleInvalid
 	}
-	return r.mutateSchedule(ctx, tenantID, companyID, id, "cancel", key, hashText("cancel"), func(ctx context.Context, tx pgx.Tx, current Schedule) error {
+	hash := mutationHash(id, "confirm", hashText(reason))
+	return r.mutateSchedule(ctx, tenantID, companyID, id, "confirm", key, hash, func(ctx context.Context, tx pgx.Tx, current Schedule) error {
 		if current.Status != ScheduleScheduled {
+			return ErrScheduleTransition
+		}
+		_, err := tx.Exec(ctx, `UPDATE funeral.schedule SET status=$1,version=version+1,updated_at=now() WHERE tenant_id=$2 AND company_id=$3 AND id=$4`, ScheduleConfirmed, tenantID, companyID, id)
+		return err
+	}, "funeral.schedule.confirmed", reason)
+}
+
+// CancelScheduleWithReason cancela uma reserva e registra o motivo no
+// histórico append-only. O motivo nunca é publicado na outbox.
+func (r *Repository) CancelScheduleWithReason(ctx context.Context, id uuid.UUID, key, reason string) (Schedule, error) {
+	tenantID, companyID, err := scheduleScope(ctx, uuid.Nil)
+	if err != nil {
+		return Schedule{}, err
+	}
+	key = strings.TrimSpace(key)
+	reason = strings.TrimSpace(reason)
+	if key == "" || len([]rune(key)) > 200 || len([]rune(reason)) > 500 || id == uuid.Nil {
+		return Schedule{}, ErrScheduleInvalid
+	}
+	hash := mutationHash(id, "cancel", hashText(reason))
+	return r.mutateSchedule(ctx, tenantID, companyID, id, "cancel", key, hash, func(ctx context.Context, tx pgx.Tx, current Schedule) error {
+		if current.Status != ScheduleScheduled && current.Status != ScheduleConfirmed {
 			return ErrScheduleTransition
 		}
 		_, err := tx.Exec(ctx, `UPDATE funeral.schedule SET status=$1,version=version+1,updated_at=now() WHERE tenant_id=$2 AND company_id=$3 AND id=$4`, ScheduleCancelled, tenantID, companyID, id)
 		return err
-	}, "funeral.schedule.cancelled")
+	}, "funeral.schedule.cancelled", reason)
 }
 
-func (r *Repository) mutateSchedule(ctx context.Context, tenantID, companyID, id uuid.UUID, operation, key, hash string, apply func(context.Context, pgx.Tx, Schedule) error, eventType string) (Schedule, error) {
+func (r *Repository) mutateSchedule(ctx context.Context, tenantID, companyID, id uuid.UUID, operation, key, hash string, apply func(context.Context, pgx.Tx, Schedule) error, eventType string, reasons ...string) (Schedule, error) {
 	if r.eventStore == nil {
 		return Schedule{}, ErrOutboxUnavailable
 	}
@@ -557,6 +594,19 @@ func (r *Repository) mutateSchedule(ctx context.Context, tenantID, companyID, id
 		if err := tx.QueryRow(ctx, `SELECT id FROM funeral.schedule WHERE tenant_id=$1 AND company_id=$2 AND id=$3 FOR UPDATE`, tenantID, companyID, id).Scan(&existingID); err != nil {
 			return err
 		}
+		// A second caller with the same key can have passed the first lookup
+		// while the winner was committing. Recheck after the aggregate lock so
+		// it replays instead of applying the transition twice.
+		err = tx.QueryRow(ctx, `SELECT schedule_id,request_hash FROM funeral.schedule_mutation WHERE tenant_id=$1 AND operation=$2 AND idempotency_key=$3`, tenantID, operation, key).Scan(&existingID, &storedHash)
+		if err == nil {
+			if storedHash != hash {
+				return ErrScheduleIdempotency
+			}
+			return loadScheduleTx(ctx, tx, tenantID, companyID, existingID, &result)
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
 		var current Schedule
 		if err := loadScheduleTx(ctx, tx, tenantID, companyID, id, &current); err != nil {
 			return err
@@ -569,12 +619,24 @@ func (r *Repository) mutateSchedule(ctx context.Context, tenantID, companyID, id
 			return err
 		}
 		if toStatus != current.Status {
-			if _, err := tx.Exec(ctx, `INSERT INTO funeral.schedule_status_history (tenant_id,schedule_id,from_status,to_status) VALUES ($1,$2,$3,$4)`, tenantID, id, current.Status, toStatus); err != nil {
+			var reason any
+			if len(reasons) > 0 && reasons[0] != "" {
+				reason = reasons[0]
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO funeral.schedule_status_history (tenant_id,schedule_id,from_status,to_status,reason) VALUES ($1,$2,$3,$4,$5)`, tenantID, id, current.Status, toStatus, reason); err != nil {
 				return err
 			}
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO funeral.schedule_mutation (tenant_id,schedule_id,operation,idempotency_key,request_hash) VALUES ($1,$2,$3,$4,$5)`, tenantID, id, operation, key, hash); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO funeral.schedule_mutation (tenant_id,schedule_id,operation,idempotency_key,request_hash) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (tenant_id,operation,idempotency_key) DO NOTHING`, tenantID, id, operation, key, hash); err != nil {
 			return err
+		}
+		var mutationScheduleID uuid.UUID
+		var mutationHashValue string
+		if err := tx.QueryRow(ctx, `SELECT schedule_id,request_hash FROM funeral.schedule_mutation WHERE tenant_id=$1 AND operation=$2 AND idempotency_key=$3`, tenantID, operation, key).Scan(&mutationScheduleID, &mutationHashValue); err != nil {
+			return err
+		}
+		if mutationScheduleID != id || mutationHashValue != hash {
+			return ErrScheduleIdempotency
 		}
 		payloadMap := map[string]any{"schedule_id": id.String(), "contract_id": current.ContractID.String(), "company_id": companyID.String(), "from_status": current.Status, "to_status": toStatus}
 		if operation == "update" {
@@ -608,6 +670,10 @@ func (r *Repository) mutateSchedule(ctx context.Context, tenantID, companyID, id
 	default:
 		return result, nil
 	}
+}
+
+func mutationHash(id uuid.UUID, operation, requestHash string) string {
+	return hashText(id.String() + "|" + operation + "|" + requestHash)
 }
 
 func scheduleScope(ctx context.Context, requestedCompany uuid.UUID) (uuid.UUID, uuid.UUID, error) {

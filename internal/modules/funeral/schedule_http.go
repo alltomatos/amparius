@@ -2,12 +2,15 @@ package funeral
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type locationHTTPPayload struct {
@@ -39,6 +42,19 @@ type schedulePatchHTTPPayload struct {
 	StartsAt   *string         `json:"starts_at"`
 	EndsAt     *string         `json:"ends_at"`
 	TimeZone   *string         `json:"time_zone"`
+}
+
+type scheduleTransitionHTTPPayload struct {
+	Reason *string `json:"reason"`
+}
+
+type scheduleConfirmationService interface {
+	ConfirmSchedule(context.Context, uuid.UUID, string) (Schedule, error)
+}
+
+type scheduleReasonTransitionService interface {
+	ConfirmScheduleWithReason(context.Context, uuid.UUID, string, string) (Schedule, error)
+	CancelScheduleWithReason(context.Context, uuid.UUID, string, string) (Schedule, error)
 }
 
 func serveSchedulingRoute(w http.ResponseWriter, r *http.Request, service SchedulingService) {
@@ -238,7 +254,7 @@ func createScheduleHTTP(w http.ResponseWriter, r *http.Request, service Scheduli
 
 func serveScheduleByIDRoute(w http.ResponseWriter, r *http.Request, service SchedulingService, path string) {
 	parts := strings.Split(strings.TrimPrefix(path, "/_dev/funeral/schedules/"), "/")
-	if len(parts) == 0 || parts[0] == "" || len(parts) > 2 || (len(parts) == 2 && parts[1] != "cancel") {
+	if len(parts) == 0 || parts[0] == "" || len(parts) > 2 || (len(parts) == 2 && parts[1] != "cancel" && parts[1] != "confirm") {
 		writeError(w, http.StatusNotFound, "FUNERAL_ROUTE_NOT_FOUND", "rota nao encontrada")
 		return
 	}
@@ -248,6 +264,10 @@ func serveScheduleByIDRoute(w http.ResponseWriter, r *http.Request, service Sche
 		return
 	}
 	if len(parts) == 2 {
+		if parts[1] != "cancel" && parts[1] != "confirm" {
+			writeError(w, http.StatusNotFound, "FUNERAL_ROUTE_NOT_FOUND", "rota nao encontrada")
+			return
+		}
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
 			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "metodo nao permitido")
@@ -257,7 +277,29 @@ func serveScheduleByIDRoute(w http.ResponseWriter, r *http.Request, service Sche
 		if !ok {
 			return
 		}
-		schedule, err := service.CancelSchedule(r.Context(), id, key)
+		reason, err := decodeScheduleTransitionReason(w, r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_JSON", "JSON invalido")
+			return
+		}
+		var schedule Schedule
+		switch parts[1] {
+		case "cancel":
+			if reasonService, ok := service.(scheduleReasonTransitionService); ok {
+				schedule, err = reasonService.CancelScheduleWithReason(r.Context(), id, key, reason)
+			} else {
+				schedule, err = service.CancelSchedule(r.Context(), id, key)
+			}
+		case "confirm":
+			if reasonService, ok := service.(scheduleReasonTransitionService); ok {
+				schedule, err = reasonService.ConfirmScheduleWithReason(r.Context(), id, key, reason)
+			} else if confirmService, ok := service.(scheduleConfirmationService); ok {
+				schedule, err = confirmService.ConfirmSchedule(r.Context(), id, key)
+			} else {
+				writeError(w, http.StatusNotImplemented, "SCHEDULE_CONFIRMATION_UNAVAILABLE", "confirmacao da agenda indisponivel")
+				return
+			}
+		}
 		if err != nil {
 			writeScheduleError(w, err)
 			return
@@ -322,6 +364,31 @@ func serveScheduleByIDRoute(w http.ResponseWriter, r *http.Request, service Sche
 		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPatch)
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "metodo nao permitido")
 	}
+}
+
+func decodeScheduleTransitionReason(w http.ResponseWriter, r *http.Request) (string, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxContractBodyBytes)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		return "", err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return "", nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var payload scheduleTransitionHTTPPayload
+	if err := decoder.Decode(&payload); err != nil {
+		return "", err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return "", errors.New("mais de um documento JSON")
+	}
+	if payload.Reason == nil {
+		return "", nil
+	}
+	return strings.TrimSpace(*payload.Reason), nil
 }
 
 func scheduleIdempotencyKey(w http.ResponseWriter, r *http.Request) (string, bool) {

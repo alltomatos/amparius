@@ -258,15 +258,18 @@ opacas:
 - `funeral.schedule.updated`: `schedule_id`, `contract_id`, `company_id`,
   `kind`, `location_id`, `resource_id`, `starts_at`, `ends_at`, `time_zone`,
   `from_status` e `to_status`;
+- `funeral.schedule.confirmed`: `schedule_id`, `contract_id`, `company_id`,
+  `from_status` e `to_status`, com `to_status = confirmed`;
 - `funeral.schedule.cancelled`: `schedule_id`, `contract_id`, `company_id`,
   `from_status` e `to_status`, com `to_status = cancelled`.
 
 O banco usa intervalo semiaberto `[starts_at, ends_at)` e rejeita sobreposição
-do mesmo local ou recurso enquanto o status é `scheduled`, inclusive sob
-concorrência. A chave de criação é
+do mesmo local ou recurso enquanto o status é `scheduled` ou `confirmed`,
+inclusive sob concorrência. A chave de criação é
 `funeral.schedule.create:<sha256 do request>`; alterações e cancelamento usam
-`funeral.schedule.<op>:<schedule_id>:<sha256 do request>`. Nome, kind de local,
-descrição, party e texto livre não entram no payload.
+`funeral.schedule.<op>:<schedule_id>:<sha256 do request>`; confirmação usa o
+mesmo formato. Nome, kind de local, descrição, party e texto livre não entram
+no payload.
 
 ## 8. Compatibilidade
 

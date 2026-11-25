@@ -249,7 +249,7 @@ erDiagram
                     timestamptz ends_at
                     text time_zone
                     tstzrange slot
-                    text status
+                    text status -- scheduled | confirmed | cancelled | completed
                     text idempotency_key
                     text request_hash
                     int version
@@ -265,7 +265,7 @@ erDiagram
   SCHEDULE_MUTATION { uuid id PK
                       uuid tenant_id FK
                       uuid schedule_id FK
-                      text operation
+                      text operation -- update | confirm | cancel | complete
                       text idempotency_key
                       text request_hash
                       timestamptz created_at }
@@ -294,7 +294,7 @@ contexto limita leitura e escrita na aplicação.
 opacos. `starts_at`/`ends_at` são UTC com timezone IANA explícito e formam o
 intervalo semiaberto `[starts_at, ends_at)`. O PostgreSQL aplica duas
 constraints de exclusão: não há sobreposição do mesmo local nem do mesmo
-recurso em estado `scheduled`, inclusive sob concorrência. Histórico e
+recurso em estado `scheduled` ou `confirmed`, inclusive sob concorrência. Histórico e
 mutação são append-only; todas as cinco tabelas têm RLS por `tenant_id` e a
 aplicação filtra `company_id` pelo contexto confiável.
 

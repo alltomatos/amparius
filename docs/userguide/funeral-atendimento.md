@@ -70,8 +70,11 @@ Content-Type: application/json
 
 Use `GET /_dev/funeral/contracts/{contract_id}/schedules` para listar a agenda,
 `PATCH /_dev/funeral/schedules/{id}` para alterar intervalo/local/recurso e
-`POST /_dev/funeral/schedules/{id}/cancel` para cancelar. Toda escrita exige
-uma nova `Idempotency-Key`; sobreposição do mesmo local ou recurso responde
-`409 SCHEDULE_CONFLICT`. A agenda mantém histórico append-only e eventos sem
-PII. Mapa de cemitério, jazigo/concessão, recorrência e regras de horário
-comercial não fazem parte desta fatia.
+`POST /_dev/funeral/schedules/{id}/confirm` ou
+`POST /_dev/funeral/schedules/{id}/cancel` para confirmar ou cancelar. Toda
+escrita exige uma nova `Idempotency-Key`; o corpo dessas duas transições é
+opcional e, quando enviado, aceita somente `{"reason":"..."}`. Uma agenda
+confirmada continua reservando local e recurso. Sobreposição do mesmo local ou
+recurso responde `409 SCHEDULE_CONFLICT`. A agenda mantém histórico
+append-only e eventos sem PII. Mapa de cemitério, jazigo/concessão,
+recorrência e regras de horário comercial não fazem parte desta fatia.

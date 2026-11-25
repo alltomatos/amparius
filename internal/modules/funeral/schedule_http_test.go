@@ -65,6 +65,22 @@ func (f *schedulingHTTPFake) CancelSchedule(context.Context, uuid.UUID, string) 
 	return f.schedule, nil
 }
 
+func (f *schedulingHTTPFake) ConfirmSchedule(context.Context, uuid.UUID, string) (funeral.Schedule, error) {
+	if f.err != nil {
+		return funeral.Schedule{}, f.err
+	}
+	f.schedule.Status = funeral.ScheduleConfirmed
+	return f.schedule, nil
+}
+
+func (f *schedulingHTTPFake) ConfirmScheduleWithReason(_ context.Context, _ uuid.UUID, _ string, _ string) (funeral.Schedule, error) {
+	return f.ConfirmSchedule(context.Background(), uuid.Nil, "")
+}
+
+func (f *schedulingHTTPFake) CancelScheduleWithReason(_ context.Context, id uuid.UUID, key, _ string) (funeral.Schedule, error) {
+	return f.CancelSchedule(context.Background(), id, key)
+}
+
 func scheduleHTTPRequest(handler http.Handler, method, path, body, key string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req = req.WithContext(db.WithCompany(db.WithTenant(req.Context(), uuid.New()), uuid.New()))
@@ -95,6 +111,10 @@ func TestDevelopmentScheduleHTTPIsStrictAndConflictSafe(t *testing.T) {
 	created := scheduleHTTPRequest(handler, http.MethodPost, "/_dev/funeral/schedules", `{"contract_id":"`+contractID.String()+`","kind":"wake","location_id":"`+fake.location.ID.String()+`","resource_id":"`+fake.resource.ID.String()+`","starts_at":"2026-11-25T12:00:00-03:00","ends_at":"2026-11-25T14:00:00-03:00","time_zone":"America/Fortaleza"}`, "schedule-1")
 	if created.Code != http.StatusCreated || !strings.Contains(created.Body.String(), `"time_zone":"America/Fortaleza"`) {
 		t.Fatalf("agenda = %d/%s", created.Code, created.Body.String())
+	}
+	confirmed := scheduleHTTPRequest(handler, http.MethodPost, "/_dev/funeral/schedules/"+fake.schedule.ID.String()+"/confirm", `{"reason":"cliente confirmou"}`, "schedule-confirm")
+	if confirmed.Code != http.StatusOK || !strings.Contains(confirmed.Body.String(), `"status":"confirmed"`) {
+		t.Fatalf("confirmacao = %d/%s", confirmed.Code, confirmed.Body.String())
 	}
 	listed := scheduleHTTPRequest(handler, http.MethodGet, "/_dev/funeral/contracts/"+contractID.String()+"/schedules", "", "")
 	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"schedules"`) {

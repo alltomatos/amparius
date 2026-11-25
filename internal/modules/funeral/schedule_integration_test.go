@@ -83,12 +83,42 @@ func TestFuneralScheduleRealPostgresConflictIdempotencyIsolationAndCleanup(t *te
 		t.Fatalf("corrida = sucessos %d, conflitos %d", successes, conflicts)
 	}
 
-	cancelled, err := repository.CancelSchedule(fixture.ctx(), schedule.ID, "schedule-cancel")
-	if err != nil || cancelled.Status != funeral.ScheduleCancelled || len(cancelled.StatusHistory) != 2 {
-		t.Fatalf("cancelamento = %#v/%v", cancelled, err)
+	confirmed, err := repository.ConfirmScheduleWithReason(fixture.ctx(), schedule.ID, "schedule-confirm", "cliente confirmou")
+	if err != nil || confirmed.Status != funeral.ScheduleConfirmed || len(confirmed.StatusHistory) != 2 || confirmed.StatusHistory[1].Reason == nil || *confirmed.StatusHistory[1].Reason != "cliente confirmou" {
+		t.Fatalf("confirmacao = %#v/%v", confirmed, err)
 	}
-	cancelReplay, err := repository.CancelSchedule(fixture.ctx(), schedule.ID, "schedule-cancel")
-	if err != nil || cancelReplay.Version != cancelled.Version {
+	confirmedReplay, err := repository.ConfirmScheduleWithReason(fixture.ctx(), schedule.ID, "schedule-confirm", "cliente confirmou")
+	if err != nil || confirmedReplay.Version != confirmed.Version {
+		t.Fatalf("replay confirmacao = %#v/%v", confirmedReplay, err)
+	}
+	cancelResults := make(chan struct {
+		schedule funeral.Schedule
+		err      error
+	}, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			item, callErr := repository.CancelScheduleWithReason(fixture.ctx(), schedule.ID, "schedule-cancel", "cliente cancelou")
+			cancelResults <- struct {
+				schedule funeral.Schedule
+				err      error
+			}{item, callErr}
+		}()
+	}
+	cancelled := <-cancelResults
+	cancelledReplay := <-cancelResults
+	for _, result := range []struct {
+		schedule funeral.Schedule
+		err      error
+	}{cancelled, cancelledReplay} {
+		if result.err != nil || result.schedule.Status != funeral.ScheduleCancelled || len(result.schedule.StatusHistory) != 3 || result.schedule.StatusHistory[2].Reason == nil || *result.schedule.StatusHistory[2].Reason != "cliente cancelou" {
+			t.Fatalf("cancelamento concorrente = %#v/%v", result.schedule, result.err)
+		}
+	}
+	if cancelled.schedule.ID != cancelledReplay.schedule.ID || cancelled.schedule.Version != cancelledReplay.schedule.Version {
+		t.Fatalf("replays concorrentes divergiram: %#v / %#v", cancelled.schedule, cancelledReplay.schedule)
+	}
+	cancelReplay, err := repository.CancelScheduleWithReason(fixture.ctx(), schedule.ID, "schedule-cancel", "cliente cancelou")
+	if err != nil || cancelReplay.Version != cancelled.schedule.Version {
 		t.Fatalf("replay cancelamento = %#v/%v", cancelReplay, err)
 	}
 	foreignCtx := db.WithCompany(db.WithTenant(context.Background(), uuid.New()), uuid.New())
@@ -115,13 +145,39 @@ func TestFuneralScheduleRealPostgresConflictIdempotencyIsolationAndCleanup(t *te
 	if strings.Contains(payload, "Sala principal") {
 		t.Fatalf("payload de agenda contem nome de local: %s", payload)
 	}
+	var eventTypes map[string]int
+	eventTypes = make(map[string]int)
+	if err := fixture.database.WithTenantTx(fixture.ctx(), func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT event_type,event_version,payload::text FROM outbox.event WHERE tenant_id=$1 AND aggregate_id=$2 AND event_type IN ('funeral.schedule.confirmed','funeral.schedule.cancelled')`, fixture.tenant, schedule.ID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var eventType, eventPayload string
+			var version int
+			if err := rows.Scan(&eventType, &version, &eventPayload); err != nil {
+				return err
+			}
+			if version != 1 || strings.Contains(eventPayload, "cliente") || strings.Contains(eventPayload, "reason") {
+				t.Fatalf("evento de transicao invalido: %s v%d %s", eventType, version, eventPayload)
+			}
+			eventTypes[eventType]++
+		}
+		return rows.Err()
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if eventTypes["funeral.schedule.confirmed"] != 1 || eventTypes["funeral.schedule.cancelled"] != 1 {
+		t.Fatalf("eventos de transicao = %#v", eventTypes)
+	}
 	if err := fixture.database.WithTenantTx(fixture.ctx(), func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `DELETE FROM funeral.schedule_status_history WHERE tenant_id=$1 AND schedule_id=$2`, fixture.tenant, schedule.ID)
 		return err
 	}); err == nil {
 		t.Fatal("historico de agenda deveria ser append-only")
 	}
-	if got := fixture.count(t, `SELECT count(*) FROM funeral.schedule_status_history WHERE tenant_id=$1`, fixture.tenant); got != 4 {
-		t.Fatalf("historico da agenda = %d, esperado 4", got)
+	if got := fixture.count(t, `SELECT count(*) FROM funeral.schedule_status_history WHERE tenant_id=$1`, fixture.tenant); got != 5 {
+		t.Fatalf("historico da agenda = %d, esperado 5", got)
 	}
 }

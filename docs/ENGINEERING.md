@@ -576,21 +576,26 @@ Uma agenda é `wake` ou `burial`, referencia um contrato e um local, e pode
 referenciar uma OS e um recurso. `starts_at`/`ends_at` são `timestamptz` UTC e
 `time_zone` exige nome IANA. O intervalo é semiaberto `[início,fim)`; duas
 constraints `EXCLUDE USING gist` bloqueiam sobreposição do mesmo local ou
-recurso somente enquanto `status = scheduled`, inclusive sob concorrência.
+recurso enquanto `status IN (scheduled, confirmed)`, inclusive sob
+concorrência.
 SQLSTATE `23P01` vira `ErrScheduleConflict` sem vazar SQL para HTTP.
 
-Criação, alteração e cancelamento usam `Idempotency-Key`; replay idêntico não
-duplica agregado, histórico ou outbox. O histórico e a trilha de mutações são
-append-only e a agenda não pode ser apagada. Eventos v1 são
-`funeral.schedule.created`, `.updated` e `.cancelled`, somente com referências
-opacas, estados, intervalo e timezone.
+Criação, alteração, confirmação e cancelamento usam `Idempotency-Key`; replay
+idêntico não duplica agregado, histórico ou outbox, inclusive quando dois
+requests iguais chegam em paralelo. O histórico e a trilha de mutações são
+append-only e a agenda não pode ser apagada. Os estados são `scheduled`,
+`confirmed`, `cancelled` e `completed`; confirmação só parte de `scheduled`, e
+cancelamento parte de `scheduled` ou `confirmed`. Eventos v1 são
+`funeral.schedule.created`, `.updated`, `.confirmed` e `.cancelled`, somente
+com referências opacas, estados, intervalo e timezone. O motivo opcional de
+confirmação/cancelamento fica apenas no histórico e não vai para a outbox.
 
 Rotas dev-only: `POST/GET /_dev/funeral/locations`,
 `POST/GET /_dev/funeral/resources?location_id=...`,
 `POST/GET /_dev/funeral/schedules`,
 `GET /_dev/funeral/contracts/{id}/schedules`,
 `GET/PATCH /_dev/funeral/schedules/{id}` e
-`POST /_dev/funeral/schedules/{id}/cancel`. JSON é estrito, respostas têm
+`POST /_dev/funeral/schedules/{id}/confirm` ou `/cancel`. JSON é estrito, respostas têm
 `no-store` e erros não expõem PII.
 
 Evidência reproduzível com PostgreSQL real, role `amparius_app`

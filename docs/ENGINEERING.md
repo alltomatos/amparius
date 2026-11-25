@@ -653,6 +653,55 @@ histórico append-only onde aplicável; nenhum dado tributário ou seed de alíq
 é inserido. A emissão guarda apenas a referência do XML em object storage e seu
 hash no documento.
 
+### Consulta fiscal fail-closed (FIS-01B)
+
+`internal/modules/fiscal/emission_gate.go` resolve, antes de qualquer emissao,
+a configuracao vigente e o certificado do CNPJ do fato gerador. A consulta
+roda em uma unica transacao com `app.tenant_id` e `app.company_id`; tenant e
+empresa vem de `db.WithTenant`/`db.WithCompany`, nunca do corpo HTTP.
+
+Regras do caso de uso:
+
+- a configuracao e avaliada pela competencia (data UTC) em intervalo half-open
+  `valid_from <= competencia < valid_to`; `valid_to` nulo significa sem fim;
+- `establishment_id` preenchido so e aceito se o estabelecimento pertence ao
+  tenant e a empresa do contexto; caso contrario retorna
+  `ErrEstablishmentNotInScope`;
+- configuracao especifica do estabelecimento tem precedencia sobre a
+  configuracao-padrao da empresa quando ambas estao vigentes;
+- ausencia, expiracao, status diferente de `active`, ambiguidade ou registro
+  malformado bloqueiam a emissao; nunca ha fallback para outra empresa ou para
+  o tenant;
+- o certificado e avaliado no instante de emissao (`IssuedAt`, ou a competencia
+  quando zero) e precisa estar `active`, dentro de `valid_from/valid_until`,
+  com `storage_kind` e `storage_ref` preenchidos; senha, PIN, chave, PFX e
+  token nao existem no contrato e nunca entram em erro ou log.
+
+Os erros sao sentinelas tipadas e `EmissionErrorCode` traduz para o contrato
+HTTP: `ErrFiscalConfigMissing` -> `FISCAL_CONFIG_MISSING` (422);
+expiracao/inatividade/ambiguidade/malformacao/competencia invalida/
+estabelecimento fora do escopo -> `FISCAL_CONFIG_INVALID` (422); qualquer falha
+de certificado (ausente, expirado, inativo, ambiguo ou malformado) ->
+`FISCAL_CERTIFICATE_INVALID` (422). Erro de banco nao classificado propaga sem
+codigo de negocio e deve ser tratado como 503 pela borda; nunca vira sucesso.
+As mensagens nao incluem nome, CNPJ, serial, fingerprint ou `storage_ref`.
+
+A migration `migrations/0021_fiscal_certificate_company_rls.sql` concede apenas
+`SELECT` em `fiscal.certificate` ao `amparius_app` e troca a RLS para exigir
+tenant e empresa do contexto, igual a `fiscal_config`. Sem `app.company_id`
+nenhum certificado e visivel.
+
+Teste unitario: `go test ./internal/modules/fiscal -run TestEmissionGate -count=1`.
+Teste de integracao real (Postgres, `amparius_app` `NOSUPERUSER/NOBYPASSRLS`,
+cleanup administrativo) usa os mesmos `AMPA_TEST_POSTGRES_DSN` e
+`AMPA_TEST_POSTGRES_ADMIN_DSN`:
+
+```powershell
+$env:AMPA_TEST_POSTGRES_DSN = 'postgres://...'
+$env:AMPA_TEST_POSTGRES_ADMIN_DSN = 'postgres://...'
+go test ./internal/modules/fiscal -run 'TestEmissionGatePostgres' -v -count=1
+```
+
 ### Contrato Go de documentos fiscais
 
 `internal/modules/fiscal/documents.go` concentra o acesso às tabelas da

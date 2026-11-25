@@ -68,6 +68,39 @@ e não são integração real com o SaaS.
 Contrato: `docs/contracts/relay-sync-v1.md`. ADR:
 `docs/adr/0026-relay-sync-reconexao-revisao-fiscal.md`.
 
+### Relay RELAY-02A: protocolo de sincronização
+
+`relay/src/protocol.rs` define `SyncEnvelope` com `protocol_version` e
+`event_version` iguais a `1`, `event_id` opaco, `tenant_id`, `origin_node`, `seq`,
+`idempotency_key`, `content_hash` e payload. O envelope é derivado de uma operação
+da fila com `SyncEnvelope::from_operation`, que recalcula hash e identificador e
+falha fechado se a operação foi adulterada. `SyncTransport` mantém `submit` para
+os adaptadores da RELAY-01C e adiciona `submit_versioned`; o engine passa a montar
+o envelope e chamar a variante versionada, cujo padrão delega ao método antigo.
+
+O receptor de referência, `SyncReceiver`, é vinculado a um tenant e aplica eventos
+em ordem estrita por `(tenant_id, origin_node)`. Duplicata exata devolve
+`duplicate` com o cursor original; intervalo devolve `out_of_order` com
+`expected_seq`; mesma posição ou `idempotency_key` com conteúdo diferente devolve
+`conflict` sem sobrescrever; tenant divergente, versão desconhecida ou envelope
+adulterado devolvem `rejected`. O cursor do receptor só avança em `applied`, e
+reaplicar o lote inteiro após reconexão não duplica evento.
+
+Testes: `protocol::tests::*` cobrem round-trip do envelope, versão desconhecida,
+adulteração, tenant, ordem, duplicidade, conflito de sequência, conflito de
+idempotência, origens independentes e replay do lote. `sync::tests::*` inclui
+`versioned_transport_receives_protocol_envelope_without_resend_after_sync`, que
+prova que o adaptador versionado recebe o envelope e que a segunda execução não
+reenvia operação já sincronizada.
+
+Limites: o receptor é uma referência em memória, sem persistência de cursor,
+sem buffer de intervalo e sem armazenamento do SaaS. O adaptador HTTP autenticado,
+TLS, retry com jitter concreto e a reconciliação explícita (RELAY-02B) continuam
+fora deste slice.
+
+Contrato: `docs/contracts/relay-sync-v1.md`. ADR:
+`docs/adr/0027-relay-protocolo-sincronizacao-versionado.md`.
+
 ## Estado
 
 Fase 1 em andamento: `cmd/api` + `cmd/worker` (Go, health), `relay/` +

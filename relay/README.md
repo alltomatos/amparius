@@ -13,6 +13,27 @@ cargo run
 Invoke-WebRequest http://127.0.0.1:8080/healthz
 ```
 
+## RELAY-02A
+
+O protocolo de sincronização é um `SyncEnvelope` versionado (`protocol_version` e
+`event_version` iguais a `1`) com tenant, origem, sequência, identificador opaco,
+chave de idempotência e hash de conteúdo. `SyncTransport::submit_versioned` recebe a
+operação e o envelope; a implementação padrão delega para `submit`, preservando
+adaptadores da RELAY-01C.
+
+`SyncReceiver` é o receptor de referência: aplica em ordem estrita por origem,
+devolve `duplicate` com o cursor original em replay exato, recusa intervalo com
+`out_of_order` e trata mesma posição ou chave de idempotência com conteúdo
+diferente como `conflict`, sem sobrescrever. Versão desconhecida, tenant divergente
+ou envelope adulterado são recusados. Reaplicar o lote após reconexão não duplica
+evento nem regride o cursor.
+
+O receptor é em memória e não persiste estado; o adaptador HTTP autenticado e a
+reconciliação explícita continuam em fatias posteriores.
+
+Contrato: `../docs/contracts/relay-sync-v1.md`. Decisão:
+`../docs/adr/0027-relay-protocolo-sincronizacao-versionado.md`.
+
 ## RELAY-01C
 
 `SyncEngine` fornece a fronteira local para reconexão: lê pendentes em ordem, preserva

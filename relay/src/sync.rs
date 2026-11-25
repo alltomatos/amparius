@@ -1,4 +1,6 @@
-use crate::{AuthenticatedSubject, LocalStore, OperationStatus, QueuedOperation, StoreError};
+use crate::{
+    AuthenticatedSubject, LocalStore, OperationStatus, QueuedOperation, StoreError, SyncEnvelope,
+};
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +20,15 @@ pub enum TransportError {
 
 pub trait SyncTransport {
     fn submit(&mut self, operation: &QueuedOperation) -> Result<SyncOutcome, TransportError>;
+
+    fn submit_versioned(
+        &mut self,
+        operation: &QueuedOperation,
+        envelope: &SyncEnvelope,
+    ) -> Result<SyncOutcome, TransportError> {
+        let _ = envelope;
+        self.submit(operation)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -64,7 +75,20 @@ where
             .filter(|operation| operation.status == OperationStatus::Pending)
         {
             report.attempted += 1;
-            match self.transport.submit(&operation) {
+            let envelope = match SyncEnvelope::from_operation(&operation) {
+                Ok(envelope) => envelope,
+                Err(_) => {
+                    store.mark_operation_conflict(
+                        subject,
+                        &operation.operation_id,
+                        "sync_conflict:envelope_invalid",
+                        now,
+                    )?;
+                    report.failed += 1;
+                    continue;
+                }
+            };
+            match self.transport.submit_versioned(&operation, &envelope) {
                 Ok(SyncOutcome::Applied { server_cursor }) => {
                     store.mark_operation_synced(
                         subject,
@@ -149,6 +173,25 @@ mod tests {
         }
     }
 
+    struct EnvelopeTransport {
+        envelopes: Vec<SyncEnvelope>,
+    }
+
+    impl SyncTransport for EnvelopeTransport {
+        fn submit(&mut self, _operation: &QueuedOperation) -> Result<SyncOutcome, TransportError> {
+            panic!("o adaptador versionado deve receber o envelope");
+        }
+
+        fn submit_versioned(
+            &mut self,
+            _operation: &QueuedOperation,
+            envelope: &SyncEnvelope,
+        ) -> Result<SyncOutcome, TransportError> {
+            self.envelopes.push(envelope.clone());
+            Ok(SyncOutcome::Applied { server_cursor: 7 })
+        }
+    }
+
     fn path() -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -229,6 +272,40 @@ mod tests {
             engine.transport.submitted,
             vec![operation.operation_id.clone(), operation.operation_id]
         );
+        let _ = fs::remove_file(file);
+    }
+
+    #[test]
+    fn versioned_transport_receives_protocol_envelope_without_resend_after_sync() {
+        let file = path();
+        let mut store = LocalStore::open(&file).expect("store");
+        let operator = subject(&mut store);
+        let (operation, _) = store
+            .append_operation(&operator, "node-1", contract(), 100)
+            .expect("append");
+        let transport = EnvelopeTransport {
+            envelopes: Vec::new(),
+        };
+        let mut engine = SyncEngine::new(transport);
+
+        let report = engine
+            .sync_once(&mut store, &operator, "node-1", 110)
+            .expect("sync");
+        assert_eq!(report.synced, 1);
+        assert_eq!(engine.transport.envelopes.len(), 1);
+        let envelope = &engine.transport.envelopes[0];
+        assert_eq!(envelope.protocol_version, crate::SYNC_PROTOCOL_VERSION);
+        assert_eq!(envelope.event_version, crate::SYNC_EVENT_VERSION);
+        assert_eq!(envelope.event_id, operation.operation_id);
+        assert_eq!(envelope.origin_node, "node-1");
+        assert_eq!(envelope.seq, operation.seq);
+        assert_eq!(envelope.idempotency_key, operation.idempotency_key);
+        assert_eq!(envelope.content_hash, operation.content_hash);
+
+        engine
+            .sync_once(&mut store, &operator, "node-1", 120)
+            .expect("second sync");
+        assert_eq!(engine.transport.envelopes.len(), 1);
         let _ = fs::remove_file(file);
     }
 

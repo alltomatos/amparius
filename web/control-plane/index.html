@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Control plane Amparius">
+    <title>Amparius · Control plane</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="shell" data-name="control-plane-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">AMPARIUS</p>
+          <h1>Control plane</h1>
+        </div>
+        <div id="connection" class="status status-loading" role="status">Carregando contexto…</div>
+      </header>
+
+      <section class="context-card" data-name="active-context" aria-labelledby="context-title">
+        <div>
+          <p class="eyebrow">CONTEXTO ATIVO</p>
+          <h2 id="context-title">—</h2>
+          <p id="context-meta" class="muted">Tenant e empresa vêm do token autenticado.</p>
+        </div>
+        <div class="context-badge" id="context-badge">—</div>
+      </section>
+
+      <section class="toolbar" data-name="companies-toolbar" aria-labelledby="companies-title">
+        <div>
+          <p class="eyebrow">ADMINISTRAÇÃO</p>
+          <h2 id="companies-title">Empresas</h2>
+        </div>
+        <label class="search-label" for="company-search">Filtrar empresas
+          <input id="company-search" type="search" placeholder="Razão social" autocomplete="off">
+        </label>
+      </section>
+
+      <section id="companies-state" class="state-panel" data-name="companies-state" aria-live="polite">
+        Carregando empresas…
+      </section>
+      <div id="companies" class="company-grid" data-name="company-list"></div>
+      <nav id="companies-pagination" class="pagination" aria-label="Paginação de empresas"></nav>
+
+      <section class="toolbar entitlement-heading" data-name="entitlements-toolbar" aria-labelledby="entitlements-title">
+        <div>
+          <p class="eyebrow">LICENÇAS</p>
+          <h2 id="entitlements-title">Entitlements da empresa</h2>
+        </div>
+        <div id="selected-company" class="muted">Selecione uma empresa</div>
+      </section>
+      <section id="entitlements-state" class="state-panel" data-name="entitlements-state" aria-live="polite">
+        Selecione uma empresa para consultar os módulos.
+      </section>
+      <div id="entitlements" class="entitlement-grid" data-name="entitlement-list"></div>
+      <nav id="entitlements-pagination" class="pagination" aria-label="Paginação de entitlements"></nav>
+
+      <footer>
+        <p>Tenant é derivado do token. O cabeçalho <code>X-Tenant-Id</code> não autoriza escopo.</p>
+        <p id="trace" class="muted"></p>
+      </footer>
+    </main>
+    <script src="./app.js" defer></script>
+  </body>
+</html>

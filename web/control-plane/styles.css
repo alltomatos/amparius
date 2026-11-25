@@ -1,0 +1,59 @@
+:root {
+  color-scheme: light;
+  --navy: #00274c;
+  --blue: #0073cf;
+  --ink: #102235;
+  --muted: #5a6b7d;
+  --line: #d7e1eb;
+  --surface: #ffffff;
+  --wash: #f4f8fc;
+  --danger: #a32621;
+  --success: #146c43;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--wash); color: var(--ink); }
+.shell { max-width: 1180px; margin: 0 auto; padding: 24px 16px 48px; }
+.topbar, .toolbar, .context-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.topbar { margin-bottom: 24px; }
+h1, h2, p { margin: 0; }
+h1 { color: var(--navy); font-size: clamp(1.7rem, 4vw, 2.4rem); letter-spacing: -.04em; }
+h2 { color: var(--navy); font-size: 1.25rem; letter-spacing: -.02em; }
+.eyebrow { color: var(--blue); font-size: .72rem; font-weight: 800; letter-spacing: .13em; margin-bottom: 6px; }
+.muted { color: var(--muted); font-size: .9rem; }
+.context-card, .company-card, .entitlement-card, .state-panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+.context-card { padding: 20px; margin-bottom: 32px; box-shadow: 0 8px 24px #00274c0d; }
+.context-badge, .status { border-radius: 999px; font-size: .78rem; font-weight: 700; padding: 8px 12px; white-space: nowrap; }
+.context-badge { background: #e5f2fc; color: var(--blue); }
+.status-loading { background: #fff4d8; color: #805900; }
+.status-online { background: #e1f4e9; color: var(--success); }
+.status-error { background: #fde8e7; color: var(--danger); }
+.toolbar { margin: 0 0 14px; }
+.search-label { color: var(--muted); display: flex; flex-direction: column; font-size: .78rem; gap: 4px; min-width: min(280px, 100%); }
+input { border: 1px solid var(--line); border-radius: 9px; color: var(--ink); font: inherit; min-height: 42px; padding: 8px 12px; }
+input:focus { outline: 3px solid #7cc0f866; outline-offset: 2px; border-color: var(--blue); }
+.state-panel { color: var(--muted); margin: 0 0 14px; padding: 18px; }
+.state-panel.error { border-color: #efb0ad; color: var(--danger); }
+.state-panel.empty { border-style: dashed; }
+.company-grid, .entitlement-grid { display: grid; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.company-card, .entitlement-card { padding: 16px; }
+.company-card { cursor: pointer; text-align: left; width: 100%; }
+.company-card:hover, .company-card:focus-visible { border-color: var(--blue); box-shadow: 0 0 0 3px #7cc0f844; outline: none; }
+.company-card.selected { border: 2px solid var(--blue); padding: 15px; }
+.card-title { font-weight: 750; margin-bottom: 8px; }
+.card-row { align-items: center; display: flex; justify-content: space-between; gap: 12px; }
+.company-status, .license-status { font-size: .74rem; font-weight: 750; text-transform: uppercase; }
+.active { color: var(--success); } .inactive, .expired { color: var(--danger); } .pending { color: #805900; }
+.entitlement-heading { border-top: 1px solid var(--line); margin-top: 36px; padding-top: 28px; }
+.meter { background: #e9eff5; border-radius: 99px; height: 8px; margin-top: 12px; overflow: hidden; }
+.meter > span { background: var(--blue); display: block; height: 100%; }
+.pagination { display: flex; gap: 8px; justify-content: flex-end; min-height: 40px; padding: 12px 0; }
+button { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; color: var(--navy); cursor: pointer; font: inherit; min-height: 40px; padding: 8px 12px; }
+button:hover, button:focus-visible { border-color: var(--blue); outline: 3px solid #7cc0f844; }
+button[aria-current="page"] { background: var(--navy); color: white; }
+footer { border-top: 1px solid var(--line); margin-top: 36px; padding-top: 18px; }
+footer p { font-size: .8rem; margin-bottom: 6px; }
+code { background: #e9eff5; border-radius: 4px; padding: 2px 4px; }
+@media (max-width: 760px) { .company-grid, .entitlement-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .shell { padding: 18px 12px 32px; } .topbar, .toolbar, .context-card { align-items: flex-start; flex-direction: column; } .search-label { width: 100%; } .company-grid, .entitlement-grid { grid-template-columns: 1fr; } .status, .context-badge { align-self: flex-start; } }

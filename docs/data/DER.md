@@ -1,6 +1,6 @@
 # DER — Amparius
 
-Versão 0.5 · modelo lógico inicial + entidade legal, estabelecimento, onboarding, nome social (ADR 0013), entitlement (ADR 0007) e provedores/modelos/cota de IA (ADR 0008). Diagramas em Mermaid; nomes em `snake_case`; toda tabela de negócio carrega `tenant_id`.
+Versão 0.6 · modelo lógico inicial + entidade legal, estabelecimento, onboarding, nome social (ADR 0013), entitlement (ADR 0007), provedores/modelos/cota de IA (ADR 0008) e contrato funerário (ADR 0016). Diagramas em Mermaid; nomes em `snake_case`; toda tabela de negócio carrega `tenant_id`.
 
 > **Decisão de nomes (ADR 0007 §7):** `COMPANY` é a **entidade legal operadora** (CNPJ raiz — a funerária, o cemitério, a floricultura). O subtipo de cadastro de PJ cliente/fornecedor, antes chamado `COMPANY`, passa a se chamar **`PARTY_COMPANY`**. Não existem duas entidades com o mesmo nome. `ESTABLISHMENT` substitui `BRANCH`.
 
@@ -25,6 +25,14 @@ erDiagram
   CATALOG_ITEM ||--o{ PRICE : priced_in
   PRICE_LIST ||--o{ PRICE : contains
   CATALOG_ITEM }o--|| TAX_CLASSIFICATION : classified_as
+  COMPANY ||--o{ FUNERAL_CONTRACT : operates
+  PARTY ||--o{ FUNERAL_CONTRACT : customer
+  DECEASED ||--o{ FUNERAL_CONTRACT : concerns
+  FUNERAL_CONTRACT ||--o{ CONTRACT_ITEM : contains
+  CATALOG_ITEM ||--o{ CONTRACT_ITEM : snapshot_of
+  FAMILY_LINK ||--o{ CONTRACT_FAMILY_MEMBER : included
+  FUNERAL_CONTRACT ||--o{ CONTRACT_FAMILY_MEMBER : includes
+  FUNERAL_CONTRACT ||--o{ CONTRACT_STATUS_HISTORY : records
 
   TENANT { uuid id PK
            text name
@@ -132,7 +140,48 @@ erDiagram
                        text class_trib
                        text service_code
                        date valid_from }
+  FUNERAL_CONTRACT { uuid id PK
+                     uuid tenant_id FK
+                     uuid company_id FK
+                     uuid customer_party_id FK
+                     uuid deceased_id FK
+                     text status
+                     numeric total_amount
+                     text idempotency_key
+                     text request_hash
+                     timestamptz created_at
+                     timestamptz updated_at }
+  CONTRACT_ITEM { uuid id PK
+                  uuid tenant_id FK
+                  uuid contract_id FK
+                  uuid catalog_item_id FK
+                  text item_kind
+                  text description
+                  text unit
+                  integer quantity
+                  numeric unit_amount
+                  numeric total_amount }
+  CONTRACT_FAMILY_MEMBER { uuid id PK
+                           uuid tenant_id FK
+                           uuid contract_id FK
+                           uuid family_link_id FK }
+  CONTRACT_STATUS_HISTORY { uuid id PK
+                            uuid tenant_id FK
+                            uuid contract_id FK
+                            text from_status
+                            text to_status
+                            text reason
+                            timestamptz changed_at }
 ```
+
+### Contrato funerário (ADR 0016)
+
+`funeral.contract` não duplica cadastro de cliente, falecido ou familiar. O
+cliente é uma `party`, o falecido é um `deceased` e os familiares são
+`family_link` existentes do mesmo falecido. `contract_item` congela os dados do
+item e o valor em centavos para preservar o contrato mesmo que o catálogo mude.
+`contract_status_history` é append-only; o agregado e as referências têm RLS
+por tenant e também filtram a empresa do contexto na aplicação.
 
 ### Nome social e nome de exibição
 

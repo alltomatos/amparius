@@ -86,6 +86,27 @@ func (r *Repository) Append(ctx context.Context, event Event) (Event, error) {
 		return Event{}, err
 	}
 	event.TenantID = tenant
+	var result Event
+	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		var appendErr error
+		result, appendErr = r.AppendTx(ctx, tx, event)
+		return appendErr
+	})
+	if err != nil {
+		return Event{}, fmt.Errorf("registrar evento na outbox: %w", err)
+	}
+	return result, nil
+}
+
+// AppendTx registra o evento na mesma transacao do agregado que o publica.
+// O chamador deve ter aberto a transacao com db.WithTenantTx; assim a escrita
+// do agregado e o evento sao atomicos, sem abrir uma segunda transacao.
+func (r *Repository) AppendTx(ctx context.Context, tx pgx.Tx, event Event) (Event, error) {
+	tenant, err := tenantFor(ctx, event.TenantID)
+	if err != nil {
+		return Event{}, err
+	}
+	event.TenantID = tenant
 	if event.MaxAttempts == 0 {
 		event.MaxAttempts = DefaultMaxAttempts
 	}
@@ -93,43 +114,40 @@ func (r *Repository) Append(ctx context.Context, event Event) (Event, error) {
 		return Event{}, err
 	}
 	var result Event
-	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		var nextAttempt any
-		if !event.NextAttemptAt.IsZero() {
-			nextAttempt = event.NextAttemptAt.UTC()
-		}
-		row := tx.QueryRow(ctx, `
+	var nextAttempt any
+	if !event.NextAttemptAt.IsZero() {
+		nextAttempt = event.NextAttemptAt.UTC()
+	}
+	row := tx.QueryRow(ctx, `
 INSERT INTO outbox.event
 	(tenant_id,aggregate_type,aggregate_id,event_type,event_version,payload,idempotency_key,max_attempts,next_attempt_at)
 VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,COALESCE($9,now()))
 ON CONFLICT (tenant_id,idempotency_key) DO NOTHING
 RETURNING `+eventColumns,
-			tenant, event.AggregateType, event.AggregateID, event.EventType, event.Version,
-			[]byte(event.Payload), event.IdempotencyKey, event.MaxAttempts, nextAttempt)
-		if err := scanEvent(row, &result); err == nil {
-			return nil
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return err
-		}
-		var same bool
-		err := tx.QueryRow(ctx, `
+		tenant, event.AggregateType, event.AggregateID, event.EventType, event.Version,
+		[]byte(event.Payload), event.IdempotencyKey, event.MaxAttempts, nextAttempt)
+	if err := scanEvent(row, &result); err == nil {
+		return result, nil
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return Event{}, err
+	}
+	var same bool
+	err = tx.QueryRow(ctx, `
 SELECT (aggregate_type=$2 AND aggregate_id=$3 AND event_type=$4 AND event_version=$5 AND payload=$6::jsonb)
 FROM outbox.event WHERE tenant_id=$1 AND idempotency_key=$7`,
-			tenant, event.AggregateType, event.AggregateID, event.EventType, event.Version,
-			[]byte(event.Payload), event.IdempotencyKey).Scan(&same)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
-		}
-		if err != nil {
-			return err
-		}
-		if !same {
-			return ErrIdempotencyConflict
-		}
-		return scanEvent(tx.QueryRow(ctx, `SELECT `+eventColumns+` FROM outbox.event WHERE tenant_id=$1 AND idempotency_key=$2`, tenant, event.IdempotencyKey), &result)
-	})
+		tenant, event.AggregateType, event.AggregateID, event.EventType, event.Version,
+		[]byte(event.Payload), event.IdempotencyKey).Scan(&same)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Event{}, ErrNotFound
+	}
 	if err != nil {
-		return Event{}, fmt.Errorf("registrar evento na outbox: %w", err)
+		return Event{}, err
+	}
+	if !same {
+		return Event{}, ErrIdempotencyConflict
+	}
+	if err := scanEvent(tx.QueryRow(ctx, `SELECT `+eventColumns+` FROM outbox.event WHERE tenant_id=$1 AND idempotency_key=$2`, tenant, event.IdempotencyKey), &result); err != nil {
+		return Event{}, err
 	}
 	return result, nil
 }

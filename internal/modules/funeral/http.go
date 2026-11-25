@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/alltomatos/amparius/internal/modules/entitlement"
@@ -21,39 +22,58 @@ type AccessChecker interface {
 // NewDevelopmentHTTPHandler cria o endpoint dev-only que representa o ponto
 // de entrada do módulo opcional. O contexto tenant+empresa deve ter sido
 // composto pelo middleware de autenticação antes deste handler.
-func NewDevelopmentHTTPHandler(checker AccessChecker) http.Handler {
+func NewDevelopmentHTTPHandler(checker AccessChecker, contractServices ...ContractService) http.Handler {
+	var contracts ContractService
+	if len(contractServices) > 0 {
+		contracts = contractServices[0]
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Amparius-Development-Only", "true")
 		w.Header().Set("Cache-Control", "no-store")
-		if r.URL.Path != accessPath {
-			writeError(w, http.StatusNotFound, "FUNERAL_ROUTE_NOT_FOUND", "rota não encontrada")
+		if r.URL.Path == accessPath {
+			serveAccess(w, r, checker)
 			return
 		}
-		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", http.MethodGet)
-			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "método não permitido")
-			return
-		}
-		if checker == nil {
-			writeError(w, http.StatusServiceUnavailable, "ENTITLEMENT_UNAVAILABLE", "entitlement indisponível")
-			return
-		}
-		if err := checker.Check(r.Context(), entitlement.ModuleFuneral, time.Now().UTC()); err != nil {
-			status := http.StatusServiceUnavailable
-			code := "ENTITLEMENT_UNAVAILABLE"
-			if errors.Is(err, entitlement.ErrModuleDisabled) {
-				status = http.StatusForbidden
-				code = "ENTITLEMENT_MODULE_NOT_LICENSED"
+		if contracts != nil && strings.HasPrefix(r.URL.Path, "/_dev/funeral/contracts") {
+			if err := checkFuneralAccess(r, checker); err != nil {
+				writeAccessError(w, err)
+				return
 			}
-			writeError(w, status, code, "módulo funeral bloqueado")
+			serveContracts(w, r, contracts)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status":      "ok",
-			"module_code": entitlement.ModuleFuneral,
-			"access":      "granted",
-		})
+		writeError(w, http.StatusNotFound, "FUNERAL_ROUTE_NOT_FOUND", "rota não encontrada")
 	})
+}
+
+func serveAccess(w http.ResponseWriter, r *http.Request, checker AccessChecker) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "método não permitido")
+		return
+	}
+	if err := checkFuneralAccess(r, checker); err != nil {
+		writeAccessError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "ok", "module_code": entitlement.ModuleFuneral, "access": "granted",
+	})
+}
+
+func checkFuneralAccess(r *http.Request, checker AccessChecker) error {
+	if checker == nil {
+		return entitlement.ErrEntitlementUnavailable
+	}
+	return checker.Check(r.Context(), entitlement.ModuleFuneral, time.Now().UTC())
+}
+
+func writeAccessError(w http.ResponseWriter, err error) {
+	status, code, message := http.StatusServiceUnavailable, "ENTITLEMENT_UNAVAILABLE", "entitlement indisponível"
+	if errors.Is(err, entitlement.ErrModuleDisabled) {
+		status, code, message = http.StatusForbidden, "ENTITLEMENT_MODULE_NOT_LICENSED", "módulo funeral bloqueado"
+	}
+	writeError(w, status, code, message)
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string) {

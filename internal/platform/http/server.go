@@ -110,6 +110,9 @@ func (s *Server) routes(options Options) {
 	}
 	if options.DevelopmentMode && options.DevelopmentFuneral != nil {
 		s.mux.Handle("/_dev/funeral/access", options.DevelopmentFuneral)
+		s.mux.Handle("/_dev/funeral/contracts", options.DevelopmentFuneral)
+		s.mux.Handle("/_dev/funeral/contracts/{id}", options.DevelopmentFuneral)
+		s.mux.Handle("/_dev/funeral/contracts/{id}/status", options.DevelopmentFuneral)
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"github.com/alltomatos/amparius/internal/modules/finance"
 	"github.com/alltomatos/amparius/internal/modules/funeral"
 	"github.com/alltomatos/amparius/internal/modules/identity"
+	"github.com/alltomatos/amparius/internal/modules/outbox"
 	"github.com/alltomatos/amparius/internal/modules/party"
 	"github.com/alltomatos/amparius/internal/platform/config"
 	"github.com/alltomatos/amparius/internal/platform/db"
@@ -85,6 +86,14 @@ func run() error {
 			return fmt.Errorf("criar repositório financeiro: %w", err)
 		}
 		financeHandler = finance.NewDevelopmentHTTPHandler(financeRepository)
+		outboxRepository, err := outbox.NewRepository(database)
+		if err != nil {
+			return fmt.Errorf("criar repositório de outbox: %w", err)
+		}
+		funeralRepository, err := funeral.NewRepository(database, outboxRepository)
+		if err != nil {
+			return fmt.Errorf("criar repositório funerário: %w", err)
+		}
 
 		var checker funeral.AccessChecker
 		if cfg.ControlPlaneDSN != "" {
@@ -104,7 +113,7 @@ func run() error {
 				logger.Warn("control plane de entitlement indisponível")
 			}
 		}
-		optionalHandler := funeral.NewDevelopmentHTTPHandler(checker)
+		optionalHandler := funeral.NewDevelopmentHTTPHandler(checker, funeralRepository)
 		funeralHandler = httpserver.DevelopmentTenantCompanyContext(optionalHandler, repository)
 	}
 

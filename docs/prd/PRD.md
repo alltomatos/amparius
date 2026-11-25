@@ -123,7 +123,7 @@ Folha de pagamento, eSocial completo, contabilidade completa (diário/razão ofi
 | RF-032 | Fiscal | Emitir NF-e/NFC-e com contingência e reconciliação |
 | RF-033 | Fiscal | Cancelar/substituir dentro do prazo legal, bloqueando fora dele |
 | RF-034 | Fiscal | Gerar DANFSe/DANFE em PDF a partir do XML autorizado |
-| RF-040 | Funerário | Contrato com plano/serviço, parcelamento e ordem de serviço |
+| RF-040 | Funerário | Contrato com cliente/falecido/familiares, itens de catálogo, status auditável e valor congelado; parcelamento e ordem de serviço em fatias posteriores |
 | RF-041 | Funerário | Agenda de velório/sepultamento com conflito de recurso |
 | RF-050 | Cemitério | Mapa de quadras/jazigos com ocupação e concessão |
 | RF-051 | Cemitério | Registrar sepultamento, exumação e manutenção com histórico |

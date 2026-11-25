@@ -23,6 +23,7 @@ pub enum OperationKind {
     CashOpen,
     CashMovement,
     CashClose,
+    FiscalEmission,
 }
 
 impl OperationKind {
@@ -32,6 +33,7 @@ impl OperationKind {
             Self::CashOpen => "cash_open",
             Self::CashMovement => "cash_movement",
             Self::CashClose => "cash_close",
+            Self::FiscalEmission => "fiscal_emission",
         }
     }
 }
@@ -208,6 +210,13 @@ pub fn validate_draft(draft: &OperationDraft) -> Result<(), QueueError> {
             if object.contains_key("expected_amount_cents") {
                 require_cents(object, "expected_amount_cents", 0)?;
             }
+        }
+        OperationKind::FiscalEmission => {
+            let document_ref = object
+                .get("document_ref")
+                .and_then(Value::as_str)
+                .ok_or(QueueError::InvalidPayload("document_ref obrigatorio"))?;
+            validate_identifier("entity_id", document_ref, MAX_ENTITY_ID_LEN)?;
         }
     }
     reject_personal_data(&draft.payload, 0)?;

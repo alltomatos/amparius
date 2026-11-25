@@ -13,6 +13,18 @@ cargo run
 Invoke-WebRequest http://127.0.0.1:8080/healthz
 ```
 
+## RELAY-01C
+
+`SyncEngine` fornece a fronteira local para reconexão: lê pendentes em ordem, preserva
+`operation_id`/`idempotency_key` quando o transporte cai e persiste o `server_cursor`
+somente após confirmação. Rejeição fiscal fica como `failed` e cria uma tarefa de
+revisão deduplicada e tenant-scoped. O transporte de rede ainda não está implementado
+nesta fatia; portanto os testes usam um transporte roteirizado e não comprovam
+conectividade real.
+
+Contrato: `../docs/contracts/relay-sync-v1.md`. Decisão:
+`../docs/adr/0026-relay-sync-reconexao-revisao-fiscal.md`.
+
 Configuração opcional por ambiente:
 
 - `AMPARIUS_RELAY_BIND_ADDR` (default: `127.0.0.1:8080`)

@@ -17,8 +17,8 @@ ordem próprio do dispositivo. A ordem nunca volta atrás nem se repete.
 ## O que ainda não funciona sem internet
 
 - Emitir NFS-e ou falar com SEFAZ/prefeitura em tempo real.
-- Sincronizar a fila com o SaaS. A transmissão e a reconciliação entram na próxima etapa do
-  produto; nesta versão a fila fica guardada localmente e continua visível.
+- Concluir a transmissão com o SaaS: o relay já preserva e reapresenta a fila no engine de
+  reconexão, mas o adaptador de rede autenticado ainda não está nesta versão.
 - Relatórios consolidados de várias lojas.
 - Contratar novo tenant ou alterar plano do SaaS.
 
@@ -58,6 +58,9 @@ rede; uma fila que cresce sem queda de rede pede suporte.
 4. Se a tela mostrar falha ou conflito, anote o horário e chame o suporte. Não repita a mesma
    operação com outro número nem edite arquivos do relay.
 
+Se uma transmissão fiscal for rejeitada, a operação fica falha e o relay cria uma tarefa de
+revisão. Isso não autoriza a emissão nem substitui a conferência do suporte.
+
 ## Operação por 24 horas
 
 A loja pode ficar sem internet por pelo menos 24 horas registrando contrato e caixa. A fila
@@ -79,13 +82,15 @@ aceita operação nova até a credencial ser renovada.
 
 - A fila é local ao computador da loja. Se o disco falhar antes da sincronização, a operação
   pode ser perdida; faça backup conforme a orientação do suporte.
-- O relay ainda não substitui o banco definitivo do SaaS. A migração para PostgreSQL local e
-  a reconciliação fazem parte das próximas fatias.
+- O relay ainda não substitui o banco definitivo do SaaS. O adaptador de rede, a migração para
+  PostgreSQL local e a reconciliação remota fazem parte das próximas fatias.
 - Documento fiscal em contingência ainda não é emitido por esta versão; quando entrar, seguirá
   as tabelas oficiais e nunca será calculado por aproximação.
 
 ## Para o suporte
 
-O contrato técnico está em `docs/contracts/relay-operations-v1.md`. A decisão de arquitetura
-está em `docs/adr/0023-relay-fila-offline-contrato-caixa.md`. Os comandos de verificação do
-relay estão no `relay/README.md`.
+Os contratos técnicos estão em `docs/contracts/relay-operations-v1.md` e
+`docs/contracts/relay-sync-v1.md`. As decisões de arquitetura estão em
+`docs/adr/0023-relay-fila-offline-contrato-caixa.md` e
+`docs/adr/0026-relay-sync-reconexao-revisao-fiscal.md`. Os comandos de verificação do relay
+estão no `relay/README.md`.

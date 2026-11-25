@@ -3,6 +3,7 @@ mod http;
 mod queue;
 mod snapshot;
 mod store;
+mod sync;
 
 pub use auth::{AuthCache, AuthError, AuthenticatedSubject, CachedCredential};
 pub use http::{ApiError, AppState, router};
@@ -11,7 +12,10 @@ pub use queue::{
     QueuedOperation, RelayMode, RelayStatus, content_hash, operation_id, unix_now,
 };
 pub use snapshot::{SignedSnapshot, SnapshotError, SnapshotSigner, VerifiedSnapshot};
-pub use store::{LocalStore, StoreError, TemporaryRecord};
+pub use store::{
+    LocalStore, ReviewTask, ReviewTaskKind, ReviewTaskStatus, StoreError, TemporaryRecord,
+};
+pub use sync::{SyncEngine, SyncError, SyncOutcome, SyncReport, SyncTransport, TransportError};
 
 use serde::Deserialize;
 use std::path::PathBuf;

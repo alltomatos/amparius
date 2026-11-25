@@ -47,6 +47,7 @@ enxerga operações, sequência ou status de outro.
 | `cash_open` | `opening_amount_cents` inteiro | valor `>= 0` |
 | `cash_movement` | `direction` (`in`/`out`), `amount_cents` inteiro, `reason` texto | valor `> 0`; motivo não vazio e até 200 caracteres |
 | `cash_close` | `counted_amount_cents` inteiro; `expected_amount_cents` opcional | valores `>= 0` |
+| `fiscal_emission` | `document_ref` opaco | não contém XML, tributos ou PII; a transmissão ocorre no sincronizador |
 
 Todo dinheiro é inteiro em centavos. Float, valor negativo fora da regra, moeda
 desconhecida e payload não-objeto são recusados com `400`.
@@ -160,7 +161,8 @@ Mensagens de erro não incluem token, payload de negócio nem PII.
 
 ## Persistência e limites
 
-O store JSON mantém `records`, `credentials`, `snapshot`, `queue` e `sequencers` no
+O store JSON mantém `records`, `credentials`, `snapshot`, `queue`, `sequencers` e tarefas de
+revisão no
 schema `2`. Arquivos do schema `1` são migrados na abertura sem perda. A escrita usa
 arquivo temporário e backup `.bak`; o registro só é confirmado depois de durável.
 

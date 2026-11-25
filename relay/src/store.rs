@@ -26,6 +26,29 @@ pub struct TemporaryRecord {
     pub payload: Value,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewTaskKind {
+    FiscalFailure,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewTaskStatus {
+    Open,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewTask {
+    pub task_id: String,
+    pub tenant_id: String,
+    pub operation_id: String,
+    pub kind: ReviewTaskKind,
+    pub code: String,
+    pub status: ReviewTaskStatus,
+    pub created_at: u64,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct PersistedStore {
     schema_version: u16,
@@ -36,6 +59,8 @@ struct PersistedStore {
     queue: Vec<QueuedOperation>,
     #[serde(default)]
     sequencers: Vec<DeviceSequencer>,
+    #[serde(default)]
+    review_tasks: Vec<ReviewTask>,
 }
 
 impl Default for PersistedStore {
@@ -47,6 +72,7 @@ impl Default for PersistedStore {
             snapshot: None,
             queue: Vec::new(),
             sequencers: Vec::new(),
+            review_tasks: Vec::new(),
         }
     }
 }
@@ -410,11 +436,7 @@ impl LocalStore {
                 OperationStatus::Failed => status.failed += 1,
                 OperationStatus::Conflict => status.conflict += 1,
             }
-            if matches!(
-                operation.status,
-                OperationStatus::Failed | OperationStatus::Conflict
-            ) && operation.updated_at >= latest_error_at
-            {
+            if operation.last_error.is_some() && operation.updated_at >= latest_error_at {
                 latest_error_at = operation.updated_at;
                 status.last_error = operation.last_error.clone();
             }
@@ -473,10 +495,7 @@ impl LocalStore {
             subject,
             target_operation_id,
             |operation| {
-                if matches!(
-                    operation.status,
-                    OperationStatus::Synced | OperationStatus::Conflict
-                ) {
+                if operation.status != OperationStatus::Pending {
                     return Err(QueueError::InvalidTransition);
                 }
                 operation.status = OperationStatus::Failed;
@@ -486,6 +505,124 @@ impl LocalStore {
             },
             now,
         )
+    }
+
+    pub fn mark_operation_retryable(
+        &mut self,
+        subject: &AuthenticatedSubject,
+        target_operation_id: &str,
+        code: &str,
+        now: u64,
+    ) -> Result<(), StoreError> {
+        let code = safe_code(code);
+        self.update_operation(
+            subject,
+            target_operation_id,
+            |operation| {
+                if operation.status != OperationStatus::Pending {
+                    return Err(QueueError::InvalidTransition);
+                }
+                operation.status = OperationStatus::Pending;
+                operation.attempts = operation.attempts.saturating_add(1);
+                operation.last_error = Some(format!("sync_retry:{code}"));
+                Ok(())
+            },
+            now,
+        )
+    }
+
+    pub fn mark_fiscal_failure(
+        &mut self,
+        subject: &AuthenticatedSubject,
+        target_operation_id: &str,
+        code: &str,
+        now: u64,
+    ) -> Result<ReviewTask, StoreError> {
+        if subject.tenant_id.trim().is_empty() {
+            return Err(StoreError::Queue(QueueError::EmptyTenant));
+        }
+        let index = self
+            .data
+            .queue
+            .iter()
+            .position(|item| {
+                item.tenant_id == subject.tenant_id && item.operation_id == target_operation_id
+            })
+            .ok_or(StoreError::Queue(QueueError::NotFound))?;
+        let code = safe_code(code);
+        let previous_queue = self.data.queue[index].clone();
+        let task_id = review_task_id(&subject.tenant_id, target_operation_id);
+        let task = self
+            .data
+            .review_tasks
+            .iter()
+            .find(|task| task.task_id == task_id)
+            .cloned()
+            .unwrap_or_else(|| ReviewTask {
+                task_id,
+                tenant_id: subject.tenant_id.clone(),
+                operation_id: target_operation_id.to_owned(),
+                kind: ReviewTaskKind::FiscalFailure,
+                code: code.clone(),
+                status: ReviewTaskStatus::Open,
+                created_at: now,
+            });
+
+        if matches!(
+            self.data.queue[index].status,
+            OperationStatus::Synced | OperationStatus::Conflict
+        ) {
+            return Err(StoreError::Queue(QueueError::InvalidTransition));
+        }
+        if self.data.queue[index].status == OperationStatus::Failed {
+            if let Some(existing) = self
+                .data
+                .review_tasks
+                .iter()
+                .find(|existing| existing.task_id == task.task_id)
+            {
+                return Ok(existing.clone());
+            }
+        }
+        self.data.queue[index].status = OperationStatus::Failed;
+        self.data.queue[index].attempts = self.data.queue[index].attempts.saturating_add(1);
+        self.data.queue[index].last_error = Some(format!("fiscal_rejected:{code}"));
+        self.data.queue[index].updated_at = now;
+        let inserted_task = !self
+            .data
+            .review_tasks
+            .iter()
+            .any(|existing| existing.task_id == task.task_id)
+            && {
+                self.data.review_tasks.push(task.clone());
+                true
+            };
+        if let Err(error) = self.persist() {
+            self.data.queue[index] = previous_queue;
+            if inserted_task {
+                self.data
+                    .review_tasks
+                    .retain(|existing| existing.task_id != task.task_id);
+            }
+            return Err(error);
+        }
+        Ok(task)
+    }
+
+    pub fn list_review_tasks(
+        &self,
+        subject: &AuthenticatedSubject,
+    ) -> Result<Vec<ReviewTask>, StoreError> {
+        if subject.tenant_id.trim().is_empty() {
+            return Err(StoreError::Queue(QueueError::EmptyTenant));
+        }
+        Ok(self
+            .data
+            .review_tasks
+            .iter()
+            .filter(|task| task.tenant_id == subject.tenant_id)
+            .cloned()
+            .collect())
     }
 
     pub fn mark_operation_conflict(
@@ -653,6 +790,28 @@ fn truncate(value: &str, max: usize) -> String {
         end -= 1;
     }
     value[..end].to_owned()
+}
+
+fn safe_code(value: &str) -> String {
+    let code: String = value
+        .chars()
+        .filter(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.')
+        })
+        .take(64)
+        .collect();
+    if code.is_empty() {
+        "unspecified".to_owned()
+    } else {
+        code
+    }
+}
+
+fn review_task_id(tenant_id: &str, operation_id: &str) -> String {
+    format!(
+        "review_{}",
+        crate::queue::hex_sha256(format!("{tenant_id}\0{operation_id}").as_bytes())
+    )
 }
 
 fn replace_file(temp_path: &Path, destination: &Path) -> Result<(), io::Error> {

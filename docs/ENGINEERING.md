@@ -55,6 +55,19 @@ cargo run --manifest-path relay/Cargo.toml  # relay (servidor da loja)
 cargo run --manifest-path client/Cargo.toml # client (estação)
 ```
 
+### Relay RELAY-01C
+
+O `relay::sync::SyncEngine` lê operações pendentes em ordem de `seq` e recebe um
+`SyncTransport` injetado. Queda ou timeout mantém a operação pendente, registra um
+código técnico sem PII e permite replay com o mesmo `operation_id`. Uma rejeição
+fiscal marca a operação como `failed` e cria uma `ReviewTask` tenant-scoped para
+revisão explícita. O adaptador de rede autenticado, com timeout, retry limitado e
+jitter concretos, ainda é uma fatia posterior; os testes atuais são determinísticos
+e não são integração real com o SaaS.
+
+Contrato: `docs/contracts/relay-sync-v1.md`. ADR:
+`docs/adr/0026-relay-sync-reconexao-revisao-fiscal.md`.
+
 ## Estado
 
 Fase 1 em andamento: `cmd/api` + `cmd/worker` (Go, health), `relay/` +

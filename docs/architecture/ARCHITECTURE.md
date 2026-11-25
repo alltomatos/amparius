@@ -182,6 +182,11 @@ No papel de servidor da loja:
 - credencial de operador emitida pelo SaaS e validada localmente (cache com validade);
 - fila idempotente e sincronização ao reconectar.
 
+A fatia RELAY-01A implementa o store temporário por `tenant_id`, o cache de credencial sem
+token bruto e o snapshot de enforcement assinado/versão monotônica. O contrato está em
+`docs/contracts/relay-cache-v1.md` e a decisão em
+`docs/adr/0022-relay-store-snapshot-auth-cache.md`.
+
 Acesso em três caminhos com a **mesma interface**: portal web do SaaS (online), web local servida pelo servidor da loja (offline ou LAN) e desktop.
 
 Segurança: matrícula do dispositivo no control plane, chave por instalação, TLS local emitido no provisionamento, escuta apenas na LAN por padrão; túnel de saída para acesso remoto é opcional e desligado.

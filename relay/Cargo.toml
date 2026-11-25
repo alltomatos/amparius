@@ -9,7 +9,10 @@ license = "Proprietary"
 [dependencies]
 anyhow = "1"
 axum = "0.8"
+ed25519-dalek = "2"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
 tracing = "0.1"

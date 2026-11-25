@@ -5,7 +5,7 @@ use axum::{Router, http::StatusCode, routing::get};
 use tokio::net::TcpListener;
 use tracing::info;
 
-use amparius_relay::RelayConfig;
+use amparius_relay::{LocalStore, RelayConfig};
 
 async fn healthz() -> StatusCode {
     StatusCode::OK
@@ -20,12 +20,14 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .context("AMPARIUS_RELAY_BIND_ADDR inválido")?;
 
+    let _store = LocalStore::open(&config.store_path).context("abrir store local temporário")?;
     let app = Router::new().route("/healthz", get(healthz));
     let listener = TcpListener::bind(address)
         .await
         .with_context(|| format!("escutar em {address}"))?;
 
     info!(%address, "amparius relay iniciado");
+    info!(path = %config.store_path.display(), "store local temporário pronto");
     info!("PostgreSQL local configurado como placeholder; conexão ainda não habilitada");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())

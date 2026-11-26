@@ -1,0 +1,27 @@
+{
+	admin off
+	auto_https disable_redirects
+	servers {
+		protocols h1 h2
+		strict_sni_host
+	}
+}
+
+hml.amparius.com, hml.amparius.com.br {
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+
+	@health {
+		method GET HEAD
+		path /healthz /readyz
+	}
+	handle @health {
+		reverse_proxy 127.0.0.1:18080
+	}
+	handle {
+		respond 404
+	}
+}

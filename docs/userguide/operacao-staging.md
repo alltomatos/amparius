@@ -105,9 +105,15 @@ também serve dois fluxos públicos de demonstração com dados sintéticos:
 
 - [Cliente web](https://hml.amparius.com/) — enfileirar um atendimento de
   exemplo, repetir a ação, simular reconexão e reenviar a mesma operação.
-- [Painel SaaS](https://hml.amparius.com/painel/) — abrir a empresa de exemplo,
+- [Painel SaaS](https://manager.amparius.com/) — abrir a empresa de exemplo,
   selecionar **Funerária**, ajustar quota, conceder ou revogar licença e
   conferir a versão e auditoria de demonstração.
+
+O painel SaaS é servido na raiz de `manager.amparius.com` (mesmo conjunto
+sintético de `/`, `/styles.css`, `/helpers.js`, `/app.js`, `/panel-demo.js`,
+`/staging.css` e `/assets/brand/amparius-logo.svg`). A cópia em
+`hml.amparius.com/painel/` continua disponível para comparação. O domínio
+`manager.amparius.com` é a superfície administrativa definida no ADR 0040.
 
 A fila e as mutações são isoladas por aba e reiniciam ao recarregar. A
 política de conteúdo impede conexões da aplicação com API ou relay. A

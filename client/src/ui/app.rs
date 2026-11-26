@@ -795,7 +795,43 @@ impl eframe::App for SetupApp {
     }
 }
 
+struct BrandedApp {
+    logo: egui::TextureHandle,
+    app: Box<dyn eframe::App>,
+}
+
+impl eframe::App for BrandedApp {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        egui::Panel::top("amparius_brand")
+            .frame(
+                egui::Frame::new()
+                    .fill(egui::Color32::from_rgb(0, 39, 76))
+                    .inner_margin(egui::Margin::symmetric(16, 6)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    egui::Frame::new()
+                        .fill(egui::Color32::WHITE)
+                        .corner_radius(6.0)
+                        .show(ui, |ui| {
+                            ui.image((self.logo.id(), egui::vec2(32.0, 32.0)));
+                        });
+                    ui.label(
+                        egui::RichText::new("Amparius")
+                            .strong()
+                            .color(egui::Color32::WHITE),
+                    );
+                });
+            });
+        self.app.ui(ui, frame);
+    }
+}
+
 pub fn run(config: Result<ClientConfig, SetupProblem>) -> Result<(), eframe::Error> {
+    let brand_icon = eframe::icon_data::from_png_bytes(include_bytes!(
+        "../../../assets/brand/amparius-icon-64.png"
+    ))
+    .map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1024.0, 720.0])
@@ -811,7 +847,15 @@ pub fn run(config: Result<ClientConfig, SetupProblem>) -> Result<(), eframe::Err
                 Ok(config) => Box::new(ClientApp::new(cc, config)),
                 Err(problem) => Box::new(SetupApp::new(problem)),
             };
-            Ok(app)
+            let logo = cc.egui_ctx.load_texture(
+                "Amparius",
+                egui::ColorImage::from_rgba_unmultiplied(
+                    [brand_icon.width as usize, brand_icon.height as usize],
+                    &brand_icon.rgba,
+                ),
+                egui::TextureOptions::LINEAR,
+            );
+            Ok(Box::new(BrandedApp { logo, app }))
         }),
     )
 }

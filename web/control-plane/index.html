@@ -8,10 +8,19 @@
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
-    <main class="shell" data-name="control-plane-shell">
+    <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
+    <aside class="side-rail" aria-label="Painel SaaS">
+      <div class="brand"><img src="../../assets/brand/amparius-logo.svg" alt="Amparius" width="144" height="106"></div>
+      <nav aria-label="Administração">
+        <a href="#conteudo">Painel</a>
+        <a href="#companies-title">Empresas</a>
+        <a href="#entitlements-title">Licenças</a>
+        <a href="#audit-title">Auditoria</a>
+      </nav>
+    </aside>
+    <main id="conteudo" tabindex="-1" class="shell" data-name="control-plane-shell">
       <header class="topbar">
         <div>
-          <p class="eyebrow">AMPARIUS</p>
           <h1>Painel SaaS</h1>
         </div>
         <div id="connection" class="status status-loading" role="status">Carregando contexto…</div>
@@ -29,7 +38,7 @@
       <section class="toolbar" data-name="companies-toolbar" aria-labelledby="companies-title">
         <div>
           <p class="eyebrow">ADMINISTRAÇÃO</p>
-          <h2 id="companies-title">Empresas</h2>
+          <h2 id="companies-title" tabindex="-1">Empresas</h2>
         </div>
         <label class="search-label" for="company-search">Filtrar empresas
           <input id="company-search" type="search" placeholder="Razão social" autocomplete="off">
@@ -45,7 +54,7 @@
       <section class="toolbar entitlement-heading" data-name="entitlements-toolbar" aria-labelledby="entitlements-title">
         <div>
           <p class="eyebrow">LICENÇAS</p>
-          <h2 id="entitlements-title">Licenças da empresa</h2>
+          <h2 id="entitlements-title" tabindex="-1">Licenças da empresa</h2>
         </div>
         <div id="selected-company" class="muted">Selecione uma empresa</div>
       </section>
@@ -55,11 +64,7 @@
       <div id="entitlements" class="entitlement-grid" data-name="entitlement-list"></div>
       <nav id="entitlements-pagination" class="pagination" aria-label="Paginação de licenças"></nav>
 
-      <footer>
-        <p>Tenant é derivado do token. O cabeçalho <code>X-Tenant-Id</code> não autoriza escopo.</p>
-        <p id="trace" class="muted"></p>
-      </footer>
-          <section class="detail-card" data-name="entitlement-detail" aria-labelledby="entitlement-detail-title">
+      <section class="detail-card" data-name="entitlement-detail" aria-labelledby="entitlement-detail-title">
         <div class="toolbar entitlement-heading">
           <div>
             <h2 id="entitlement-detail-title">Detalhe da licença</h2>
@@ -74,14 +79,19 @@
           <div class="toolbar entitlement-heading">
             <div>
               <p class="eyebrow">AUDITORIA</p>
-              <h2 id="audit-title">Eventos</h2>
+              <h2 id="audit-title" tabindex="-1">Eventos</h2>
             </div>
           </div>
           <section id="audit-state" class="state-panel" data-name="audit-state" aria-live="polite">Selecione um entitlement.</section>
           <ul id="audit-list" class="audit-list" data-name="audit-list"></ul>
           <nav id="audit-pagination" class="pagination" aria-label="Paginação de auditoria"></nav>
         </section>
-      </section></main>
+      </section>
+      <footer>
+        <p>Tenant é derivado do token. O cabeçalho <code>X-Tenant-Id</code> não autoriza escopo.</p>
+        <p id="trace" class="muted"></p>
+      </footer>
+    </main>
     <script src="./helpers.js" defer></script>
     <script src="./app.js" defer></script>
   </body>

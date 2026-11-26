@@ -1,6 +1,9 @@
 # Mockups — Amparius v0.1
 
-Telas em SVG, com o assistente contextual em todas. Arquivos em `mockups/`; prévias em JPG em `mockups/previews/`.
+As telas de loja estão na [galeria do cliente](../../mockups/index.html), com
+prévias em JPG. As telas administrativas estão na
+[galeria do painel SaaS](mockups/index.html). Todos os mockups são SVG e mostram
+a posição do assistente contextual.
 
 Gerar de novo:
 
@@ -65,3 +68,22 @@ Detalhes de contrato: `docs/design/AI-ASSISTANT.md`.
 - Marca final de tipografia (o mockup usa a fonte do sistema; a logo usa Montserrat).
 - Ilustrações do estado vazio e ícones definitivos.
 - Tema escuro para uso noturno em cemitério/plantão.
+
+## Correspondência com o MVP
+
+Referências de comportamento: [especificação frontend](frontend-spec.md),
+[aceite frontend](../qa/frontend-acceptance.md) e
+[ADR da prévia sintética](../adr/0039-preview-sintetico-homologacao.md).
+
+| Referência | Cobertura desta fatia | Evolução pendente |
+| --- | --- | --- |
+| SaaS 03 · Visão geral | Navegação lateral, logo oficial e indicadores do cenário. Licenças ativas e a vencer acompanham a vigência e o estado da licença opcional. | Agregações administrativas reais e auditoria recente do tenant. |
+| SaaS 05–07 · Cotas, licença e auditoria | Lista por empresa, detalhe e trilha do módulo selecionado; alterações sintéticas na aba. | Visão consolidada de cotas do tenant, filtros e exportação de auditoria e paridade visual do fluxo de confirmação. |
+| SaaS 08–10 · IA | Visão geral sinaliza que a cota de IA está fora do cenário. | Catálogo e fallback, allowlist e cota em reais por escopo, consumo e trilha de execuções, conforme ADR 0008. |
+| Loja 01–02 · Painel do dia e atendimento | Web mostra agenda sintética, pendências, estado da conexão e revisão de um atendimento antes de enfileirar. Desktop tem marca, estado, fila persistida e atendimento por referência de contrato ativo. | Agenda real no desktop, cadastro autorizado de partes e fluxo completo de contrato, pagamento e contingência. |
+| Loja 03–04 · Cemitério e financeiro | Mockups de referência para o mapa e as contas a receber. | Navegação e dados operacionais de jazigos, concessões, títulos e filtros, respeitando entitlement e disponibilidade offline. |
+
+O cliente web demonstra a reconexão em memória. A estação Rust usa sua fila
+persistida e sinaliza a indisponibilidade de sincronização quando faltam as
+dependências. O roteiro web está no
+[guia de homologação](../userguide/operacao-staging.md).

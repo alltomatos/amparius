@@ -135,6 +135,9 @@ let report = sync_pending(&mut queue, &transport, &credentials, amparius_client:
   códigos sanitizados, horário em America/Sao_Paulo); `src/ui/render.rs` desenha
   com `eframe`/`egui` e `src/ui/app.rs` liga janela, fila persistida e
   sincronização em thread.
+- A faixa de marca e o ícone da janela usam
+  [o símbolo oficial do Amparius](../assets/brand/amparius-icon.svg). O PNG de
+  64 px é a versão rasterizada desse SVG, carregada uma vez no início da janela.
 - Tokens em `src/ui/theme.rs` (`#00274C`, `#0073CF`, estados com texto +
   símbolo). Não há cópia de componentes/tema de outro ERP.
 - Atualizações de conexão são declaradas pelo operador e persistidas na fila;

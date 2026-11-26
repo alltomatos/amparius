@@ -1,6 +1,6 @@
 "use strict";
 
-function createPanelDemo() {
+function createPanelDemo(onLicenseChange = () => {}) {
   const tenant = { id: "tenant-demo", name: "Grupo de demonstração" };
   const company = { id: "empresa-demo", legalName: "Unidade Demonstração", cnpj: null, status: "active", kind: "Filial" };
   const core = { module: "identity", moduleName: "Identidade", kind: "core", status: "active" };
@@ -8,6 +8,7 @@ function createPanelDemo() {
     module: "funeral", moduleName: "Funerária", kind: "optional", status: "active",
     quota: 5, used: 1, quotaConfigured: true, version: 1, validFrom: "2026-01-01",
   };
+  onLicenseChange(funeral);
   const audit = [];
   const mutations = new Map();
   const base = `/v1/companies/${company.id}/entitlements`;
@@ -57,6 +58,7 @@ function createPanelDemo() {
       status: method === "PUT" ? "active" : status ?? funeral.status,
       version: version + 1, updatedAt: at,
     };
+    onLicenseChange(funeral);
     mutations.set(key, { method, body, result: funeral });
     const action = method === "PUT" ? "activated" : status ?? (quota === undefined ? "validity_updated" : "quota_updated");
     audit.unshift({ action, origin: "demonstração", actorId: "operador-demo", at });
@@ -65,4 +67,17 @@ function createPanelDemo() {
 }
 
 if (typeof module !== "undefined") module.exports = { createPanelDemo };
-if (typeof window !== "undefined") window.AMPARIUS_CONFIG = { demo: createPanelDemo() };
+if (typeof window !== "undefined") {
+  window.AMPARIUS_CONFIG = {
+    demo: createPanelDemo((license) => {
+      const today = new Date().toISOString().slice(0, 10);
+      const limit = new Date();
+      limit.setUTCDate(limit.getUTCDate() + 30);
+      const active = license.status === "active" && license.validFrom <= today
+        && (!license.validTo || license.validTo > today);
+      const expiring = active && license.validTo && license.validTo <= limit.toISOString().slice(0, 10);
+      document.getElementById("demo-active-licenses").textContent = active ? "1" : "0";
+      document.getElementById("demo-expiring-licenses").textContent = expiring ? "1" : "0";
+    }),
+  };
+}

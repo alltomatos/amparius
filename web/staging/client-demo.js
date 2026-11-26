@@ -10,7 +10,10 @@ let offline = true;
 let operation;
 
 function render() {
-  document.getElementById("connection").textContent = offline ? "Offline simulado" : "Online simulado";
+  const connection = document.getElementById("connection");
+  connection.textContent = offline ? "Offline simulado" : "Online simulado";
+  connection.classList.toggle("status-loading", offline);
+  connection.classList.toggle("status-online", !offline);
   connect.textContent = offline ? "Simular reconexão" : "Simular queda de rede";
   sync.disabled = offline || !operation;
   if (!operation) return;

@@ -4,7 +4,9 @@ Shell inicial das telas `CP-02` e `CP-05`. A aplicacao e clean-room e usa soment
 
 ## Executar localmente
 
-Sirva esta pasta com um servidor HTTP estatico e configure o runtime antes de carregar `app.js`:
+Sirva a raiz do repositório com um servidor HTTP estático local, abra
+`/web/control-plane/` e configure o runtime antes de carregar `app.js`. O
+servidor deve expor `assets/brand/amparius-logo.svg` para o cabeçalho:
 
 ```html
 <script>

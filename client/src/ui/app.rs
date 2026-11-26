@@ -795,14 +795,57 @@ impl eframe::App for SetupApp {
     }
 }
 
-pub fn run(config: Result<ClientConfig, SetupProblem>) -> Result<(), eframe::Error> {
-    let options = eframe::NativeOptions {
+struct BrandedApp {
+    logo: egui::TextureHandle,
+    app: Box<dyn eframe::App>,
+}
+
+impl eframe::App for BrandedApp {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        egui::Panel::top("amparius_brand")
+            .frame(
+                egui::Frame::new()
+                    .fill(egui::Color32::from_rgb(0, 39, 76))
+                    .inner_margin(egui::Margin::symmetric(16, 6)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    egui::Frame::new()
+                        .fill(egui::Color32::WHITE)
+                        .corner_radius(6.0)
+                        .show(ui, |ui| {
+                            ui.image((self.logo.id(), egui::vec2(32.0, 32.0)));
+                        });
+                    ui.label(
+                        egui::RichText::new("Amparius")
+                            .strong()
+                            .color(egui::Color32::WHITE),
+                    );
+                });
+            });
+        self.app.ui(ui, frame);
+    }
+}
+
+const BRAND_ICON_PNG: &[u8] = include_bytes!("../../../assets/brand/amparius-icon-64.png");
+
+fn native_options(brand_icon: Arc<egui::IconData>) -> eframe::NativeOptions {
+    eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1024.0, 720.0])
             .with_min_inner_size([360.0, 480.0])
+            .with_icon(brand_icon)
             .with_title("Amparius — Painel do dia"),
         ..Default::default()
-    };
+    }
+}
+
+pub fn run(config: Result<ClientConfig, SetupProblem>) -> Result<(), eframe::Error> {
+    let brand_icon = Arc::new(
+        eframe::icon_data::from_png_bytes(BRAND_ICON_PNG)
+            .map_err(|error| eframe::Error::AppCreation(Box::new(error)))?,
+    );
+    let options = native_options(Arc::clone(&brand_icon));
     eframe::run_native(
         "Amparius — Painel do dia",
         options,
@@ -811,7 +854,15 @@ pub fn run(config: Result<ClientConfig, SetupProblem>) -> Result<(), eframe::Err
                 Ok(config) => Box::new(ClientApp::new(cc, config)),
                 Err(problem) => Box::new(SetupApp::new(problem)),
             };
-            Ok(app)
+            let logo = cc.egui_ctx.load_texture(
+                "Amparius",
+                egui::ColorImage::from_rgba_unmultiplied(
+                    [brand_icon.width as usize, brand_icon.height as usize],
+                    &brand_icon.rgba,
+                ),
+                egui::TextureOptions::LINEAR,
+            );
+            Ok(Box::new(BrandedApp { logo, app }))
         }),
     )
 }
@@ -819,6 +870,17 @@ pub fn run(config: Result<ClientConfig, SetupProblem>) -> Result<(), eframe::Err
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_viewport_uses_official_png() {
+        let brand_icon = Arc::new(eframe::icon_data::from_png_bytes(BRAND_ICON_PNG).unwrap());
+        let options = native_options(Arc::clone(&brand_icon));
+        let viewport_icon = options.viewport.icon.unwrap();
+
+        assert_eq!((viewport_icon.width, viewport_icon.height), (64, 64));
+        assert_eq!(viewport_icon.rgba.len(), 64 * 64 * 4);
+        assert!(Arc::ptr_eq(&viewport_icon, &brand_icon));
+    }
 
     #[test]
     fn report_view_marks_stop_and_counts_without_pii() {

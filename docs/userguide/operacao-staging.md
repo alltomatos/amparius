@@ -118,6 +118,19 @@ desenvolvimento com banco, abra o túnel a partir de uma estação autorizada:
 ssh -N -L 127.0.0.1:18080:127.0.0.1:18080 omniroute
 ```
 
+### Roteiro da prévia visual
+
+- No cliente web, abra **Atendimento**, revise o cenário DEMO-001 e confirme
+  duas vezes. A fila apresenta uma operação. Simule a reconexão e a
+  sincronização. Repetir o envio preserva a mesma sequência.
+- Em **Painel SaaS**, selecione a empresa e o módulo **Funerária**. A revogação
+  altera o indicador de licenças ativas e aparece em **Auditoria**. Recarregar a
+  página repõe o cenário inicial.
+- A logo oficial é servida pelo caminho exato
+  `/assets/brand/amparius-logo.svg`. A política de conteúdo permite essa imagem
+  local e mantém bloqueadas as conexões da aplicação. As galerias de referência
+  estão no [catálogo de mockups](../design/MOCKUPS.md).
+
 ### Instalar o edge
 
 Confirme que os dois registros DNS apontam para a VPS e que TCP 443 está

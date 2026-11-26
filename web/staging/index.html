@@ -3,38 +3,80 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Amparius · Homologação</title>
+    <title>Amparius · Cliente web de homologação</title>
+    <link rel="icon" href="/assets/brand/amparius-logo.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/painel/styles.css">
     <link rel="stylesheet" href="/staging.css">
     <script src="/client-demo.js" defer></script>
   </head>
   <body>
-    <main class="shell">
+    <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
+    <aside class="side-rail" aria-label="Cliente de loja">
+      <div class="brand"><img src="/assets/brand/amparius-logo.svg" alt="Amparius" width="144" height="106"></div>
+      <nav aria-label="Operação da loja">
+        <a href="#conteudo">Painel do dia</a>
+        <a href="#atendimento">Atendimento</a>
+        <a href="#sincronizacao">Sincronização</a>
+      </nav>
+    </aside>
+    <main class="shell" id="conteudo" tabindex="-1">
       <header class="topbar">
         <div>
-          <p class="eyebrow">AMPARIUS</p>
-          <h1>Cliente web · Painel do dia</h1>
+          <h1>Painel do dia</h1>
+          <p class="muted">Cliente web · Unidade Demonstração</p>
         </div>
         <a href="/painel/">Abrir painel SaaS</a>
       </header>
+
       <section class="context-card" aria-labelledby="scenario-title">
         <div>
-          <h2 id="scenario-title">Atendimento funeral de demonstração</h2>
-          <p class="muted">Dados sintéticos. A fila desta demonstração existe nesta aba até recarregar a página.</p>
+          <h2 id="scenario-title">Estado da estação</h2>
+          <p class="muted">Dados sintéticos. A fila da demonstração é reiniciada ao recarregar.</p>
         </div>
-        <p class="context-badge" id="connection" role="status">Offline simulado</p>
+        <p class="status status-loading" id="connection" role="status">Offline simulado</p>
       </section>
-      <section class="state-panel" aria-labelledby="queue-title">
-        <h2 id="queue-title">Fila da estação</h2>
-        <p id="pending" role="status">Nenhuma operação registrada.</p>
+
+      <div class="demo-columns">
+        <section class="state-panel demo-section" aria-labelledby="agenda-title">
+          <h2 id="agenda-title">Agenda de hoje</h2>
+          <ul class="demo-agenda">
+            <li><time datetime="09:00">09:00</time> Revisar atendimento de exemplo <span class="muted">Programado</span></li>
+            <li><time datetime="14:00">14:00</time> Conferir fila da estação <span class="muted">Programado</span></li>
+          </ul>
+        </section>
+        <aside class="state-panel demo-section" aria-labelledby="attention-title">
+          <h2 id="attention-title">Precisa de atenção</h2>
+          <p id="pending" role="status">Nenhuma operação registrada.</p>
+          <h3>Assistente contextual</h3>
+          <p>Indisponível na demonstração. Consulte o atendimento e a fila para ver o próximo passo.</p>
+        </aside>
+      </div>
+
+      <section class="state-panel demo-section" aria-labelledby="atendimento">
+        <h2 id="atendimento" tabindex="-1">Atendimento funeral de demonstração</h2>
+        <details>
+          <summary>Revisar atendimento DEMO-001</summary>
+          <dl class="detail-list demo-intake">
+            <div><dt>Contrato</dt><dd>DEMO-001 · ativo</dd></div>
+            <div><dt>Serviço</dt><dd>Atendimento funeral de exemplo</dd></div>
+            <div><dt>Pagamento</dt><dd>Fora do cenário demonstrado</dd></div>
+          </dl>
+          <div class="detail-actions">
+            <button type="button" id="queue">Confirmar atendimento e enfileirar</button>
+          </div>
+        </details>
+      </section>
+
+      <section class="state-panel demo-section" aria-labelledby="sincronizacao">
+        <h2 id="sincronizacao" tabindex="-1">Fila da estação</h2>
         <ul id="operations"></ul>
         <div class="detail-actions">
-          <button type="button" id="queue">Enfileirar atendimento de exemplo</button>
           <button type="button" id="connect">Simular reconexão</button>
           <button type="button" id="sync" disabled>Simular sincronização</button>
         </div>
-        <p id="feedback" role="status">Nenhuma conexão com o relay é usada nesta demonstração.</p>
+        <p>Nenhuma conexão com o relay é usada nesta demonstração.</p>
       </section>
+      <p id="feedback" class="demo-feedback" role="status" aria-atomic="true"></p>
     </main>
   </body>
 </html>

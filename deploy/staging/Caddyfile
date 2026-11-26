@@ -28,13 +28,13 @@ hml.amparius.com {
 
 	@preview {
 		method GET HEAD
-		path / /staging.css /client-demo.js /painel/ /painel/styles.css /painel/helpers.js /painel/app.js /painel/panel-demo.js
+		path / /assets/brand/amparius-logo.svg /staging.css /client-demo.js /painel/ /painel/styles.css /painel/helpers.js /painel/app.js /painel/panel-demo.js
 	}
 	handle @preview {
 		root * /srv/amparius-preview
 		header {
 			Cache-Control "no-store"
-			Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+			Content-Security-Policy "default-src 'none'; script-src 'self'; img-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
 			X-Content-Type-Options "nosniff"
 			Referrer-Policy "no-referrer"
 			X-Robots-Tag "noindex, nofollow"

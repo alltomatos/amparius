@@ -55,6 +55,37 @@ cargo run --manifest-path relay/Cargo.toml  # relay (servidor da loja)
 cargo run --manifest-path client/Cargo.toml # client (estação)
 ```
 
+### Bootstrap E2E com um comando único (issue #58 / E2E-01A)
+
+```powershell
+.\scripts\bootstrap-e2e.ps1          # sobe o que faltar e (re)aplica migrations + fixtures
+.\scripts\bootstrap-e2e.ps1 -Reset   # docker compose down -v antes: ambiente 100% novo (containers e volumes)
+```
+
+O script sobe Postgres/Redis/RabbitMQ via `docker compose`, cria os papéis de
+aplicação `amparius_app` e `amparius_control_app` (guardados por
+`IF NOT EXISTS`, igual ao padrão já usado em `deploy/staging/bootstrap.sh`),
+aplica `goose -dir migrations ... up` na célula e `goose -dir migrations/control
+... up` no control plane, e carrega `scripts/fixtures/e2e-seed.sql`: um tenant,
+uma empresa, um estabelecimento, um usuário owner e um item de catálogo com
+preço, todos sintéticos (nome, e-mail `.invalid` e documentos com prefixo
+`FIXTURE-`, nunca dado pessoal real — AGENTS.md #5). O script e a fixture são
+idempotentes: rodar de novo não duplica papel, migration já aplicada nem
+registro de fixture.
+
+**Lacuna encontrada e corrigida por este bootstrap:** nenhuma migration cria o
+papel `amparius_app`; `migrations/0007_outbox.sql` e outras fazem
+`GRANT ... TO amparius_app` sem guarda, então `goose up` falhava em banco
+vazio com `role "amparius_app" does not exist` (reproduzido antes da correção).
+O script cria o papel antes de aplicar as migrations, do mesmo jeito que o
+bootstrap de staging já fazia; nenhuma migration existente foi editada
+(forward-only, AGENTS.md #8).
+
+Credenciais de `POSTGRES_APP_USER`/`POSTGRES_APP_PASSWORD` e
+`POSTGRES_CONTROL_APP_USER`/`POSTGRES_CONTROL_APP_PASSWORD` em `.env.example`
+são valores fixos de DEV local, nunca segredo de produção (AGENTS.md #6); o
+`.env` continua fora do controle de versão.
+
 ### Relay RELAY-01C
 
 O `relay::sync::SyncEngine` lê operações pendentes em ordem de `seq` e recebe um

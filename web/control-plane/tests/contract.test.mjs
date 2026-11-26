@@ -13,6 +13,18 @@ test("maskCnpj masks all but last 4", () => {
   assert.equal(H.maskCnpj(null), "mascarado");
 });
 
+test("displayCnpj preserves already-masked values", () => {
+  assert.equal(H.displayCnpj("**********0142"), "**********0142");
+});
+
+test("displayCnpj masks raw digits", () => {
+  assert.equal(H.displayCnpj("12345678000199"), "**********0199");
+});
+
+test("displayCnpj fallback on empty", () => {
+  assert.equal(H.displayCnpj(null), "mascarado");
+});
+
 test("displayDate returns pt-BR medium", () => {
   assert.match(H.displayDate("2026-11-25T12:00:00Z"), /25 de nov/);
   assert.match(H.displayDate("2026-01-01"), /^1 de jan/);

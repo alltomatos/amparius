@@ -1,6 +1,6 @@
 # ADR 0036 — UI nativa do cliente (egui/eframe) e modelo de apresentação do painel do dia
 
-- **Status:** aceito em 25/11/2026 — CL-01
+- **Status:** aceito em 25/11/2026 — CL-01; estendido em 26/11/2026 — CL-02
 - **Escopo:** primeira superfície gráfica do cliente de estação Rust (`client/`)
 - **Relaciona-se com:** ADR 0001 (stack), ADR 0002 (operação offline), ADR 0006
   (instalador e papéis), ADR 0023/0034/0035 (fila e transporte), ADR 0026
@@ -98,8 +98,10 @@ reuse o mesmo modelo, tokens e códigos — sem criar um terceiro produto de dad
   `egui_kittest` sem backend gráfico (somente árvore de UI).
 - Boot e primeiro quadro passam a ser medidos e logados
   (`client first frame` com `boot_ms`) para evidência de entrega.
-- A resolução de conflito, o atendimento (CL-02) e as ordens de serviço (CL-03)
-  permanecem fora desta fatia; o painel apenas encaminha a leitura.
+- A resolução de conflito e a execução completa de ordens (CL-03) permanecem
+  fora desta fatia. CL-02 reutiliza a mesma fila e os mesmos tokens, mas só
+  enfileira a jornada, o avanço e a conclusão idempotentes; não resolve
+  entitlement, contrato `active` ou transição no cliente.
 
 ## Verificação
 

@@ -4,6 +4,7 @@
 //! o transporte e a janela. Nenhum módulo aqui contém regra fiscal ou de dinheiro.
 
 pub mod app;
+pub mod attendance;
 pub mod day_panel;
 pub mod render;
 pub mod theme;

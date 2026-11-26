@@ -838,6 +838,7 @@ impl LocalStore {
             kind: match domain {
                 ReconciliationDomain::Master => ReviewTaskKind::MasterConflict,
                 ReconciliationDomain::Money => ReviewTaskKind::MoneyConflict,
+                ReconciliationDomain::Funeral => ReviewTaskKind::SyncFailure,
                 ReconciliationDomain::Fiscal => ReviewTaskKind::FiscalConflict,
             },
             code: safe_code(code),

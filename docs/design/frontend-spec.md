@@ -297,6 +297,14 @@ A UI nunca traduz um erro de licença em “sem internet”. São causas distint
 - **LGPD:** falecido e familiares são dados sensíveis; mascarar em logs e prompts de IA.
 - **Edge:** contrato inativo desabilita criação e explica o motivo.
 
+**Implementação Rust:** a fatia CL-02 está disponível na tela nativa do cliente.
+O formulário usa somente referências opacas, confirma localmente o contrato
+`active` e enfileira `funeral_journey_create`,
+`funeral_service_order_advance` ou `funeral_service_order_complete` com
+`Idempotency-Key`. Offline e contingência mostram `queued`; entitlement bloqueado,
+relay/identidade indisponíveis e erro de validação permanecem estados explícitos.
+O servidor continua revalidando tenant, RLS, entitlement, contrato e transição.
+
 ### CL-03 — Ordens de serviço
 
 - **Objetivo:** executar, pausar e concluir ordens com rastro de sequência local.

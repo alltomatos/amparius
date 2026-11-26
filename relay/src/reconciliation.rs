@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 pub enum ReconciliationDomain {
     Master,
     Money,
+    Funeral,
     Fiscal,
 }
 
@@ -18,6 +19,7 @@ impl ReconciliationDomain {
         match self {
             Self::Master => "master",
             Self::Money => "money",
+            Self::Funeral => "funeral",
             Self::Fiscal => "fiscal",
         }
     }
@@ -31,6 +33,9 @@ pub fn domain_for(kind: OperationKind) -> ReconciliationDomain {
         | OperationKind::CashOpen
         | OperationKind::CashMovement
         | OperationKind::CashClose => ReconciliationDomain::Money,
+        OperationKind::FuneralJourneyCreate
+        | OperationKind::FuneralServiceOrderAdvance
+        | OperationKind::FuneralServiceOrderComplete => ReconciliationDomain::Funeral,
     }
 }
 

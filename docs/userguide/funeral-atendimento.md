@@ -97,3 +97,22 @@ mesma chave e corpo devolve os mesmos IDs; usar a chave com outro conteúdo
 responde `409 IDEMPOTENCY_CONFLICT`. Conflito de janela responde
 `409 SCHEDULE_CONFLICT` e não deixa uma OS parcial. A resposta não expõe dados
 do cliente e os eventos v1 carregam somente IDs opacos, estados e datas.
+
+## Cliente desktop offline (CL-02)
+
+Na tela nativa `Atendimento funeral`, informe apenas referências opacas da
+parte, contrato, local, recurso e ordem. Nome, CPF, telefone, endereço e
+descrição livre não são campos do formulário nem aparecem em logs.
+
+O cliente oferece três ações: criar jornada atômica com OS e agenda, avançar a
+ordem para `in_progress` e concluir a ordem em `completed`. Cada ação recebe
+uma `Idempotency-Key` estável por referência e é persistida na fila com `seq` do
+dispositivo.
+
+Em `offline` e `contingency`, o estado visível é `queued` e o envio fica
+aguardando sincronização. Em `online`, relay e identidade do operador são
+obrigatórios; indisponibilidade não é apresentada como sucesso. O operador só
+pode criar a jornada após confirmar que o contrato está `active`; o servidor
+revalida tenant, RLS, entitlement, contrato e transição. Sem
+`AMPARIUS_FUNERAL_ENTITLEMENT=active`, o módulo permanece bloqueado por
+fail-closed.

@@ -42,7 +42,33 @@ priorizadas (conflito e falha primeiro), tarefas de revisão, códigos técnicos
 sanitizados e o resultado da sincronização. Conflito nunca é resolvido pela
 tela e o valor local é preservado. Contrato: `docs/contracts/client-day-panel-v1.md`;
 decisão de stack: `docs/adr/0036-cliente-ui-nativa-egui-painel-dia.md`.
-Atendimento, ordens de serviço e revisão de conflito são fatias posteriores.
+## Atendimento funeral (CL-02)
+
+A tela nativa "Atendimento funeral" usa referências opacas e permite três
+operações idempotentes na fila local:
+
+- criar jornada atômica (`funeral_journey_create`), com OS e agenda;
+- avançar a OS para `in_progress`;
+- concluir a OS com `funeral_service_order_complete`.
+
+O contrato `active` precisa ser confirmado na tela e é revalidado pelo servidor;
+contrato inativo, entitlement ausente e identidade do operador bloqueiam a ação.
+Em `offline` ou `contingency`, a operação é persistida como `queued` com `seq` e
+`Idempotency-Key`; em `online`, o relay precisa estar configurado. Serviço
+indisponível nunca é apresentado como sucesso. A tela não coleta nome,
+documento, contato ou descrição livre, e não cria/edita partes — isso fica para
+um endpoint autorizado futuro.
+
+Configuração explícita do módulo em ambiente de desenvolvimento:
+
+```powershell
+$env:AMPARIUS_SUBJECT = "operator-1"
+$env:AMPARIUS_FUNERAL_ENTITLEMENT = "active"
+```
+
+Sem `AMPARIUS_FUNERAL_ENTITLEMENT=active`, a tela fica bloqueada por fail-closed.
+As operações funerárias são aceitas pelo relay e permanecem pendentes até o
+consumidor/serviço de negócio correspondente estar disponível.
 
 
 ## Modelo CL-01/CL-03

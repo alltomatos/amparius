@@ -4,6 +4,9 @@
 use eframe::egui::{self, Color32, RichText};
 use std::collections::HashSet;
 
+use super::attendance::{
+    AttendanceAction, AttendanceForm, AttendanceServiceState, AttendanceStatus, AttendanceView,
+};
 use super::day_panel::{DayPanelView, Notice, PanelPhase, Severity, StatusChip, SyncView};
 use super::theme::{Palette, palette, status_colors};
 
@@ -12,6 +15,15 @@ pub struct DayPanelActions {
     pub sync: bool,
     pub reload: bool,
     pub set_connectivity: Option<crate::ConnectivityState>,
+    pub open_attendance: bool,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct AttendanceActions {
+    pub back: bool,
+    pub create_journey: bool,
+    pub advance_order: bool,
+    pub complete_order: bool,
 }
 
 pub fn render(ui: &mut egui::Ui, view: &DayPanelView, actions: &mut DayPanelActions) {
@@ -66,6 +78,12 @@ fn header(
                 .small()
                 .color(palette.text_muted),
         );
+        if ui
+            .add(egui::Button::new("Atendimento funeral").min_size(egui::vec2(190.0, 44.0)))
+            .clicked()
+        {
+            actions.open_attendance = true;
+        }
     });
     ui.add_space(4.0);
     ui.label(
@@ -94,6 +112,172 @@ fn header(
                 actions.set_connectivity = Some(state);
             }
         }
+    });
+}
+
+pub fn render_attendance(
+    ui: &mut egui::Ui,
+    form: &mut AttendanceForm,
+    view: &AttendanceView,
+    actions: &mut AttendanceActions,
+) {
+    let palette = palette(ui.visuals().dark_mode);
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.heading(RichText::new("Atendimento funeral").color(palette.brand_900));
+                ui.label(
+                    RichText::new("CL-02 · jornada e ordem enfileirada")
+                        .small()
+                        .color(palette.text_muted),
+                );
+            });
+            ui.add_space(8.0);
+            let (fg, bg) = match view.service_state {
+                AttendanceServiceState::Online => status_colors(Severity::Success, &palette),
+                AttendanceServiceState::Offline | AttendanceServiceState::Contingency => {
+                    status_colors(Severity::Warning, &palette)
+                }
+                AttendanceServiceState::ServiceUnavailable
+                | AttendanceServiceState::EntitlementBlocked => {
+                    status_colors(Severity::Danger, &palette)
+                }
+            };
+            panel_frame(bg, fg).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(RichText::new(view.service_state.label()).strong().color(fg));
+                ui.label(RichText::new(view.detail).color(palette.text));
+            });
+            ui.add_space(12.0);
+
+            if let AttendanceStatus::Error { code, message } = &view.status {
+                panel_frame(palette.danger_bg, palette.danger).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(RichText::new(message).strong().color(palette.danger));
+                    ui.label(
+                        RichText::new(format!("Código: {code}"))
+                            .monospace()
+                            .small()
+                            .color(palette.text_muted),
+                    );
+                });
+                ui.add_space(8.0);
+            }
+            if let AttendanceStatus::Queued { operation_id, seq } = &view.status {
+                panel_frame(palette.success_bg, palette.success).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(
+                        RichText::new("Enfileirada").strong().color(palette.success),
+                    );
+                    ui.label(
+                        RichText::new(format!("Sequência local {seq} · operação {operation_id}"))
+                            .monospace()
+                            .small()
+                            .color(palette.text_muted),
+                    );
+                    ui.label(
+                        RichText::new("A sincronização não foi simulada; use o painel do dia quando o relay estiver disponível.")
+                            .small()
+                            .color(palette.text),
+                    );
+                });
+                ui.add_space(8.0);
+            }
+
+            ui.label(RichText::new("Tipo de operação").strong().color(palette.text));
+            ui.horizontal_wrapped(|ui| {
+                for (action, label) in [
+                    (AttendanceAction::CreateJourney, "Criar jornada"),
+                    (AttendanceAction::AdvanceOrder, "Avançar ordem"),
+                    (AttendanceAction::CompleteOrder, "Concluir ordem"),
+                ] {
+                    ui.radio_value(&mut form.action, action, label);
+                }
+            });
+            ui.add_space(8.0);
+
+            match form.action {
+                AttendanceAction::CreateJourney => journey_fields(ui, form, &palette),
+                AttendanceAction::AdvanceOrder | AttendanceAction::CompleteOrder => {
+                    order_fields(ui, form, &palette)
+                }
+            }
+
+            ui.add_space(12.0);
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add(egui::Button::new("Voltar ao painel").min_size(egui::vec2(180.0, 44.0)))
+                    .clicked()
+                {
+                    actions.back = true;
+                }
+                let submit_label = form.action.label();
+                if ui
+                    .add_enabled(
+                        view.can_submit,
+                        egui::Button::new(submit_label).min_size(egui::vec2(180.0, 44.0)),
+                    )
+                    .clicked()
+                {
+                    match form.action {
+                        AttendanceAction::CreateJourney => actions.create_journey = true,
+                        AttendanceAction::AdvanceOrder => actions.advance_order = true,
+                        AttendanceAction::CompleteOrder => actions.complete_order = true,
+                    }
+                }
+            });
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("Use somente referências opacas. Nome, documento, contato e texto livre não são aceitos nem registrados em log.")
+                    .small()
+                    .color(palette.text_muted),
+            );
+        });
+}
+
+fn journey_fields(ui: &mut egui::Ui, form: &mut AttendanceForm, palette: &Palette) {
+    field(
+        ui,
+        "Referência da parte (opcional)",
+        &mut form.party_ref,
+        palette,
+    );
+    field(ui, "Contrato active", &mut form.contract_ref, palette);
+    ui.checkbox(
+        &mut form.contract_active_confirmed,
+        "Confirmo que o contrato está active no contexto autorizado",
+    );
+    field(ui, "Tipo de serviço", &mut form.service_kind, palette);
+    field(ui, "Referência do local", &mut form.location_ref, palette);
+    field(
+        ui,
+        "Referência do recurso (opcional)",
+        &mut form.resource_ref,
+        palette,
+    );
+    field(ui, "Início RFC3339", &mut form.starts_at, palette);
+    field(ui, "Fim RFC3339", &mut form.ends_at, palette);
+    field(ui, "Fuso IANA", &mut form.time_zone, palette);
+}
+
+fn order_fields(ui: &mut egui::Ui, form: &mut AttendanceForm, palette: &Palette) {
+    field(
+        ui,
+        "Referência da ordem de serviço",
+        &mut form.order_ref,
+        palette,
+    );
+}
+
+fn field(ui: &mut egui::Ui, label: &str, value: &mut String, palette: &Palette) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(label).color(palette.text));
+        ui.add(
+            egui::TextEdit::singleline(value)
+                .desired_width(360.0)
+                .hint_text("referência opaca"),
+        );
     });
 }
 
@@ -540,5 +724,47 @@ mod tests {
         harness.run();
         harness.get_by_label("Não foi possível abrir a fila local");
         harness.get_by_label("Tentar novamente");
+    }
+
+    #[test]
+    fn attendance_blocked_state_is_visible_without_success_action() {
+        let view = AttendanceView::new(
+            crate::ConnectivityState::Online,
+            crate::ui::attendance::EntitlementState::Blocked,
+            true,
+            true,
+            crate::ui::attendance::AttendanceStatus::Ready,
+        );
+        let mut form = crate::ui::attendance::AttendanceForm::default();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            let mut actions = AttendanceActions::default();
+            render_attendance(ui, &mut form, &view, &mut actions);
+        });
+        harness.run();
+        harness.get_by_label("Atendimento funeral");
+        harness.get_by_label("Módulo bloqueado");
+        harness.get_by_label("Voltar ao painel");
+    }
+
+    #[test]
+    fn attendance_queued_state_exposes_sequence_and_not_fake_sync() {
+        let view = AttendanceView::new(
+            crate::ConnectivityState::Offline,
+            crate::ui::attendance::EntitlementState::Active,
+            false,
+            true,
+            crate::ui::attendance::AttendanceStatus::Queued {
+                operation_id: "op_opaque".to_owned(),
+                seq: 7,
+            },
+        );
+        let mut form = crate::ui::attendance::AttendanceForm::default();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            let mut actions = AttendanceActions::default();
+            render_attendance(ui, &mut form, &view, &mut actions);
+        });
+        harness.run();
+        harness.get_by_label("Enfileirada");
+        harness.get_by_label("Sequência local 7 · operação op_opaque");
     }
 }

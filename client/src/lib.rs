@@ -33,6 +33,9 @@ pub enum ConnectivityState {
 pub enum OperationKind {
     MasterUpsert,
     ContractCreate,
+    FuneralJourneyCreate,
+    FuneralServiceOrderAdvance,
+    FuneralServiceOrderComplete,
     CashOpen,
     CashMovement,
     CashClose,
@@ -44,6 +47,9 @@ impl OperationKind {
         match self {
             Self::MasterUpsert => "master_upsert",
             Self::ContractCreate => "contract_create",
+            Self::FuneralJourneyCreate => "funeral_journey_create",
+            Self::FuneralServiceOrderAdvance => "funeral_service_order_advance",
+            Self::FuneralServiceOrderComplete => "funeral_service_order_complete",
             Self::CashOpen => "cash_open",
             Self::CashMovement => "cash_movement",
             Self::CashClose => "cash_close",
@@ -57,6 +63,9 @@ impl OperationKind {
             Self::ContractCreate | Self::CashOpen | Self::CashMovement | Self::CashClose => {
                 OperationDomain::Money
             }
+            Self::FuneralJourneyCreate
+            | Self::FuneralServiceOrderAdvance
+            | Self::FuneralServiceOrderComplete => OperationDomain::Funeral,
             Self::FiscalEmission => OperationDomain::Fiscal,
         }
     }
@@ -67,6 +76,7 @@ impl OperationKind {
 pub enum OperationDomain {
     Master,
     Money,
+    Funeral,
     Fiscal,
 }
 
@@ -670,6 +680,7 @@ impl ClientQueue {
                     match domain {
                         OperationDomain::Master => ReviewTaskKind::MasterConflict,
                         OperationDomain::Money => ReviewTaskKind::MoneyConflict,
+                        OperationDomain::Funeral => ReviewTaskKind::SyncFailure,
                         OperationDomain::Fiscal => ReviewTaskKind::FiscalConflict,
                     },
                     &code,
@@ -906,6 +917,40 @@ pub fn validate_draft(draft: &OperationDraft) -> Result<(), ClientError> {
                 }
             }
         }
+        OperationKind::FuneralJourneyCreate => {
+            let service_order = object
+                .get("service_order")
+                .and_then(Value::as_object)
+                .ok_or(ClientError::InvalidPayload("service_order obrigatorio"))?;
+            let schedule = object
+                .get("schedule")
+                .and_then(Value::as_object)
+                .ok_or(ClientError::InvalidPayload("schedule obrigatorio"))?;
+            validate_opaque_field(service_order, "kind")?;
+            validate_opaque_field(service_order, "scheduled_for")?;
+            validate_opaque_field(schedule, "kind")?;
+            validate_opaque_field(schedule, "location_id")?;
+            validate_opaque_field(schedule, "starts_at")?;
+            validate_opaque_field(schedule, "ends_at")?;
+            validate_opaque_field(schedule, "time_zone")?;
+            if let Some(resource_id) = schedule.get("resource_id") {
+                if resource_id.as_str().is_none() {
+                    return Err(ClientError::InvalidPayload("resource_id invalido"));
+                }
+            }
+        }
+        OperationKind::FuneralServiceOrderAdvance => {
+            validate_opaque_field(object, "status")?;
+            if object.get("status").and_then(Value::as_str) != Some("in_progress") {
+                return Err(ClientError::InvalidPayload("status de avancoo invalido"));
+            }
+        }
+        OperationKind::FuneralServiceOrderComplete => {
+            validate_opaque_field(object, "status")?;
+            if object.get("status").and_then(Value::as_str) != Some("completed") {
+                return Err(ClientError::InvalidPayload("status de conclusao invalido"));
+            }
+        }
         OperationKind::CashOpen => require_cents(object, "opening_amount_cents", 0)?,
         OperationKind::CashMovement => {
             let direction = object
@@ -993,6 +1038,25 @@ fn require_cents(
         .and_then(Value::as_i64)
         .ok_or(ClientError::InvalidPayload(field))?;
     if value < minimum {
+        return Err(ClientError::InvalidPayload(field));
+    }
+    Ok(())
+}
+
+fn validate_opaque_field(
+    object: &Map<String, Value>,
+    field: &'static str,
+) -> Result<(), ClientError> {
+    let value = object
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or(ClientError::InvalidPayload(field))?;
+    if value.trim().is_empty()
+        || value.len() > MAX_IDENTIFIER_LEN
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.:/+TZ".contains(&byte))
+    {
         return Err(ClientError::InvalidPayload(field));
     }
     Ok(())

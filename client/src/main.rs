@@ -1,4 +1,5 @@
 use amparius_client::ui::app::{self, ClientConfig, RelayConfig, SetupProblem};
+use amparius_client::ui::attendance::EntitlementState;
 use std::path::PathBuf;
 use tracing::info;
 
@@ -42,6 +43,7 @@ fn load_config(args: &[String]) -> Result<ClientConfig, SetupProblem> {
 
     let base_url = setting(args, "--relay", "AMPARIUS_RELAY_URL");
     let subject_id = setting(args, "--subject", "AMPARIUS_SUBJECT");
+    let operator_id = subject_id.clone();
     // A credencial entra apenas por variável de ambiente: argumento de linha de
     // comando ficaria visível no gerenciador de processos.
     let token = env_value("AMPARIUS_TOKEN");
@@ -78,6 +80,19 @@ fn load_config(args: &[String]) -> Result<ClientConfig, SetupProblem> {
         node_id,
         queue_path,
         relay,
+        operator_id,
+        // CL-02 is dev-only nesta fatia; produção deve substituir este flag por
+        // snapshot de entitlement assinado antes de habilitar a ação.
+        funeral_entitlement: match setting(
+            args,
+            "--funeral-entitlement",
+            "AMPARIUS_FUNERAL_ENTITLEMENT",
+        )
+        .as_deref()
+        {
+            Some("active") => EntitlementState::Active,
+            _ => EntitlementState::Blocked,
+        },
         relay_issue,
     })
 }

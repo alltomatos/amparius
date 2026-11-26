@@ -585,6 +585,9 @@ fn operation_kind_label(kind: OperationKind) -> &'static str {
     match kind {
         OperationKind::MasterUpsert => "Cadastro mestre",
         OperationKind::ContractCreate => "Contrato",
+        OperationKind::FuneralJourneyCreate => "Jornada funerária",
+        OperationKind::FuneralServiceOrderAdvance => "Avanço de OS funerária",
+        OperationKind::FuneralServiceOrderComplete => "Conclusão de OS funerária",
         OperationKind::CashOpen => "Abertura de caixa",
         OperationKind::CashMovement => "Movimento de caixa",
         OperationKind::CashClose => "Fechamento de caixa",

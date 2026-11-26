@@ -21,6 +21,9 @@ pub fn unix_now() -> u64 {
 pub enum OperationKind {
     MasterUpsert,
     ContractCreate,
+    FuneralJourneyCreate,
+    FuneralServiceOrderAdvance,
+    FuneralServiceOrderComplete,
     CashOpen,
     CashMovement,
     CashClose,
@@ -32,6 +35,9 @@ impl OperationKind {
         match self {
             Self::MasterUpsert => "master_upsert",
             Self::ContractCreate => "contract_create",
+            Self::FuneralJourneyCreate => "funeral_journey_create",
+            Self::FuneralServiceOrderAdvance => "funeral_service_order_advance",
+            Self::FuneralServiceOrderComplete => "funeral_service_order_complete",
             Self::CashOpen => "cash_open",
             Self::CashMovement => "cash_movement",
             Self::CashClose => "cash_close",
@@ -210,6 +216,40 @@ pub fn validate_draft(draft: &OperationDraft) -> Result<(), QueueError> {
                 }
             }
         }
+        OperationKind::FuneralJourneyCreate => {
+            let service_order = object
+                .get("service_order")
+                .and_then(Value::as_object)
+                .ok_or(QueueError::InvalidPayload("service_order obrigatorio"))?;
+            let schedule = object
+                .get("schedule")
+                .and_then(Value::as_object)
+                .ok_or(QueueError::InvalidPayload("schedule obrigatorio"))?;
+            validate_opaque_field(service_order, "kind")?;
+            validate_opaque_field(service_order, "scheduled_for")?;
+            validate_opaque_field(schedule, "kind")?;
+            validate_opaque_field(schedule, "location_id")?;
+            validate_opaque_field(schedule, "starts_at")?;
+            validate_opaque_field(schedule, "ends_at")?;
+            validate_opaque_field(schedule, "time_zone")?;
+            if let Some(resource_id) = schedule.get("resource_id") {
+                if resource_id.as_str().is_none() {
+                    return Err(QueueError::InvalidPayload("resource_id invalido"));
+                }
+            }
+        }
+        OperationKind::FuneralServiceOrderAdvance => {
+            validate_opaque_field(object, "status")?;
+            if object.get("status").and_then(Value::as_str) != Some("in_progress") {
+                return Err(QueueError::InvalidPayload("status de avancoo invalido"));
+            }
+        }
+        OperationKind::FuneralServiceOrderComplete => {
+            validate_opaque_field(object, "status")?;
+            if object.get("status").and_then(Value::as_str) != Some("completed") {
+                return Err(QueueError::InvalidPayload("status de conclusao invalido"));
+            }
+        }
         OperationKind::CashOpen => {
             require_cents(object, "opening_amount_cents", 0)?;
         }
@@ -316,6 +356,25 @@ fn validate_identifier(name: &str, value: &str, max: usize) -> Result<(), QueueE
             .all(|byte| byte.is_ascii_alphanumeric() || b"-_.:".contains(&byte))
     {
         return Err(QueueError::InvalidIdentifier);
+    }
+    Ok(())
+}
+
+fn validate_opaque_field(
+    object: &Map<String, Value>,
+    field: &'static str,
+) -> Result<(), QueueError> {
+    let value = object
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or(QueueError::InvalidPayload(field))?;
+    if value.trim().is_empty()
+        || value.len() > MAX_ENTITY_ID_LEN
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.:/+TZ".contains(&byte))
+    {
+        return Err(QueueError::InvalidPayload(field));
     }
     Ok(())
 }
@@ -443,6 +502,51 @@ mod tests {
             payload: json!({"counted_amount_cents": 15_000, "expected_amount_cents": 15_000}),
         })
         .expect("cash close");
+    }
+
+    #[test]
+    fn accepts_funeral_journey_and_order_transitions_without_pii() {
+        let journey = OperationDraft {
+            kind: OperationKind::FuneralJourneyCreate,
+            entity_id: "contract-1".to_owned(),
+            idempotency_key: "cl02-journey-contract-1".to_owned(),
+            payload: json!({
+                "service_order": {
+                    "kind": "wake",
+                    "description": "atendimento operacional",
+                    "scheduled_for": "2026-11-25T12:00:00-03:00"
+                },
+                "schedule": {
+                    "kind": "wake",
+                    "location_id": "location-1",
+                    "resource_id": "resource-1",
+                    "starts_at": "2026-11-25T12:00:00-03:00",
+                    "ends_at": "2026-11-25T14:00:00-03:00",
+                    "time_zone": "America/Fortaleza"
+                }
+            }),
+        };
+        validate_draft(&journey).expect("journey");
+        for (kind, key, status) in [
+            (
+                OperationKind::FuneralServiceOrderAdvance,
+                "cl02-advance-order-1",
+                "in_progress",
+            ),
+            (
+                OperationKind::FuneralServiceOrderComplete,
+                "cl02-complete-order-1",
+                "completed",
+            ),
+        ] {
+            validate_draft(&OperationDraft {
+                kind,
+                entity_id: "order-1".to_owned(),
+                idempotency_key: key.to_owned(),
+                payload: json!({"status": status}),
+            })
+            .expect("order transition");
+        }
     }
 
     #[test]

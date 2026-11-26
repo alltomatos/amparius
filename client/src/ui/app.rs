@@ -14,6 +14,10 @@ use tracing::{info, warn};
 use crate::transport::{
     Credentials, HttpTransport, SyncError, SyncReport, SyncStop, TransportConfig, sync_pending,
 };
+use crate::ui::attendance::{
+    AttendanceAction, AttendanceForm, AttendanceServiceState, AttendanceStatus, AttendanceView,
+    EntitlementState, SCREEN_ID as ATTENDANCE_SCREEN_ID, build_draft, queued_status,
+};
 use crate::ui::day_panel::{
     Notice, PanelContext, PanelError, PanelPhase, SCREEN_ID, Severity, SyncSummary, SyncView,
     present,
@@ -46,6 +50,8 @@ pub struct ClientConfig {
     pub node_id: String,
     pub queue_path: PathBuf,
     pub relay: Option<RelayConfig>,
+    pub operator_id: Option<String>,
+    pub funeral_entitlement: EntitlementState,
     /// Motivo pelo qual o relay não está utilizável; a UI explica em vez de
     /// fingir sucesso.
     pub relay_issue: Option<&'static str>,
@@ -83,6 +89,15 @@ pub struct ClientApp {
     started: Instant,
     first_frame: bool,
     last_title: String,
+    screen: Screen,
+    attendance_form: AttendanceForm,
+    attendance_status: AttendanceStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Screen {
+    Day,
+    Attendance,
 }
 
 impl ClientApp {
@@ -119,6 +134,9 @@ impl ClientApp {
             started,
             first_frame: true,
             last_title: String::new(),
+            screen: Screen::Day,
+            attendance_form: AttendanceForm::default(),
+            attendance_status: AttendanceStatus::Ready,
         }
     }
 
@@ -265,6 +283,111 @@ impl ClientApp {
         if actions.reload {
             self.reload();
         }
+        if actions.open_attendance {
+            self.screen = Screen::Attendance;
+            self.attendance_status = AttendanceStatus::Ready;
+        }
+    }
+
+    fn attendance_view(&self) -> AttendanceView {
+        if self.queue.is_none() {
+            return AttendanceView {
+                service_state: AttendanceServiceState::ServiceUnavailable,
+                status: AttendanceStatus::Error {
+                    code: "QUEUE_UNAVAILABLE".to_owned(),
+                    message: "A fila local está indisponível; nenhuma operação será criada."
+                        .to_owned(),
+                },
+                can_submit: false,
+                detail: "Corrija a fila local antes de iniciar o atendimento.",
+            };
+        }
+        let (connectivity, operator_configured) = self
+            .queue
+            .as_ref()
+            .map(|queue| {
+                let queue = lock(queue);
+                (queue.connectivity(), self.config.operator_id.is_some())
+            })
+            .unwrap_or((ConnectivityState::Offline, false));
+        AttendanceView::new(
+            connectivity,
+            self.config.funeral_entitlement,
+            self.config.relay.is_some(),
+            operator_configured,
+            self.attendance_status.clone(),
+        )
+    }
+
+    fn submit_attendance(&mut self, action: AttendanceAction) {
+        self.attendance_form.action = action;
+        let view = self.attendance_view();
+        if self.config.funeral_entitlement == EntitlementState::Blocked {
+            self.attendance_status = AttendanceStatus::Error {
+                code: "LICENSE_INACTIVE".to_owned(),
+                message: "O módulo funeral está bloqueado por entitlement.".to_owned(),
+            };
+            return;
+        }
+        if view.service_state == AttendanceServiceState::ServiceUnavailable {
+            self.attendance_status = AttendanceStatus::Error {
+                code: "SERVICE_UNAVAILABLE".to_owned(),
+                message: "O relay não está disponível para esta estação.".to_owned(),
+            };
+            return;
+        }
+        let Some(queue) = self.queue.clone() else {
+            self.attendance_status = AttendanceStatus::Error {
+                code: "QUEUE_UNAVAILABLE".to_owned(),
+                message: "A fila local está indisponível; nada foi criado.".to_owned(),
+            };
+            return;
+        };
+        let Some(operator_id) = self.config.operator_id.clone() else {
+            self.attendance_status = AttendanceStatus::Error {
+                code: "OPERATOR_UNAVAILABLE".to_owned(),
+                message: "A identidade do operador é necessária para enfileirar.".to_owned(),
+            };
+            return;
+        };
+        let draft = match build_draft(&self.attendance_form) {
+            Ok(draft) => draft,
+            Err(error) => {
+                self.attendance_status = AttendanceStatus::Error {
+                    code: attendance_error_code(&error).to_owned(),
+                    message: attendance_error_message(&error).to_owned(),
+                };
+                return;
+            }
+        };
+        let mut queue = lock(&queue);
+        match queue.enqueue(operator_id, draft, unix_now()) {
+            Ok(result) => {
+                self.attendance_status = queued_status(&result.operation);
+                info!(
+                    screen = ATTENDANCE_SCREEN_ID,
+                    operation_kind = result.operation.kind.as_str(),
+                    seq = result.operation.seq,
+                    replayed = result.replayed,
+                    "atendimento enfileirado"
+                );
+                self.notice = Some(Notice {
+                    severity: Severity::Success,
+                    text: if result.replayed {
+                        "A operação já estava na fila; nenhuma duplicata foi criada.".to_owned()
+                    } else {
+                        "Atendimento enfileirado com idempotência; o estado local foi persistido."
+                            .to_owned()
+                    },
+                });
+            }
+            Err(error) => {
+                self.attendance_status = AttendanceStatus::Error {
+                    code: attendance_error_code(&error).to_owned(),
+                    message: attendance_error_message(&error).to_owned(),
+                };
+            }
+        }
     }
 }
 
@@ -272,6 +395,48 @@ impl eframe::App for ClientApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.poll_sync();
+
+        if self.screen == Screen::Attendance {
+            let view = self.attendance_view();
+            let mut actions = crate::ui::render::AttendanceActions::default();
+            egui::CentralPanel::default()
+                .frame(
+                    egui::Frame::new()
+                        .fill(theme::palette(ui.visuals().dark_mode).surface)
+                        .inner_margin(egui::Margin::symmetric(16, 12)),
+                )
+                .show(ui, |ui| {
+                    crate::ui::render::render_attendance(
+                        ui,
+                        &mut self.attendance_form,
+                        &view,
+                        &mut actions,
+                    );
+                });
+            if actions.back {
+                self.screen = Screen::Day;
+                self.attendance_status = AttendanceStatus::Ready;
+            }
+            if actions.create_journey {
+                self.submit_attendance(AttendanceAction::CreateJourney);
+            }
+            if actions.advance_order {
+                self.submit_attendance(AttendanceAction::AdvanceOrder);
+            }
+            if actions.complete_order {
+                self.submit_attendance(AttendanceAction::CompleteOrder);
+            }
+            ctx.request_repaint_after(Duration::from_millis(120));
+            let title = format!(
+                "Amparius — Atendimento funeral — {}",
+                view.service_state.label()
+            );
+            if title != self.last_title {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+                self.last_title = title;
+            }
+            return;
+        }
 
         let now = unix_now();
         let guard = self.queue.as_ref().map(|queue| lock(queue));
@@ -361,6 +526,33 @@ fn stop_code(stop: SyncStop) -> &'static str {
         SyncStop::TransportUnavailable => "transport_unavailable",
         SyncStop::TransportTimeout => "transport_timeout",
         SyncStop::Unauthorized => "unauthorized",
+    }
+}
+
+fn attendance_error_code(error: &crate::ClientError) -> &'static str {
+    match error {
+        crate::ClientError::InvalidPayload(field) => field,
+        crate::ClientError::IdempotencyConflict => "IDEMPOTENCY_CONFLICT",
+        crate::ClientError::PersonalDataInPayload => "PII_NOT_ALLOWED",
+        crate::ClientError::InvalidIdentifier => "INVALID_REFERENCE",
+        _ => "ATTENDANCE_QUEUE_ERROR",
+    }
+}
+
+fn attendance_error_message(error: &crate::ClientError) -> &'static str {
+    match error {
+        crate::ClientError::InvalidPayload("contract_active_required") => {
+            "Confirme que o contrato está active antes de criar a jornada."
+        }
+        crate::ClientError::InvalidPayload(_) => "Revise os campos obrigatórios do atendimento.",
+        crate::ClientError::IdempotencyConflict => {
+            "A mesma chave já foi usada com outro conteúdo; a operação não foi substituída."
+        }
+        crate::ClientError::PersonalDataInPayload => {
+            "Use referências opacas; nome, documento e contato não entram na fila."
+        }
+        crate::ClientError::InvalidIdentifier => "A referência contém caracteres não permitidos.",
+        _ => "A operação não foi enfileirada; a fila local foi preservada.",
     }
 }
 
@@ -515,6 +707,8 @@ mod tests {
             node_id: "node-1".to_owned(),
             queue_path: PathBuf::from("unused.json"),
             relay: None,
+            operator_id: None,
+            funeral_entitlement: EntitlementState::Blocked,
             relay_issue: Some("Credencial de sincronização ausente."),
         };
         let view = initial_sync_view(&config, 4);

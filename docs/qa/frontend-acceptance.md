@@ -66,6 +66,32 @@ Este documento valida as primeiras fatias definidas em `docs/adr/0026-frontend-a
 **Quando** a rede está indisponível
 **Então** a UI explica a indisponibilidade e não simula sucesso.
 
+## CL-02 — atendimento funeral
+
+### CL-A04 — jornada idempotente na fila
+
+**Dado** entitlement funeral ativo, contrato `active` confirmado e referências
+opacas válidas
+**Quando** o operador cria a jornada duas vezes, em offline ou contingência
+**Então** existe uma única operação persistida, com `seq` monotônica e a mesma
+`Idempotency-Key`; a tela mostra `queued`, nunca sucesso remoto.
+
+### CL-A05 — bloqueios explícitos
+
+**Dado** entitlement bloqueado, contrato não confirmado ou relay indisponível em
+estado online
+**Quando** o operador tenta criar/avançar/concluir
+**Então** a ação fica bloqueada ou mostra erro técnico específico e nenhuma
+operação é adicionada à fila.
+
+### CL-A06 — estados headless
+
+**Dado** o modelo puro de CL-02
+**Quando** os estados online, offline, contingência, queued e error são
+apresentados
+**Então** cada um possui rótulo textual acessível e não contém PII, token ou
+payload de atendimento.
+
 ## Evidência mínima do PR
 
 O PR deve anexar comandos reproduzíveis e saída para testes de contrato, acessibilidade/responsividade e fluxo offline. Sem evidência, a fatia permanece em andamento.

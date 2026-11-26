@@ -204,6 +204,15 @@ func (s *Service) Emit(ctx context.Context, input ServiceInput) (ServiceResult, 
 	if rejeitado := latestAttempt(attempts, "rejected"); rejeitado != nil {
 		return s.resultFromRejected(*rejeitado, dps)
 	}
+	// Nenhum estado terminal: se ja existe tentativa pendente (timeout), o
+	// mesmo request_hash precisa coincidir antes de seguir para
+	// GetDPSStatus/EmitDPS. Payload diferente com a mesma chave e conflito,
+	// nao uma nova tentativa sobre a DPS alterada (AGENTS.md #3); seguir sem
+	// essa checagem quebraria no banco com erro cru de imutabilidade em vez
+	// do erro tipado.
+	if pendente := latestAttemptByNumber(attempts); pendente != nil && derefString(pendente.RequestHash) != dps.XMLHash {
+		return result, fmt.Errorf("%w: chave de idempotencia reutilizada com payload diferente da tentativa pendente", ErrIdempotencyConflict)
+	}
 
 	next := nextAttemptNumber(attempts)
 

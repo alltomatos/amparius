@@ -11,7 +11,7 @@ cd "$(dirname "$0")/../.."
 mkdir "$destination"
 mkdir -p "$destination/assets/brand" "$destination/manager/assets/brand"
 cp assets/brand/amparius-logo.svg "$destination/assets/brand/"
-cp web/staging/index.html web/staging/client-demo.js web/staging/staging.css "$destination/"
+cp web/staging/index.html web/staging/client-api.js web/staging/client-demo.js web/staging/client-live.js web/staging/staging.css "$destination/"
 cp web/control-plane/styles.css "$destination/"
 cp web/staging/panel-demo.js web/staging/staging.css web/control-plane/styles.css \
   web/control-plane/helpers.js web/control-plane/app.js "$destination/manager/"

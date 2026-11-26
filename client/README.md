@@ -12,7 +12,38 @@ Cliente desktop shell do Amparius no papel de estação.
 cargo run
 ```
 
-O binário aguarda `Ctrl+C` para encerramento gracioso. A interface gráfica será adicionada em fase posterior.
+O binário abre a janela nativa do painel do dia (CL-01). A estação exige
+identidade (`tenant` e `node`); sem ela a janela abre em modo de configuração e
+nenhuma fila é criada.
+
+## Executar o painel do dia (CL-01)
+
+```powershell
+$env:AMPARIUS_TENANT = "loja-1"
+$env:AMPARIUS_NODE = "estacao-1"
+cargo run --manifest-path client/Cargo.toml
+```
+
+Equivalente por argumento: `--tenant loja-1 --node estacao-1`. Opcionais:
+
+| Variável / argumento | Uso |
+| --- | --- |
+| `AMPARIUS_QUEUE_PATH` / `--queue` | arquivo da fila local (padrão em `%LOCALAPPDATA%\Amparius\client\`) |
+| `AMPARIUS_RELAY_URL` / `--relay` | origem do relay, ex. `http://127.0.0.1:8787` |
+| `AMPARIUS_SUBJECT` / `--subject` | identidade do operador no relay |
+| `AMPARIUS_TOKEN` | credencial de sessão; **apenas ambiente**, nunca exibida nem persistida |
+
+Sem relay/credencial a tela mostra "Sincronização indisponível" com o motivo e o
+botão desabilitado; nada é simulado.
+
+A tela mostra online/offline/contingência, contadores da fila
+(pendentes/sincronizadas/falhas/conflitos/novas tentativas), operações
+priorizadas (conflito e falha primeiro), tarefas de revisão, códigos técnicos
+sanitizados e o resultado da sincronização. Conflito nunca é resolvido pela
+tela e o valor local é preservado. Contrato: `docs/contracts/client-day-panel-v1.md`;
+decisão de stack: `docs/adr/0036-cliente-ui-nativa-egui-painel-dia.md`.
+Atendimento, ordens de serviço e revisão de conflito são fatias posteriores.
+
 
 ## Modelo CL-01/CL-03
 
@@ -25,7 +56,7 @@ O binário aguarda `Ctrl+C` para encerramento gracioso. A interface gráfica ser
 - `ClientStatus` e `ClientMetrics` expõem apenas contagens, estado e códigos técnicos seguros para observabilidade.
 - `ClientQueue::open(path, tenant_id, node_id)` persiste a fila em JSON versionado com SHA-256, escrita temporária/backup e rejeição fail-closed de corrupção ou versão desconhecida.
 
-O arquivo local cobre a fila da estação e o reinício do cliente, mas não substitui o armazenamento durável do relay. A UI gráfica permanece em fatia posterior.
+O arquivo local cobre a fila da estação e o reinício do cliente, mas não substitui o armazenamento durável do relay.
 
 ## Transporte HTTP
 
@@ -51,7 +82,19 @@ let report = sync_pending(&mut queue, &transport, &credentials, amparius_client:
 - Em queda, a execução para após a primeira falha transitória e a operação continua `pending`.
 - O transporte é HTTP (loopback ou atrás de TLS local): o token nunca é logado nem persistido, e redirecionamentos são desabilitados.
 
-Nenhuma tela gráfica é implementada nesta fatia.
+## UI do painel do dia
+
+- `src/ui/day_panel.rs` é o modelo puro (estados, contadores, priorização,
+  códigos sanitizados, horário em America/Sao_Paulo); `src/ui/render.rs` desenha
+  com `eframe`/`egui` e `src/ui/app.rs` liga janela, fila persistida e
+  sincronização em thread.
+- Tokens em `src/ui/theme.rs` (`#00274C`, `#0073CF`, estados com texto +
+  símbolo). Não há cópia de componentes/tema de outro ERP.
+- Atualizações de conexão são declaradas pelo operador e persistidas na fila;
+  contingência não autoriza emissão fiscal.
+- Limite de acessibilidade registrado: `egui`/AccessKit não oferece `aria-live`
+  nem tabela nativa; teclado, foco visível, alvos de 44 px, texto + símbolo e
+  título de janela com o estado são cobertos.
 
 ## Verificação
 
@@ -61,4 +104,10 @@ cargo test --locked --manifest-path client/Cargo.toml
 cargo clippy --locked --manifest-path client/Cargo.toml --all-targets -- -D warnings
 git diff --check
 ```
+
+Medições desta entrega (build `dev`, Windows, 25/11/2026): 39 testes verdes,
+`fmt` e `clippy -D warnings` limpos, primeiro quadro registrado em
+`boot_ms=129` e janela aberta com o título refletindo o estado
+(`Amparius - Online - 0 pendente(s)`). A fila real em disco foi criada na
+primeira execução.
 

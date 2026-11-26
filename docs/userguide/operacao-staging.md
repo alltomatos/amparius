@@ -238,3 +238,20 @@ serviço. Preserve os volumes do Caddy para reutilizar o estado do ACME.
 - Para voltar, pare o container atual e recrie o edge com
   `preview-ad4d78f` e `Caddyfile.ad4d78f`; o container parado
   `amparius-staging-https-ad4d78f` mantém a configuração anterior.
+
+### Evidência da publicação em `manager.amparius.com`
+
+- Pacote `preview-395c8ef` gerado por `deploy/staging/prepare-preview.sh`
+  (16 arquivos), incluindo `manager/` com o painel na raiz.
+- `caddy validate` com a imagem pinned retornou `Valid configuration`.
+- O Caddy emitiu certificado Let's Encrypt para `manager.amparius.com`
+  (TLS-ALPN-01), válido até 24/02/2027.
+- `manager.amparius.com`: `/`, `/styles.css`, `/helpers.js`, `/app.js`,
+  `/panel-demo.js`, `/staging.css` e `/assets/brand/amparius-logo.svg` em
+  `200`; `/healthz` e `/readyz` em `200`; `/v1/context` e `/painel/` em `404`.
+- `hml.amparius.com` (`/`, `/painel/`, probes) e `hml.amparius.com.br`
+  (probes) continuaram em `200` — sem regressão.
+- O HTML servido em `/` tem o mesmo SHA-256 de
+  `preview-395c8ef/manager/index.html`.
+- O container anterior ficou parado como
+  `amparius-staging-https-pre-395c8ef` para rollback.

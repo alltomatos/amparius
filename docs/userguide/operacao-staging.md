@@ -202,3 +202,33 @@ serviço. Preserve os volumes do Caddy para reutilizar o estado do ACME.
 - O login administrativo para operações reais depende de OIDC/MFA
   (ADR 0024). A jornada real entre estação, relay e SaaS e a emissão
   autorizada de NFS-e seguem nas issues #25, #59 e #60.
+
+### Evidência da publicação de 26/11/2026 (`f4e8fac`)
+
+- O merge `f4e8fac5cd1d3b6a8c6d74b56b81a2343be613a8` está em `main` e a
+  prévia pública passou a servir esse pacote, substituindo `preview-ad4d78f`.
+- O pacote foi gerado por `deploy/staging/prepare-preview.sh` a partir desse
+  commit (9 arquivos) e conferido byte a byte contra uma reconstrução limpa.
+  O [Caddyfile](../../deploy/staging/Caddyfile) publicado tem SHA-256
+  `1d9251b1eb00801c812f00800a9fe77374abd079d2281232042c35d6345852ba`.
+- `caddy validate` com a imagem pinned retornou `Valid configuration`.
+- O container `amparius-staging-https` foi recriado com os mounts
+  `/etc/amparius-staging/preview-f4e8fac` e
+  `/etc/amparius-staging/Caddyfile.f4e8fac`, preservando os volumes
+  `amparius-staging-caddy-data` e `amparius-staging-caddy-config` (estado
+  ACME). O container anterior ficou parado como
+  `amparius-staging-https-ad4d78f` para rollback.
+- Após publicar, `hml.amparius.com` e `hml.amparius.com.br` responderam
+  `200` em `/healthz` e `/readyz`, e `404` em `/_dev/` e `/v1/context`.
+- A prévia em `hml.amparius.com` entregou `200` em `/`, `/staging.css`,
+  `/client-demo.js`, `/painel/`, `/painel/styles.css`, `/painel/helpers.js`,
+  `/painel/app.js` e `/painel/panel-demo.js`.
+- `/assets/brand/amparius-logo.svg` respondeu `200` com `image/svg+xml` e
+  SHA-256 `a63fb69953774ce728eabca70864ce0378c5b5c445ade26a3c0b879f0f72ca99`,
+  igual ao arquivo empacotado.
+- Os cabeçalhos `cache-control: no-store`, a CSP restritiva com
+  `connect-src 'none'` e `x-robots-tag: noindex, nofollow` continuam
+  aplicados.
+- Para voltar, pare o container atual e recrie o edge com
+  `preview-ad4d78f` e `Caddyfile.ad4d78f`; o container parado
+  `amparius-staging-https-ad4d78f` mantém a configuração anterior.

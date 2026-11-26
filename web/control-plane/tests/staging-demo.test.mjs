@@ -82,3 +82,17 @@ test("staging package keeps the surfaces separate", () => {
   assert.ok(!script.includes("$destination/painel"), "package must not emit the panel under /painel/");
   assert.ok(script.includes("$destination/manager/index.html"));
 });
+test("store preview has one destination for each menu and starts on the day panel", () => {
+  const markup = readSource("../../staging/index.html");
+  const nav = markup.split('<nav aria-label="Operação da loja">')[1].split("</nav>")[0];
+  const destinations = [...nav.matchAll(/href="#([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(destinations, [
+    "painel", "atendimento", "contratos", "cadastros", "cemiterio",
+    "flores", "financeiro", "fiscal", "relatorios", "sincronizacao",
+  ]);
+  const screens = [...markup.matchAll(/data-screen="([^"]+)"([^>]*)>/g)];
+  assert.equal(screens.length, destinations.length);
+  assert.deepEqual(screens.map(([, screen]) => screen).sort(), [...destinations].sort());
+  assert.deepEqual(screens.filter(([, , attrs]) => !/\bhidden\b/.test(attrs)).map(([, screen]) => screen), ["painel"]);
+  assert.match(nav, /href="#painel" aria-current="page"/);
+});

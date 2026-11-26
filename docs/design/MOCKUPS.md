@@ -71,6 +71,9 @@ Detalhes de contrato: `docs/design/AI-ASSISTANT.md`.
 
 ## Correspondência com o MVP
 
+O [levantamento do MVP](mvp-mockup-gap-matrix.md) cruza as onze telas com a
+prévia web, a API Go e o cliente Rust e lista os próximos critérios de aceite.
+
 Referências de comportamento: [especificação frontend](frontend-spec.md),
 [aceite frontend](../qa/frontend-acceptance.md) e
 [ADR da prévia sintética](../adr/0039-preview-sintetico-homologacao.md).
@@ -80,8 +83,8 @@ Referências de comportamento: [especificação frontend](frontend-spec.md),
 | SaaS 03 · Visão geral | Navegação lateral, logo oficial e indicadores do cenário. Licenças ativas e a vencer acompanham a vigência e o estado da licença opcional. | Agregações administrativas reais e auditoria recente do tenant. |
 | SaaS 05–07 · Cotas, licença e auditoria | Lista por empresa, detalhe e trilha do módulo selecionado; alterações sintéticas na aba. | Visão consolidada de cotas do tenant, filtros e exportação de auditoria e paridade visual do fluxo de confirmação. |
 | SaaS 08–10 · IA | Visão geral sinaliza que a cota de IA está fora do cenário. | Catálogo e fallback, allowlist e cota em reais por escopo, consumo e trilha de execuções, conforme ADR 0008. |
-| Loja 01–02 · Painel do dia e atendimento | Web mostra agenda sintética, pendências, estado da conexão e revisão de um atendimento antes de enfileirar. Desktop tem marca, estado, fila persistida e atendimento por referência de contrato ativo. | Agenda real no desktop, cadastro autorizado de partes e fluxo completo de contrato, pagamento e contingência. |
-| Loja 03–04 · Cemitério e financeiro | Mockups de referência para o mapa e as contas a receber. | Navegação e dados operacionais de jazigos, concessões, títulos e filtros, respeitando entitlement e disponibilidade offline. |
+| Loja 01–02 · Painel do dia e atendimento | Web mostra agenda sintética, pendências, estado da conexão e seleção de responsável e serviço de exemplo antes de enfileirar. Desktop tem marca, estado, fila persistida e atendimento por referência de contrato ativo. | Agenda real no desktop, cadastro autorizado de partes e fluxo completo de contrato, pagamento e contingência. |
+| Loja 03–04 · Cemitério e financeiro | O menu leva a seções que explicam a indisponibilidade do mapa e das contas a receber. | Navegação e dados operacionais de jazigos, concessões, títulos e filtros, respeitando entitlement e disponibilidade offline. |
 
 O cliente web demonstra a reconexão em memória. A estação Rust usa sua fila
 persistida e sinaliza a indisponibilidade de sincronização quando faltam as

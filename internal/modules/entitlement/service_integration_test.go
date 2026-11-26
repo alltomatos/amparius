@@ -338,6 +338,92 @@ func TestEntitlementQuotaFailClosedAndSeatUsage(t *testing.T) {
 	}
 }
 
+func TestCP06IdempotencyVersionQuotaAuditAndTenantIsolation(t *testing.T) {
+	database, service := newControlService(t)
+	tenantID := uuid.New()
+	ctx := db.WithTenant(context.Background(), tenantID)
+	cleanupTenant(t, database, tenantID)
+	actor, company := uuid.New(), uuid.New()
+
+	quota, err := service.SetModuleQuotaIdempotent(ctx, actor, "cp06-quota-1", entitlement.ModuleFuneral, 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quota.Version != 1 || quota.Quota != 1 {
+		t.Fatalf("quota inicial inesperada: %+v", quota)
+	}
+	replayedQuota, err := service.SetModuleQuotaIdempotent(ctx, actor, "cp06-quota-1", entitlement.ModuleFuneral, 1, 0)
+	if err != nil || replayedQuota.Version != quota.Version {
+		t.Fatalf("replay de quota: %+v err=%v", replayedQuota, err)
+	}
+	if _, err := service.SetModuleQuotaIdempotent(ctx, actor, "cp06-quota-1", entitlement.ModuleFuneral, 2, 1); !errors.Is(err, entitlement.ErrIdempotencyConflict) {
+		t.Fatalf("reuso de chave deveria conflitar: %v", err)
+	}
+
+	from := date(2026, time.December, 1)
+	input := entitlement.ActivateInput{ModuleCode: entitlement.ModuleFuneral, CompanyID: company, Origin: entitlement.OriginAdmin, ValidFrom: &from}
+	assignment, err := service.ActivateIdempotent(ctx, actor, "cp06-grant-1", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := service.ActivateIdempotent(ctx, actor, "cp06-grant-1", input)
+	if err != nil || replayed.ID != assignment.ID || replayed.Version != assignment.Version {
+		t.Fatalf("replay de concessao: %+v err=%v", replayed, err)
+	}
+
+	revoked, err := service.RevokeIdempotent(ctx, actor, "cp06-revoke-1", entitlement.TransitionInput{
+		ModuleCode: entitlement.ModuleFuneral, CompanyID: company, Origin: entitlement.OriginAdmin, ExpectedVersion: assignment.Version,
+	})
+	if err != nil || revoked.Version != assignment.Version+1 {
+		t.Fatalf("revogacao: %+v err=%v", revoked, err)
+	}
+	if _, err := service.RevokeIdempotent(ctx, actor, "cp06-stale-1", entitlement.TransitionInput{
+		ModuleCode: entitlement.ModuleFuneral, CompanyID: company, Origin: entitlement.OriginAdmin, ExpectedVersion: assignment.Version,
+	}); !errors.Is(err, entitlement.ErrStaleVersion) {
+		t.Fatalf("versao obsoleta deveria falhar: %v", err)
+	}
+
+	page, err := service.ListEventsPage(ctx, entitlement.EventFilter{ModuleCode: entitlement.ModuleFuneral, CompanyID: &company, Limit: 10}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 3 {
+		t.Fatalf("auditoria deveria incluir quota, concessao e revogacao: %+v", page.Items)
+	}
+	other, err := service.ListEventsPage(db.WithTenant(context.Background(), uuid.New()), entitlement.EventFilter{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(other.Items) != 0 {
+		t.Fatalf("RLS vazou auditoria CP-06: %d", len(other.Items))
+	}
+	otherTenant := uuid.New()
+	var visibleIdempotency, visibleQuotaEvents int
+	if err := database.WithTenantTx(db.WithTenant(context.Background(), otherTenant), func(ctx context.Context, tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM entitlement.mutation_idempotency WHERE tenant_id = $1`, tenantID).Scan(&visibleIdempotency); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `SELECT count(*) FROM entitlement.quota_event WHERE tenant_id = $1`, tenantID).Scan(&visibleQuotaEvents)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if visibleIdempotency != 0 || visibleQuotaEvents != 0 {
+		t.Fatalf("RLS vazou tabelas CP-06: idempotência=%d quota_events=%d", visibleIdempotency, visibleQuotaEvents)
+	}
+	for name, statement := range map[string]string{
+		"update quota_event": `UPDATE entitlement.quota_event SET new_quota = new_quota WHERE tenant_id = $1`,
+		"delete quota_event": `DELETE FROM entitlement.quota_event WHERE tenant_id = $1`,
+	} {
+		err := database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, statement, tenantID)
+			return err
+		})
+		if err == nil || !strings.Contains(err.Error(), "append-only") {
+			t.Fatalf("%s deveria ser bloqueado pelo trigger: %v", name, err)
+		}
+	}
+}
+
 type controlCompanyResolver map[uuid.UUID]uuid.UUID
 
 func (r controlCompanyResolver) CompanyBelongsToTenant(_ context.Context, tenantID, companyID uuid.UUID) (bool, error) {

@@ -2,6 +2,9 @@ package entitlement
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -51,6 +54,10 @@ var (
 	ErrInvalidRequest = errors.New("requisicao de entitlement invalida")
 	// ErrActorRequired indica que a mudanca chegou sem o autor autenticado.
 	ErrActorRequired = errors.New("autor da mudanca de entitlement ausente")
+	// ErrIdempotencyConflict indica reutilizacao da chave com outro pedido.
+	ErrIdempotencyConflict = errors.New("chave de idempotencia reutilizada com outro pedido")
+	// ErrStaleVersion indica concorrencia otimista detectada.
+	ErrStaleVersion = errors.New("versao do entitlement obsoleta")
 )
 
 // Assignment e uma licenca de modulo para uma empresa (CNPJ) do tenant.
@@ -63,6 +70,7 @@ type Assignment struct {
 	ValidFrom  time.Time
 	ValidTo    *time.Time
 	Status     string
+	Version    int64
 	UpdatedAt  time.Time
 }
 
@@ -74,19 +82,21 @@ type Assignment struct {
 // preservam as datas originais -- reativar nunca apaga a vigencia contratada.
 // ClearValidTo remove explicitamente o fim de vigencia de uma licenca existente.
 type ActivateInput struct {
-	ModuleCode   string
-	CompanyID    uuid.UUID
-	Origin       string
-	ValidFrom    *time.Time
-	ValidTo      *time.Time
-	ClearValidTo bool
+	ModuleCode      string
+	CompanyID       uuid.UUID
+	Origin          string
+	ValidFrom       *time.Time
+	ValidTo         *time.Time
+	ClearValidTo    bool
+	ExpectedVersion int64
 }
 
 // TransitionInput descreve desativacao ou revogacao.
 type TransitionInput struct {
-	ModuleCode string
-	CompanyID  uuid.UUID
-	Origin     string
+	ModuleCode      string
+	CompanyID       uuid.UUID
+	Origin          string
+	ExpectedVersion int64
 }
 
 // ModuleQuota e a fotografia da cota de um modulo no tenant.
@@ -95,6 +105,7 @@ type ModuleQuota struct {
 	Quota      int
 	InUse      int
 	Configured bool
+	Version    int64
 }
 
 // UserQuota e a fotografia da cota de acessos do tenant.
@@ -108,6 +119,7 @@ type UserQuota struct {
 type EventFilter struct {
 	ModuleCode string
 	CompanyID  *uuid.UUID
+	Origin     string
 	Limit      int
 }
 
@@ -121,6 +133,11 @@ type Event struct {
 	Action     string
 	Origin     string
 	At         time.Time
+}
+
+type EventPage struct {
+	Items      []Event
+	NextCursor string
 }
 
 // Service aplica as mudancas de licenca no control plane e grava a auditoria
@@ -145,6 +162,15 @@ func NewService(database *db.DB, opts ...Option) (*Service, error) {
 // contada a partir das licencas ativas vigentes de outras empresas, nunca de
 // uma coluna digitada.
 func (s *Service) Activate(ctx context.Context, actorID uuid.UUID, in ActivateInput) (Assignment, error) {
+	return s.activate(ctx, actorID, "", in)
+}
+
+// ActivateIdempotent aplica a concessao/reativacao com replay persistido.
+func (s *Service) ActivateIdempotent(ctx context.Context, actorID uuid.UUID, key string, in ActivateInput) (Assignment, error) {
+	return s.activate(ctx, actorID, key, in)
+}
+
+func (s *Service) activate(ctx context.Context, actorID uuid.UUID, key string, in ActivateInput) (Assignment, error) {
 	if err := validateActorOrigin(actorID, in.Origin); err != nil {
 		return Assignment{}, err
 	}
@@ -164,6 +190,14 @@ func (s *Service) Activate(ctx context.Context, actorID uuid.UUID, in ActivateIn
 
 	var result Assignment
 	err = s.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		replayed, err := beginMutation(ctx, tx, tenantID, key, "activate", actorID, in)
+		if err != nil {
+			return err
+		}
+		if replayed != nil {
+			result = *replayed
+			return nil
+		}
 		kind, active, err := loadModule(ctx, tx, in.ModuleCode)
 		if err != nil {
 			return err
@@ -193,6 +227,9 @@ func (s *Service) Activate(ctx context.Context, actorID uuid.UUID, in ActivateIn
 		if err != nil {
 			return err
 		}
+		if found && in.ExpectedVersion > 0 && existing.Version != in.ExpectedVersion {
+			return fmt.Errorf("%w: esperado %d, atual %d", ErrStaleVersion, in.ExpectedVersion, existing.Version)
+		}
 
 		from, to, err := resolveDates(in, existing, found)
 		if err != nil {
@@ -202,7 +239,7 @@ func (s *Service) Activate(ctx context.Context, actorID uuid.UUID, in ActivateIn
 		if found && existing.Status == StatusActive &&
 			in.ValidFrom == nil && in.ValidTo == nil && !in.ClearValidTo {
 			result = existing
-			return nil
+			return finishMutation(ctx, tx, tenantID, key, "activate", actorID, in, result)
 		}
 
 		var occupied int
@@ -229,27 +266,31 @@ func (s *Service) Activate(ctx context.Context, actorID uuid.UUID, in ActivateIn
 				   SET status = 'active',
 				       valid_from = $3,
 				       valid_to = $4,
+				       version = version + 1,
 				       updated_at = now()
 				 WHERE tenant_id = $1
 				   AND id = $2
-				RETURNING id, tenant_id, module_code, company_id, valid_from, valid_to, status, updated_at`,
+				RETURNING id, tenant_id, module_code, company_id, valid_from, valid_to, status, version, updated_at`,
 				tenantID, existing.ID, from, to).Scan(
 				&result.ID, &result.TenantID, &result.ModuleCode, &result.CompanyID,
-				&result.ValidFrom, &result.ValidTo, &result.Status, &result.UpdatedAt)
+				&result.ValidFrom, &result.ValidTo, &result.Status, &result.Version, &result.UpdatedAt)
 		} else {
 			err = tx.QueryRow(ctx, `
 				INSERT INTO entitlement.license_assignment
 				       (tenant_id, module_code, company_id, valid_from, valid_to, status)
 				VALUES ($1, $2, $3, $4, $5, 'active')
-				RETURNING id, tenant_id, module_code, company_id, valid_from, valid_to, status, updated_at`,
+				RETURNING id, tenant_id, module_code, company_id, valid_from, valid_to, status, version, updated_at`,
 				tenantID, in.ModuleCode, in.CompanyID, from, to).Scan(
 				&result.ID, &result.TenantID, &result.ModuleCode, &result.CompanyID,
-				&result.ValidFrom, &result.ValidTo, &result.Status, &result.UpdatedAt)
+				&result.ValidFrom, &result.ValidTo, &result.Status, &result.Version, &result.UpdatedAt)
 		}
 		if err != nil {
 			return fmt.Errorf("%w: gravar licenca: %w", ErrEntitlementUnavailable, err)
 		}
-		return appendEvent(ctx, tx, tenantID, in.ModuleCode, in.CompanyID, actorID, ActionActivated, in.Origin)
+		if err := appendEvent(ctx, tx, tenantID, in.ModuleCode, in.CompanyID, actorID, ActionActivated, in.Origin); err != nil {
+			return err
+		}
+		return finishMutation(ctx, tx, tenantID, key, "activate", actorID, in, result)
 	})
 	if err != nil {
 		return Assignment{}, classifyServiceError(err)
@@ -261,16 +302,24 @@ func (s *Service) Activate(ctx context.Context, actorID uuid.UUID, in ActivateIn
 // e todos os dados de negocio. Reativar depois restaura o estado exatamente
 // como estava.
 func (s *Service) Deactivate(ctx context.Context, actorID uuid.UUID, in TransitionInput) (Assignment, error) {
-	return s.transition(ctx, actorID, in, StatusInactive, ActionDeactivated)
+	return s.transition(ctx, actorID, "", in, StatusInactive, ActionDeactivated)
+}
+
+func (s *Service) DeactivateIdempotent(ctx context.Context, actorID uuid.UUID, key string, in TransitionInput) (Assignment, error) {
+	return s.transition(ctx, actorID, key, in, StatusInactive, ActionDeactivated)
 }
 
 // Revoke revoga o acesso ao modulo. A linha e a vigencia sao preservadas; o
 // status revogado nao pode ser desfeito por Deactivate.
 func (s *Service) Revoke(ctx context.Context, actorID uuid.UUID, in TransitionInput) (Assignment, error) {
-	return s.transition(ctx, actorID, in, StatusRevoked, ActionRevoked)
+	return s.transition(ctx, actorID, "", in, StatusRevoked, ActionRevoked)
 }
 
-func (s *Service) transition(ctx context.Context, actorID uuid.UUID, in TransitionInput, target, action string) (Assignment, error) {
+func (s *Service) RevokeIdempotent(ctx context.Context, actorID uuid.UUID, key string, in TransitionInput) (Assignment, error) {
+	return s.transition(ctx, actorID, key, in, StatusRevoked, ActionRevoked)
+}
+
+func (s *Service) transition(ctx context.Context, actorID uuid.UUID, key string, in TransitionInput, target, action string) (Assignment, error) {
 	if err := validateActorOrigin(actorID, in.Origin); err != nil {
 		return Assignment{}, err
 	}
@@ -287,6 +336,14 @@ func (s *Service) transition(ctx context.Context, actorID uuid.UUID, in Transiti
 
 	var result Assignment
 	err = s.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		replayed, err := beginMutation(ctx, tx, tenantID, key, action, actorID, in)
+		if err != nil {
+			return err
+		}
+		if replayed != nil {
+			result = *replayed
+			return nil
+		}
 		kind, active, err := loadModule(ctx, tx, in.ModuleCode)
 		if err != nil {
 			return err
@@ -305,9 +362,12 @@ func (s *Service) transition(ctx context.Context, actorID uuid.UUID, in Transiti
 		if !found {
 			return fmt.Errorf("%w: modulo %q empresa %s", ErrAssignmentNotFound, in.ModuleCode, in.CompanyID)
 		}
+		if in.ExpectedVersion > 0 && existing.Version != in.ExpectedVersion {
+			return fmt.Errorf("%w: esperado %d, atual %d", ErrStaleVersion, in.ExpectedVersion, existing.Version)
+		}
 		if existing.Status == target {
 			result = existing
-			return nil
+			return finishMutation(ctx, tx, tenantID, key, action, actorID, in, result)
 		}
 		if target == StatusInactive && existing.Status == StatusRevoked {
 			return fmt.Errorf("%w: licenca revogada nao pode ser desativada", ErrInvalidTransition)
@@ -316,17 +376,21 @@ func (s *Service) transition(ctx context.Context, actorID uuid.UUID, in Transiti
 		err = tx.QueryRow(ctx, `
 			UPDATE entitlement.license_assignment
 			   SET status = $3,
+			       version = version + 1,
 			       updated_at = now()
 			 WHERE tenant_id = $1
 			   AND id = $2
-			RETURNING id, tenant_id, module_code, company_id, valid_from, valid_to, status, updated_at`,
+			RETURNING id, tenant_id, module_code, company_id, valid_from, valid_to, status, version, updated_at`,
 			tenantID, existing.ID, target).Scan(
 			&result.ID, &result.TenantID, &result.ModuleCode, &result.CompanyID,
-			&result.ValidFrom, &result.ValidTo, &result.Status, &result.UpdatedAt)
+			&result.ValidFrom, &result.ValidTo, &result.Status, &result.Version, &result.UpdatedAt)
 		if err != nil {
 			return fmt.Errorf("%w: atualizar licenca: %w", ErrEntitlementUnavailable, err)
 		}
-		return appendEvent(ctx, tx, tenantID, in.ModuleCode, in.CompanyID, actorID, action, in.Origin)
+		if err := appendEvent(ctx, tx, tenantID, in.ModuleCode, in.CompanyID, actorID, action, in.Origin); err != nil {
+			return err
+		}
+		return finishMutation(ctx, tx, tenantID, key, action, actorID, in, result)
 	})
 	if err != nil {
 		return Assignment{}, classifyServiceError(err)
@@ -348,8 +412,8 @@ func (s *Service) ModuleQuota(ctx context.Context, moduleCode string, at time.Ti
 	result := ModuleQuota{ModuleCode: moduleCode}
 	err = s.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
-			SELECT quota FROM entitlement.license_pool
-			 WHERE tenant_id = $1 AND module_code = $2`, tenantID, moduleCode).Scan(&result.Quota)
+			SELECT quota, version FROM entitlement.license_pool
+			 WHERE tenant_id = $1 AND module_code = $2`, tenantID, moduleCode).Scan(&result.Quota, &result.Version)
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 			result.Configured = false
@@ -375,19 +439,41 @@ func (s *Service) ModuleQuota(ctx context.Context, moduleCode string, at time.Ti
 	return result, nil
 }
 
-// SetModuleQuota provisiona a cota de licencas de um modulo opcional. E uma
-// operacao de admin SaaS: a autorizacao acontece fora deste pacote (ainda sem
-// HTTP). Nao gera evento nesta fatia; a auditoria desta entrega cobre
-// ativacao/desativacao/revogacao (issue #21).
+// SetModuleQuota mantém a API interna usada pelo provisionamento inicial.
 func (s *Service) SetModuleQuota(ctx context.Context, moduleCode string, quota int) error {
+	_, err := s.setModuleQuota(ctx, uuid.Nil, "", moduleCode, quota, 0)
+	return err
+}
+
+// SetModuleQuotaIdempotent ajusta a quota do módulo e audita o efeito.
+func (s *Service) SetModuleQuotaIdempotent(ctx context.Context, actorID uuid.UUID, key, moduleCode string, quota int, expectedVersion int64) (ModuleQuota, error) {
+	if actorID == uuid.Nil {
+		return ModuleQuota{}, ErrActorRequired
+	}
+	return s.setModuleQuota(ctx, actorID, key, moduleCode, quota, expectedVersion)
+}
+
+func (s *Service) setModuleQuota(ctx context.Context, actorID uuid.UUID, key, moduleCode string, quota int, expectedVersion int64) (ModuleQuota, error) {
 	if strings.TrimSpace(moduleCode) == "" || quota < 0 {
-		return fmt.Errorf("%w: modulo obrigatorio e cota nao negativa", ErrInvalidRequest)
+		return ModuleQuota{}, fmt.Errorf("%w: modulo obrigatorio e cota nao negativa", ErrInvalidRequest)
 	}
 	tenantID, err := db.TenantFromContext(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrEntitlementUnavailable, err)
+		return ModuleQuota{}, fmt.Errorf("%w: %v", ErrEntitlementUnavailable, err)
 	}
+	var result ModuleQuota
 	err = s.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		replay, err := beginMutationRaw(ctx, tx, tenantID, key, "set_module_quota", actorID, struct {
+			ModuleCode string `json:"moduleCode"`
+			Quota      int    `json:"quota"`
+			Version    int64  `json:"version"`
+		}{moduleCode, quota, expectedVersion})
+		if err != nil {
+			return err
+		}
+		if replay != nil {
+			return json.Unmarshal(replay, &result)
+		}
 		kind, active, err := loadModule(ctx, tx, moduleCode)
 		if err != nil {
 			return err
@@ -397,6 +483,21 @@ func (s *Service) SetModuleQuota(ctx context.Context, moduleCode string, quota i
 		}
 		if kind != moduleKindOptional {
 			return fmt.Errorf("%w: modulo %q e %s", ErrCoreModuleImmutable, moduleCode, kind)
+		}
+		var previousQuota, previousVersion int64
+		err = tx.QueryRow(ctx, `
+			SELECT quota, version FROM entitlement.license_pool
+			 WHERE tenant_id = $1 AND module_code = $2 FOR UPDATE`, tenantID, moduleCode).Scan(&previousQuota, &previousVersion)
+		configured := err == nil
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("%w: consultar cota: %w", ErrEntitlementUnavailable, err)
+		}
+		if configured {
+			if expectedVersion > 0 && previousVersion != expectedVersion {
+				return fmt.Errorf("%w: esperado %d, atual %d", ErrStaleVersion, expectedVersion, previousVersion)
+			}
+		} else if expectedVersion > 0 {
+			return fmt.Errorf("%w: quota ainda não configurada", ErrStaleVersion)
 		}
 		var activeCount int
 		if err := tx.QueryRow(ctx, `
@@ -408,17 +509,50 @@ func (s *Service) SetModuleQuota(ctx context.Context, moduleCode string, quota i
 		if quota < activeCount {
 			return fmt.Errorf("%w: %d licencas ativas com cota %d", ErrQuotaExceeded, activeCount, quota)
 		}
+		if configured && previousQuota == int64(quota) {
+			result = ModuleQuota{ModuleCode: moduleCode, Quota: quota, InUse: activeCount, Configured: true, Version: previousVersion}
+			return finishQuotaMutation(ctx, tx, tenantID, key, actorID, moduleCode, quota, result)
+		}
 		_, err = tx.Exec(ctx, `
 			INSERT INTO entitlement.license_pool (tenant_id, module_code, quota)
 			VALUES ($1, $2, $3)
 			ON CONFLICT (tenant_id, module_code)
-			DO UPDATE SET quota = EXCLUDED.quota, updated_at = now()`, tenantID, moduleCode, quota)
+			DO UPDATE SET quota = EXCLUDED.quota, version = entitlement.license_pool.version + 1, updated_at = now()`, tenantID, moduleCode, quota)
 		if err != nil {
 			return fmt.Errorf("%w: gravar cota: %w", ErrEntitlementUnavailable, err)
 		}
-		return nil
+		if actorID != uuid.Nil {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO entitlement.quota_event (tenant_id, module_code, actor_id, previous_quota, new_quota)
+				VALUES ($1, $2, $3, $4, $5)`, tenantID, moduleCode, actorID, previousQuota, quota); err != nil {
+				return fmt.Errorf("%w: gravar auditoria de quota: %w", ErrEntitlementUnavailable, err)
+			}
+		}
+		if !configured {
+			previousVersion = 0
+		}
+		result = ModuleQuota{ModuleCode: moduleCode, Quota: quota, InUse: activeCount, Configured: true, Version: previousVersion + 1}
+		return finishQuotaMutation(ctx, tx, tenantID, key, actorID, moduleCode, quota, result)
 	})
-	return classifyServiceError(err)
+	if err != nil {
+		return ModuleQuota{}, classifyServiceError(err)
+	}
+	return result, nil
+}
+
+func finishQuotaMutation(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key string, actorID uuid.UUID, moduleCode string, quota int, result ModuleQuota) error {
+	if strings.TrimSpace(key) == "" {
+		return nil
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("%w: serializar quota: %w", ErrEntitlementUnavailable, err)
+	}
+	return finishMutationRaw(ctx, tx, tenantID, key, "set_module_quota", actorID, struct {
+		ModuleCode string `json:"moduleCode"`
+		Quota      int    `json:"quota"`
+		Version    int64  `json:"version"`
+	}{moduleCode, quota, result.Version}, encoded)
 }
 
 // UserQuota devolve a cota de acessos do tenant. Configured e falso quando o
@@ -580,7 +714,7 @@ func loadModule(ctx context.Context, tx pgx.Tx, moduleCode string) (string, bool
 func loadAssignment(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, moduleCode string, companyID uuid.UUID) (Assignment, bool, error) {
 	var a Assignment
 	err := tx.QueryRow(ctx, `
-		SELECT id, tenant_id, module_code, company_id, valid_from, valid_to, status, updated_at
+		SELECT id, tenant_id, module_code, company_id, valid_from, valid_to, status, version, updated_at
 		  FROM entitlement.license_assignment
 		 WHERE tenant_id = $1
 		   AND module_code = $2
@@ -588,7 +722,7 @@ func loadAssignment(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, moduleCo
 		 ORDER BY created_at DESC, id DESC
 		 LIMIT 1
 		 FOR UPDATE`, tenantID, moduleCode, companyID).Scan(
-		&a.ID, &a.TenantID, &a.ModuleCode, &a.CompanyID, &a.ValidFrom, &a.ValidTo, &a.Status, &a.UpdatedAt)
+		&a.ID, &a.TenantID, &a.ModuleCode, &a.CompanyID, &a.ValidFrom, &a.ValidTo, &a.Status, &a.Version, &a.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Assignment{}, false, nil
 	}
@@ -636,6 +770,87 @@ func appendEvent(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, moduleCode 
 	return nil
 }
 
+func beginMutation(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key, operation string, actorID uuid.UUID, payload any) (*Assignment, error) {
+	result, err := beginMutationRaw(ctx, tx, tenantID, key, operation, actorID, payload)
+	if err != nil || result == nil {
+		return nil, err
+	}
+	var assignment Assignment
+	if err := json.Unmarshal(result, &assignment); err != nil {
+		return nil, fmt.Errorf("%w: replay invalido", ErrEntitlementUnavailable)
+	}
+	return &assignment, nil
+}
+
+func beginMutationRaw(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key, operation string, actorID uuid.UUID, payload any) ([]byte, error) {
+	if strings.TrimSpace(key) == "" {
+		return nil, nil
+	}
+	key = strings.TrimSpace(key)
+	if len(key) > 200 {
+		return nil, fmt.Errorf("%w: Idempotency-Key excede 200 caracteres", ErrInvalidRequest)
+	}
+	hash := requestHash(operation, actorID, payload)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO entitlement.mutation_idempotency (tenant_id, idempotency_key, operation, request_hash)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (tenant_id, idempotency_key) DO NOTHING`, tenantID, key, operation, hash); err != nil {
+		return nil, fmt.Errorf("%w: reservar idempotencia: %w", ErrEntitlementUnavailable, err)
+	}
+	var storedOperation, storedHash string
+	var result []byte
+	err := tx.QueryRow(ctx, `
+		SELECT operation, request_hash, result
+		  FROM entitlement.mutation_idempotency
+		 WHERE tenant_id = $1 AND idempotency_key = $2
+		 FOR UPDATE`, tenantID, key).Scan(&storedOperation, &storedHash, &result)
+	if err != nil {
+		return nil, fmt.Errorf("%w: ler idempotencia: %w", ErrEntitlementUnavailable, err)
+	}
+	if storedOperation != operation || storedHash != hash {
+		return nil, ErrIdempotencyConflict
+	}
+	return result, nil
+}
+
+func finishMutation(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key, operation string, actorID uuid.UUID, payload any, result Assignment) error {
+	if strings.TrimSpace(key) == "" {
+		return nil
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("%w: serializar replay: %w", ErrEntitlementUnavailable, err)
+	}
+	return finishMutationRaw(ctx, tx, tenantID, key, operation, actorID, payload, encoded)
+}
+
+func finishMutationRaw(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key, operation string, actorID uuid.UUID, payload any, result []byte) error {
+	if strings.TrimSpace(key) == "" {
+		return nil
+	}
+	command, err := tx.Exec(ctx, `
+		UPDATE entitlement.mutation_idempotency
+		   SET result = $3
+		 WHERE tenant_id = $1 AND idempotency_key = $2`, tenantID, strings.TrimSpace(key), result)
+	if err != nil || command.RowsAffected() != 1 {
+		if err == nil {
+			err = errors.New("registro de idempotencia ausente")
+		}
+		return fmt.Errorf("%w: gravar replay: %w", ErrEntitlementUnavailable, err)
+	}
+	return nil
+}
+
+func requestHash(operation string, actorID uuid.UUID, payload any) string {
+	encoded, _ := json.Marshal(struct {
+		Operation string    `json:"operation"`
+		ActorID   uuid.UUID `json:"actorId"`
+		Payload   any       `json:"payload"`
+	}{operation, actorID, payload})
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
+}
+
 func validateActorOrigin(actorID uuid.UUID, origin string) error {
 	if actorID == uuid.Nil {
 		return ErrActorRequired
@@ -671,6 +886,8 @@ func classifyServiceError(err error) error {
 		ErrInvalidTransition,
 		ErrInvalidRequest,
 		ErrActorRequired,
+		ErrIdempotencyConflict,
+		ErrStaleVersion,
 	} {
 		if errors.Is(err, sentinel) {
 			return err

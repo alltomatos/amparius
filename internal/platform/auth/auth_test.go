@@ -208,6 +208,10 @@ func TestDefaultRolePolicyForControlPlaneReadRoutes(t *testing.T) {
 		{role: "admin", permission: PermissionEntitlementRead, want: true},
 		{role: "auditor", permission: PermissionEntitlementRead, want: true},
 		{role: "manager", permission: PermissionEntitlementRead, want: false},
+		{role: "owner", permission: PermissionEntitlementWrite, want: true},
+		{role: "admin", permission: PermissionEntitlementWrite, want: true},
+		{role: "auditor", permission: PermissionEntitlementWrite, want: false},
+		{role: "manager", permission: PermissionEntitlementWrite, want: false},
 	}
 	for _, test := range cases {
 		principal.Roles = []string{test.role}

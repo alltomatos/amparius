@@ -46,6 +46,18 @@ Este documento valida as primeiras fatias definidas em `docs/adr/0026-frontend-a
 **Quando** o usuário acessa a ação do módulo
 **Então** a UI mostra o estado específico e não oferece uma ação funcional que o backend recusará.
 
+### CP-A06 — detalhe, auditoria e escrita administrativa
+
+**Dado** um `owner`/`admin` autenticado e uma empresa vinculada ao tenant
+**Quando** consulta o detalhe, concede/revoga uma licença ou ajusta quota
+**Então** o backend usa somente o tenant/contexto autenticado, exige
+`Idempotency-Key` nas escritas, exige `version` no `PATCH`, grava auditoria
+append-only e mascara qualquer CNPJ apresentado.
+
+**Evidência:** `docs/contracts/control-plane-entitlement-cp06-v1.md`, testes
+`internal/modules/controlplane` e integração `internal/modules/entitlement`
+quando `AMPA_CONTROL_POSTGRES_DSN` está configurado.
+
 ## CL-01/CL-03 — operação offline
 
 ### CL-A01 — fila sem duplicação

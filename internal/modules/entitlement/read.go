@@ -30,6 +30,7 @@ type Entitlement struct {
 	ValidFrom       *time.Time
 	ValidTo         *time.Time
 	UpdatedAt       *time.Time
+	Version         int64
 	sortOrder       int
 }
 
@@ -92,12 +93,12 @@ func (s *Service) ListForCompany(ctx context.Context, companyID uuid.UUID, at ti
 		            AND used.valid_from <= $3::date
 		            AND (used.valid_to IS NULL OR used.valid_to >= $3::date)
 		       ), 0),
-		       a.id, a.valid_from, a.valid_to, a.updated_at
+		       a.id, a.valid_from, a.valid_to, a.version, a.updated_at
 		  FROM entitlement.module m
 		  LEFT JOIN entitlement.license_pool lp
 		    ON lp.tenant_id = $1 AND lp.module_code = m.code
 		  LEFT JOIN LATERAL (
-				SELECT la.id, la.status, la.valid_from, la.valid_to, la.updated_at
+				SELECT la.id, la.status, la.valid_from, la.valid_to, la.version, la.updated_at
 				  FROM entitlement.license_assignment la
 				 WHERE la.tenant_id = $1
 				   AND la.module_code = m.code
@@ -122,7 +123,7 @@ func (s *Service) ListForCompany(ctx context.Context, companyID uuid.UUID, at ti
 			if err := rows.Scan(
 				&item.ModuleCode, &item.ModuleName, &item.Kind, &sortOrder,
 				&item.Status, &item.Quota, &item.QuotaConfigured, &item.Used,
-				&item.ID, &item.ValidFrom, &item.ValidTo, &item.UpdatedAt,
+				&item.ID, &item.ValidFrom, &item.ValidTo, &item.Version, &item.UpdatedAt,
 			); err != nil {
 				return err
 			}
@@ -147,6 +148,25 @@ func (s *Service) ListForCompany(ctx context.Context, companyID uuid.UUID, at ti
 		}
 	}
 	return page, nil
+}
+
+// GetForCompany devolve o detalhe de um módulo sem aceitar tenant ou empresa
+// fora do contexto confiável. O catálogo continua sendo a fonte do detalhe de
+// módulos core sem assignment.
+func (s *Service) GetForCompany(ctx context.Context, companyID uuid.UUID, moduleCode string, at time.Time) (Entitlement, error) {
+	if strings.TrimSpace(moduleCode) == "" {
+		return Entitlement{}, fmt.Errorf("%w: módulo obrigatório", ErrInvalidRequest)
+	}
+	page, err := s.ListForCompany(ctx, companyID, at, "", 100)
+	if err != nil {
+		return Entitlement{}, err
+	}
+	for _, item := range page.Items {
+		if item.ModuleCode == moduleCode {
+			return item, nil
+		}
+	}
+	return Entitlement{}, fmt.Errorf("%w: módulo %q", ErrAssignmentNotFound, moduleCode)
 }
 
 func encodeEntitlementCursor(cursor entitlementCursor) (string, error) {

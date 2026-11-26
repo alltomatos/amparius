@@ -34,19 +34,20 @@ var (
 type Permission string
 
 const (
-	PermissionIdentityRead    Permission = "identity:read"
-	PermissionContextRead     Permission = "context:read"
-	PermissionEntitlementRead Permission = "entitlement:read"
-	PermissionIdentityWrite   Permission = "identity:write"
-	PermissionPartyRead       Permission = "party:read"
-	PermissionPartyWrite      Permission = "party:write"
-	PermissionCatalogRead     Permission = "catalog:read"
-	PermissionCatalogWrite    Permission = "catalog:write"
-	PermissionFinanceRead     Permission = "finance:read"
-	PermissionFinanceWrite    Permission = "finance:write"
-	PermissionFinancePost     Permission = "finance:post"
-	PermissionFuneralRead     Permission = "funeral:read"
-	PermissionFuneralWrite    Permission = "funeral:write"
+	PermissionIdentityRead     Permission = "identity:read"
+	PermissionContextRead      Permission = "context:read"
+	PermissionEntitlementRead  Permission = "entitlement:read"
+	PermissionEntitlementWrite Permission = "entitlement:write"
+	PermissionIdentityWrite    Permission = "identity:write"
+	PermissionPartyRead        Permission = "party:read"
+	PermissionPartyWrite       Permission = "party:write"
+	PermissionCatalogRead      Permission = "catalog:read"
+	PermissionCatalogWrite     Permission = "catalog:write"
+	PermissionFinanceRead      Permission = "finance:read"
+	PermissionFinanceWrite     Permission = "finance:write"
+	PermissionFinancePost      Permission = "finance:post"
+	PermissionFuneralRead      Permission = "funeral:read"
+	PermissionFuneralWrite     Permission = "funeral:write"
 )
 
 // OIDCIdentity é o resultado já validado pelo adaptador OIDC. O adaptador é
@@ -182,8 +183,8 @@ func DefaultRolePolicy() (RolePolicy, error) {
 		PermissionFuneralRead, PermissionFuneralWrite,
 	}
 	return NewRolePolicy(map[string][]Permission{
-		"owner":    append(all, PermissionContextRead, PermissionEntitlementRead),
-		"admin":    append(all, PermissionContextRead, PermissionEntitlementRead),
+		"owner":    append(all, PermissionContextRead, PermissionEntitlementRead, PermissionEntitlementWrite),
+		"admin":    append(all, PermissionContextRead, PermissionEntitlementRead, PermissionEntitlementWrite),
 		"manager":  {PermissionContextRead, PermissionPartyRead, PermissionPartyWrite, PermissionCatalogRead, PermissionCatalogWrite, PermissionFinanceRead, PermissionFinanceWrite, PermissionFinancePost, PermissionFuneralRead, PermissionFuneralWrite},
 		"operator": {PermissionPartyRead, PermissionPartyWrite, PermissionCatalogRead, PermissionFinanceRead, PermissionFinancePost, PermissionFuneralRead, PermissionFuneralWrite},
 		"auditor":  {PermissionIdentityRead, PermissionEntitlementRead, PermissionPartyRead, PermissionCatalogRead, PermissionFinanceRead, PermissionFuneralRead},

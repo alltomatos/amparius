@@ -148,6 +148,11 @@ func run() error {
 			{Pattern: "GET /v1/context", Permission: platformauth.PermissionContextRead, Handler: http.HandlerFunc(controlHandler.Context)},
 			{Pattern: "GET /v1/companies", Permission: platformauth.PermissionContextRead, Handler: http.HandlerFunc(controlHandler.Companies)},
 			{Pattern: "GET /v1/companies/{companyId}/entitlements", Permission: platformauth.PermissionEntitlementRead, Handler: http.HandlerFunc(controlHandler.Entitlements)},
+			{Pattern: "GET /v1/companies/{companyId}/entitlements/{module}", Permission: platformauth.PermissionEntitlementRead, Handler: http.HandlerFunc(controlHandler.EntitlementDetail)},
+			{Pattern: "GET /v1/companies/{companyId}/entitlements/{module}/audit", Permission: platformauth.PermissionEntitlementRead, Handler: http.HandlerFunc(controlHandler.EntitlementAudit)},
+			{Pattern: "GET /v1/entitlements/{entitlementId}/audit", Permission: platformauth.PermissionEntitlementRead, Handler: http.HandlerFunc(controlHandler.EntitlementAuditByID)},
+			{Pattern: "PUT /v1/companies/{companyId}/entitlements/{module}", Permission: platformauth.PermissionEntitlementWrite, Handler: http.HandlerFunc(controlHandler.GrantEntitlement)},
+			{Pattern: "PATCH /v1/companies/{companyId}/entitlements/{module}", Permission: platformauth.PermissionEntitlementWrite, Handler: http.HandlerFunc(controlHandler.PatchEntitlement)},
 		}
 	}
 

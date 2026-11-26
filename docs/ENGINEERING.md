@@ -544,14 +544,26 @@ usando um papel owner; o app não cria índice nem concede grant.
 
 Testes em `internal/modules/entitlement/service_integration_test.go` cobrem
 ativação/desativação/revogação/reativação com preservação de linha e vigência,
-cota por módulo, cota de assentos, defesa por `CompanyResolver`, RLS entre
-tenants e bloqueio de `UPDATE`/`DELETE` em `entitlement_event`. Rodam contra
+cota por módulo, cota de assentos, defesa por `CompanyResolver`, idempotência,
+versão obsoleta, RLS entre tenants e bloqueio de `UPDATE`/`DELETE` em
+`entitlement_event`/`quota_event`. Rodam contra
 `AMPA_CONTROL_POSTGRES_DSN` e são `SKIP` sem ele.
 
-**Pendente:** enforcement HTTP por endpoint/evento/IA e cabeçalho de empresa
-confiável (issue #20); reporte real de assentos pela célula; auditoria de
-alteração de cota (exige nova ação no catálogo `entitlement_action`); snapshot
-assinado, invalidação e TTL no relay.
+A migration forward-only `0003_entitlement_cp06.sql` adiciona `version` às
+licenças e pools, a tabela RLS `mutation_idempotency` e a auditoria append-only
+`quota_event`. As rotas CP-06 estão em
+`docs/contracts/control-plane-entitlement-cp06-v1.md`: leitura exige
+`entitlement:read`; escritas administrativas exigem `entitlement:write`,
+`Idempotency-Key` e, no `PATCH`, `version`. A empresa do caminho é confirmada
+por `identity.Repository.UserCanAccessCompany`; tenant, actor e origem não vêm
+do corpo. Detalhe e auditoria são paginados e os erros de concorrência,
+idempotência e quota são estruturados.
+
+**Pendente:** autenticação OIDC/MFA de provedor real e bootstrap produtivo;
+reporte real de assentos pela célula; snapshot assinado, invalidação e TTL no
+relay. A integração PostgreSQL desta fatia permanece `SKIP` sem
+`AMPA_CONTROL_POSTGRES_DSN`; a migration 0003 ainda precisa ser aplicada no
+banco de integração antes de declarar o ciclo real verde.
 
 ### FUN-01B: parcelamento e eventos do contrato funerário
 

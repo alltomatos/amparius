@@ -49,6 +49,7 @@ operações idempotentes na fila local:
 
 - criar jornada atômica (`funeral_journey_create`), com OS e agenda;
 - avançar a OS para `in_progress`;
+- pausar a OS com `funeral_service_order_pause`;
 - concluir a OS com `funeral_service_order_complete`.
 
 O contrato `active` precisa ser confirmado na tela e é revalidado pelo servidor;
@@ -70,6 +71,21 @@ Sem `AMPARIUS_FUNERAL_ENTITLEMENT=active`, a tela fica bloqueada por fail-closed
 As operações funerárias são aceitas pelo relay e permanecem pendentes até o
 consumidor/serviço de negócio correspondente estar disponível.
 
+
+## Ordens de serviço (CL-03)
+
+A mesma tela lista as ordens conhecidas pela fila local e mostra referência opaca,
+estado operacional, versão esperada, `seq` e estado de sincronização (`queued`,
+`done`, `error` ou `conflict`). Selecionar uma ordem preenche a versão-base para
+avançar, pausar ou concluir. Enquanto houver mutação pendente, falha terminal ou
+conflito, a ordem fica bloqueada para nova mutação; conflito exige revisão e não
+usa last-write-wins.
+
+As chaves são próprias de cada mutação (`cl03-<ação>-<ordem>-<expected_version>`)
+e o payload leva `expected_version`. A lista é uma projeção reconstruída de
+`ClientQueue`, portanto sobrevive ao reinício sem um segundo store local. A
+projeção cobre as mutações conhecidas pela estação; a autoridade final de estado e
+versão continua sendo o serviço funeral no servidor.
 
 ## Modelo CL-01/CL-03
 

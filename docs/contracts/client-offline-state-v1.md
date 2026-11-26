@@ -112,6 +112,20 @@ do `ClientQueue` continua sendo aplicado por `reconcile`.
   e a operação não é marcada como sincronizada.
 - `server_cursor` é o `seq` do registro aceito pelo relay.
 
+### Ordens de serviço (CL-03)
+
+As mutações `funeral_service_order_advance`, `funeral_service_order_pause` e
+`funeral_service_order_complete` usam `entity_id` como referência opaca da OS e
+carregam `status` mais `expected_version`. A chave de idempotência é própria de
+cada combinação ação/OS/versão-base; replay idêntico não cria nova sequência.
+
+`paused` é o estado operacional apresentado pelo cliente para a ação de pausa;
+o serviço funeral continua sendo a autoridade para aceitar a transição e
+persistir o estado definitivo. A projeção local mostra `queued`, `done`, `error`
+ou `conflict` a partir da fila persistida. Uma mutação pendente, falha terminal
+ou conflito bloqueia nova mutação para a mesma OS; conflito cria revisão e não
+aplica last-write-wins.
+
 ## Limites
 
 O transporte é HTTP sem TLS embutido: o relay deve escutar em loopback ou atrás de

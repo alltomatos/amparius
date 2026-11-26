@@ -309,9 +309,15 @@ O servidor continua revalidando tenant, RLS, entitlement, contrato e transição
 
 - **Objetivo:** executar, pausar e concluir ordens com rastro de sequência local.
 - **Elementos:** cartão por ordem, status, responsável, prazo apresentado em `America/Sao_Paulo`, ações.
-- **Estados:** `idle`, `running`, `queued`, `blocked`, `done`.
+- **Estados:** `idle`, `running`, `queued`, `blocked`, `done`, `error`, `conflict`.
+- **Lista:** cartões mostram referência opaca, estado operacional, versão-base,
+  `seq` e estado da mutação; a projeção é reconstruída da fila persistida.
+- **Ações:** avançar (`in_progress`), pausar (`paused`, operação local explícita)
+  e concluir (`completed`). Cada mutação leva `expected_version` e uma chave de
+  idempotência própria.
 - **Offline:** transição gravada localmente com `seq`; ao reconectar, reaplicada por idempotência.
-- **Conflito:** ordem com `CONFLICT_UNREVIEWED` vai para CL-05; não é sobrescrita.
+- **Conflito:** ordem com `CONFLICT_UNREVIEWED` vai para CL-05, bloqueia nova
+  mutação e preserva o estado local; não é sobrescrita.
 
 ### CL-04 — Offline e contingência
 

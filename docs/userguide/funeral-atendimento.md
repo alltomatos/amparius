@@ -98,16 +98,19 @@ responde `409 IDEMPOTENCY_CONFLICT`. Conflito de janela responde
 `409 SCHEDULE_CONFLICT` e não deixa uma OS parcial. A resposta não expõe dados
 do cliente e os eventos v1 carregam somente IDs opacos, estados e datas.
 
-## Cliente desktop offline (CL-02)
+## Cliente desktop offline (CL-02/CL-03)
 
 Na tela nativa `Atendimento funeral`, informe apenas referências opacas da
 parte, contrato, local, recurso e ordem. Nome, CPF, telefone, endereço e
 descrição livre não são campos do formulário nem aparecem em logs.
 
-O cliente oferece três ações: criar jornada atômica com OS e agenda, avançar a
-ordem para `in_progress` e concluir a ordem em `completed`. Cada ação recebe
-uma `Idempotency-Key` estável por referência e é persistida na fila com `seq` do
-dispositivo.
+O cliente oferece cinco ações na mesma superfície: criar jornada atômica com OS e
+agenda, listar as OS conhecidas pela fila local, avançar para `in_progress`,
+pausar com estado operacional local `paused` e concluir em `completed`. Cada
+mutação de execução recebe uma `Idempotency-Key` própria por ordem e versão-base,
+leva `expected_version` e é persistida na fila com `seq` do dispositivo. A tela
+mostra a versão, `queued`, `done`, `error` ou `conflict`; uma OS com mutação
+pendente, falha terminal ou conflito não aceita outra mutação local até a revisão.
 
 Em `offline` e `contingency`, o estado visível é `queued` e o envio fica
 aguardando sincronização. Em `online`, relay e identidade do operador são
@@ -115,4 +118,7 @@ obrigatórios; indisponibilidade não é apresentada como sucesso. O operador s�
 pode criar a jornada após confirmar que o contrato está `active`; o servidor
 revalida tenant, RLS, entitlement, contrato e transição. Sem
 `AMPARIUS_FUNERAL_ENTITLEMENT=active`, o módulo permanece bloqueado por
-fail-closed.
+fail-closed. A projeção de OS é local à estação e não substitui a listagem
+autoritativa do serviço funeral; uma OS só aparece nela depois que uma mutação
+referente àquela OS foi conhecida pela fila. O servidor continua revalidando
+tenant, RLS, entitlement, contrato, `expected_version` e transição.

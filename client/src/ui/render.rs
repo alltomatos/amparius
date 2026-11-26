@@ -6,6 +6,7 @@ use std::collections::HashSet;
 
 use super::attendance::{
     AttendanceAction, AttendanceForm, AttendanceServiceState, AttendanceStatus, AttendanceView,
+    ServiceOrderStatus, ServiceOrderSyncState,
 };
 use super::day_panel::{DayPanelView, Notice, PanelPhase, Severity, StatusChip, SyncView};
 use super::theme::{Palette, palette, status_colors};
@@ -23,6 +24,7 @@ pub struct AttendanceActions {
     pub back: bool,
     pub create_journey: bool,
     pub advance_order: bool,
+    pub pause_order: bool,
     pub complete_order: bool,
 }
 
@@ -128,7 +130,7 @@ pub fn render_attendance(
             ui.horizontal_wrapped(|ui| {
                 ui.heading(RichText::new("Atendimento funeral").color(palette.brand_900));
                 ui.label(
-                    RichText::new("CL-02 · jornada e ordem enfileirada")
+                        RichText::new("CL-02/CL-03 · jornada e ordens de serviço")
                         .small()
                         .color(palette.text_muted),
                 );
@@ -184,12 +186,30 @@ pub fn render_attendance(
                 });
                 ui.add_space(8.0);
             }
+            if let AttendanceStatus::Conflict { operation_id, code } = &view.status {
+                panel_frame(palette.danger_bg, palette.danger).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(RichText::new("Conflito; revisão necessária").strong().color(palette.danger));
+                    ui.label(
+                        RichText::new(format!("Operação {operation_id} · código {code}"))
+                            .monospace()
+                            .small()
+                            .color(palette.text_muted),
+                    );
+                    ui.label(RichText::new("O estado local foi preservado; não houve last-write-wins.").small().color(palette.text));
+                });
+                ui.add_space(8.0);
+            }
+
+            service_orders(ui, form, view, &palette);
+            ui.add_space(8.0);
 
             ui.label(RichText::new("Tipo de operação").strong().color(palette.text));
             ui.horizontal_wrapped(|ui| {
                 for (action, label) in [
                     (AttendanceAction::CreateJourney, "Criar jornada"),
                     (AttendanceAction::AdvanceOrder, "Avançar ordem"),
+                    (AttendanceAction::PauseOrder, "Pausar ordem"),
                     (AttendanceAction::CompleteOrder, "Concluir ordem"),
                 ] {
                     ui.radio_value(&mut form.action, action, label);
@@ -199,7 +219,9 @@ pub fn render_attendance(
 
             match form.action {
                 AttendanceAction::CreateJourney => journey_fields(ui, form, &palette),
-                AttendanceAction::AdvanceOrder | AttendanceAction::CompleteOrder => {
+                AttendanceAction::AdvanceOrder
+                | AttendanceAction::PauseOrder
+                | AttendanceAction::CompleteOrder => {
                     order_fields(ui, form, &palette)
                 }
             }
@@ -223,6 +245,7 @@ pub fn render_attendance(
                     match form.action {
                         AttendanceAction::CreateJourney => actions.create_journey = true,
                         AttendanceAction::AdvanceOrder => actions.advance_order = true,
+                        AttendanceAction::PauseOrder => actions.pause_order = true,
                         AttendanceAction::CompleteOrder => actions.complete_order = true,
                     }
                 }
@@ -268,6 +291,102 @@ fn order_fields(ui: &mut egui::Ui, form: &mut AttendanceForm, palette: &Palette)
         &mut form.order_ref,
         palette,
     );
+    field(ui, "Versão esperada", &mut form.order_version, palette);
+}
+
+fn service_orders(
+    ui: &mut egui::Ui,
+    form: &mut AttendanceForm,
+    view: &AttendanceView,
+    palette: &Palette,
+) {
+    ui.label(
+        RichText::new("Ordens da jornada local")
+            .strong()
+            .color(palette.text),
+    );
+    if view.service_orders.is_empty() {
+        ui.label(
+            RichText::new("Nenhuma mutação de OS nesta estação; informe uma referência para iniciar a execução.")
+                .small()
+                .color(palette.text_muted),
+        );
+        return;
+    }
+    for order in &view.service_orders {
+        let (fg, bg) = match order.sync_state {
+            ServiceOrderSyncState::Queued => status_colors(Severity::Warning, palette),
+            ServiceOrderSyncState::Done => status_colors(Severity::Success, palette),
+            ServiceOrderSyncState::Error | ServiceOrderSyncState::Conflict => {
+                status_colors(Severity::Danger, palette)
+            }
+        };
+        panel_frame(palette.surface_alt, palette.border).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new(format!("OS {}", order.order_id))
+                        .monospace()
+                        .strong()
+                        .color(palette.text),
+                );
+                ui.label(
+                    RichText::new(order.status.label())
+                        .strong()
+                        .color(palette.text),
+                );
+                chip(
+                    ui,
+                    &super::day_panel::StatusChip {
+                        symbol: "•",
+                        label: order.sync_state.label(),
+                        severity: Severity::Info,
+                    },
+                    fg,
+                    bg,
+                );
+            });
+            ui.label(
+                RichText::new(format!(
+                    "Versão {} · seq {} · estado {}",
+                    order.version,
+                    order.seq,
+                    order.sync_state.label()
+                ))
+                .small()
+                .color(palette.text_muted),
+            );
+            if let Some(error) = &order.error_code {
+                ui.label(
+                    RichText::new(format!("Código: {error}"))
+                        .monospace()
+                        .small()
+                        .color(palette.text_muted),
+                );
+            }
+            if matches!(order.sync_state, ServiceOrderSyncState::Conflict) {
+                ui.label(
+                    RichText::new("Revisão necessária; a ordem não foi sobrescrita.")
+                        .small()
+                        .color(palette.danger),
+                );
+            }
+            if ui
+                .add(egui::Button::new("Selecionar ordem").min_size(egui::vec2(160.0, 44.0)))
+                .clicked()
+            {
+                form.order_ref = order.order_id.clone();
+                form.order_version = order.version.saturating_sub(1).to_string();
+                form.action = match order.status {
+                    ServiceOrderStatus::Open => AttendanceAction::AdvanceOrder,
+                    ServiceOrderStatus::InProgress => AttendanceAction::PauseOrder,
+                    ServiceOrderStatus::Paused => AttendanceAction::AdvanceOrder,
+                    ServiceOrderStatus::Completed => AttendanceAction::CompleteOrder,
+                };
+            }
+        });
+        ui.add_space(6.0);
+    }
 }
 
 fn field(ui: &mut egui::Ui, label: &str, value: &mut String, palette: &Palette) {
@@ -734,6 +853,7 @@ mod tests {
             true,
             true,
             crate::ui::attendance::AttendanceStatus::Ready,
+            Vec::new(),
         );
         let mut form = crate::ui::attendance::AttendanceForm::default();
         let mut harness = egui_kittest::Harness::new_ui(move |ui| {
@@ -757,6 +877,7 @@ mod tests {
                 operation_id: "op_opaque".to_owned(),
                 seq: 7,
             },
+            Vec::new(),
         );
         let mut form = crate::ui::attendance::AttendanceForm::default();
         let mut harness = egui_kittest::Harness::new_ui(move |ui| {
@@ -766,5 +887,36 @@ mod tests {
         harness.run();
         harness.get_by_label("Enfileirada");
         harness.get_by_label("Sequência local 7 · operação op_opaque");
+    }
+
+    #[test]
+    fn service_order_cards_expose_status_version_and_conflict_without_payload() {
+        let view = AttendanceView::new(
+            crate::ConnectivityState::Offline,
+            crate::ui::attendance::EntitlementState::Active,
+            false,
+            true,
+            crate::ui::attendance::AttendanceStatus::Ready,
+            vec![crate::ui::attendance::ServiceOrderCard {
+                order_id: "order-1".to_owned(),
+                status: crate::ui::attendance::ServiceOrderStatus::Paused,
+                version: 2,
+                sync_state: crate::ui::attendance::ServiceOrderSyncState::Conflict,
+                operation_id: "op-opaque".to_owned(),
+                seq: 4,
+                error_code: Some("conflict:CONFLICT_UNREVIEWED".to_owned()),
+            }],
+        );
+        let mut form = crate::ui::attendance::AttendanceForm::default();
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            let mut actions = AttendanceActions::default();
+            render_attendance(ui, &mut form, &view, &mut actions);
+        });
+        harness.run();
+        harness.get_by_label("Ordens da jornada local");
+        harness.get_by_label("OS order-1");
+        harness.get_by_label("paused");
+        harness.get_by_label("Versão 2 · seq 4 · estado conflict");
+        harness.get_by_label("Revisão necessária; a ordem não foi sobrescrita.");
     }
 }

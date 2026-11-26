@@ -34,6 +34,7 @@ pub struct TemporaryRecord {
 pub enum ReviewTaskKind {
     FiscalFailure,
     SyncFailure,
+    FuneralConflict,
     MasterConflict,
     MoneyConflict,
     FiscalConflict,
@@ -838,7 +839,7 @@ impl LocalStore {
             kind: match domain {
                 ReconciliationDomain::Master => ReviewTaskKind::MasterConflict,
                 ReconciliationDomain::Money => ReviewTaskKind::MoneyConflict,
-                ReconciliationDomain::Funeral => ReviewTaskKind::SyncFailure,
+                ReconciliationDomain::Funeral => ReviewTaskKind::FuneralConflict,
                 ReconciliationDomain::Fiscal => ReviewTaskKind::FiscalConflict,
             },
             code: safe_code(code),

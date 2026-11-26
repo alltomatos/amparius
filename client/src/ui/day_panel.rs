@@ -587,6 +587,7 @@ fn operation_kind_label(kind: OperationKind) -> &'static str {
         OperationKind::ContractCreate => "Contrato",
         OperationKind::FuneralJourneyCreate => "Jornada funerária",
         OperationKind::FuneralServiceOrderAdvance => "Avanço de OS funerária",
+        OperationKind::FuneralServiceOrderPause => "Pausa de OS funerária",
         OperationKind::FuneralServiceOrderComplete => "Conclusão de OS funerária",
         OperationKind::CashOpen => "Abertura de caixa",
         OperationKind::CashMovement => "Movimento de caixa",
@@ -598,6 +599,7 @@ fn operation_kind_label(kind: OperationKind) -> &'static str {
 fn review_kind_label(kind: ReviewTaskKind) -> (&'static str, Severity) {
     match kind {
         ReviewTaskKind::SyncFailure => ("Falha de sincronização", Severity::Danger),
+        ReviewTaskKind::FuneralConflict => ("Conflito de ordem funerária", Severity::Danger),
         ReviewTaskKind::MasterConflict => ("Conflito de cadastro", Severity::Warning),
         ReviewTaskKind::MoneyConflict => ("Conflito financeiro", Severity::Danger),
         ReviewTaskKind::FiscalConflict => ("Conflito fiscal", Severity::Danger),

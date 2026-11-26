@@ -1,4 +1,4 @@
-//! Modelo puro do atendimento funerário (CL-02).
+//! Modelo puro do atendimento funerário (CL-02) e das ordens de serviço (CL-03).
 //!
 //! O formulário aceita somente referências opacas e valores operacionais. Não há
 //! nome, documento, contato ou texto livre no payload enfileirado. A API do
@@ -6,16 +6,19 @@
 //! transições válidas.
 
 use crate::{
-    ClientError, ConnectivityState, OperationDraft, OperationKind, QueuedOperation, validate_draft,
+    ClientError, ClientQueue, ConnectivityState, OperationDraft, OperationKind, OperationStatus,
+    QueuedOperation, validate_draft,
 };
 use serde_json::json;
 
 pub const SCREEN_ID: &str = "CL-02";
+pub const SERVICE_ORDER_SCREEN_ID: &str = "CL-03";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttendanceAction {
     CreateJourney,
     AdvanceOrder,
+    PauseOrder,
     CompleteOrder,
 }
 
@@ -24,6 +27,7 @@ impl AttendanceAction {
         match self {
             Self::CreateJourney => "Criar jornada",
             Self::AdvanceOrder => "Avançar ordem",
+            Self::PauseOrder => "Pausar ordem",
             Self::CompleteOrder => "Concluir ordem",
         }
     }
@@ -64,10 +68,63 @@ pub enum AttendanceStatus {
         operation_id: String,
         seq: u64,
     },
+    Conflict {
+        operation_id: String,
+        code: String,
+    },
     Error {
         code: String,
         message: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceOrderStatus {
+    Open,
+    InProgress,
+    Paused,
+    Completed,
+}
+
+impl ServiceOrderStatus {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::InProgress => "in_progress",
+            Self::Paused => "paused",
+            Self::Completed => "completed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceOrderSyncState {
+    Queued,
+    Done,
+    Error,
+    Conflict,
+}
+
+impl ServiceOrderSyncState {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Done => "done",
+            Self::Error => "error",
+            Self::Conflict => "conflict",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceOrderCard {
+    pub order_id: String,
+    pub status: ServiceOrderStatus,
+    pub version: u64,
+    pub sync_state: ServiceOrderSyncState,
+    pub operation_id: String,
+    pub seq: u64,
+    pub error_code: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +139,7 @@ pub struct AttendanceForm {
     pub ends_at: String,
     pub time_zone: String,
     pub order_ref: String,
+    pub order_version: String,
     pub contract_active_confirmed: bool,
 }
 
@@ -98,6 +156,7 @@ impl Default for AttendanceForm {
             ends_at: String::new(),
             time_zone: "America/Fortaleza".to_owned(),
             order_ref: String::new(),
+            order_version: "0".to_owned(),
             contract_active_confirmed: false,
         }
     }
@@ -109,6 +168,7 @@ pub struct AttendanceView {
     pub status: AttendanceStatus,
     pub can_submit: bool,
     pub detail: &'static str,
+    pub service_orders: Vec<ServiceOrderCard>,
 }
 
 impl AttendanceView {
@@ -118,6 +178,7 @@ impl AttendanceView {
         relay_configured: bool,
         operator_configured: bool,
         status: AttendanceStatus,
+        service_orders: Vec<ServiceOrderCard>,
     ) -> Self {
         let service_state = if entitlement == EntitlementState::Blocked {
             AttendanceServiceState::EntitlementBlocked
@@ -159,6 +220,7 @@ impl AttendanceView {
             status,
             can_submit,
             detail,
+            service_orders,
         }
     }
 }
@@ -204,20 +266,32 @@ pub fn build_draft(form: &AttendanceForm) -> Result<OperationDraft, ClientError>
         }
         AttendanceAction::AdvanceOrder => {
             let order = required_ref(&form.order_ref, "order_ref")?;
+            let expected_version = parse_version(&form.order_version)?;
             (
                 OperationKind::FuneralServiceOrderAdvance,
                 order.to_owned(),
-                format!("cl02-advance-{order}"),
-                json!({"status": "in_progress"}),
+                format!("cl03-advance-{order}-{expected_version}"),
+                json!({"status": "in_progress", "expected_version": expected_version}),
+            )
+        }
+        AttendanceAction::PauseOrder => {
+            let order = required_ref(&form.order_ref, "order_ref")?;
+            let expected_version = parse_version(&form.order_version)?;
+            (
+                OperationKind::FuneralServiceOrderPause,
+                order.to_owned(),
+                format!("cl03-pause-{order}-{expected_version}"),
+                json!({"status": "paused", "expected_version": expected_version}),
             )
         }
         AttendanceAction::CompleteOrder => {
             let order = required_ref(&form.order_ref, "order_ref")?;
+            let expected_version = parse_version(&form.order_version)?;
             (
                 OperationKind::FuneralServiceOrderComplete,
                 order.to_owned(),
-                format!("cl02-complete-{order}"),
-                json!({"status": "completed"}),
+                format!("cl03-complete-{order}-{expected_version}"),
+                json!({"status": "completed", "expected_version": expected_version}),
             )
         }
     };
@@ -229,6 +303,17 @@ pub fn build_draft(form: &AttendanceForm) -> Result<OperationDraft, ClientError>
     };
     validate_draft(&draft)?;
     Ok(draft)
+}
+
+fn parse_version(value: &str) -> Result<u64, ClientError> {
+    let value = value.trim();
+    let version = value
+        .parse::<u64>()
+        .map_err(|_| ClientError::InvalidPayload("expected_version invalido"))?;
+    if version > i64::MAX as u64 {
+        return Err(ClientError::InvalidPayload("expected_version invalido"));
+    }
+    Ok(version)
 }
 
 pub fn required_ref<'a>(value: &'a str, field: &'static str) -> Result<&'a str, ClientError> {
@@ -250,6 +335,70 @@ pub fn queued_status(operation: &QueuedOperation) -> AttendanceStatus {
     AttendanceStatus::Queued {
         operation_id: operation.operation_id.clone(),
         seq: operation.seq,
+    }
+}
+
+pub fn service_order_cards(queue: &ClientQueue) -> Vec<ServiceOrderCard> {
+    let mut cards: Vec<ServiceOrderCard> = Vec::new();
+    for operation in queue.operations().iter().filter(|operation| {
+        matches!(
+            operation.kind,
+            OperationKind::FuneralServiceOrderAdvance
+                | OperationKind::FuneralServiceOrderPause
+                | OperationKind::FuneralServiceOrderComplete
+        )
+    }) {
+        let Some(status) = operation
+            .payload
+            .get("status")
+            .and_then(|value| value.as_str())
+            .and_then(parse_order_status)
+        else {
+            continue;
+        };
+        let version = operation
+            .payload
+            .get("expected_version")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0)
+            .saturating_add(1);
+        let sync_state = match operation.status {
+            OperationStatus::Pending => ServiceOrderSyncState::Queued,
+            OperationStatus::Synced => ServiceOrderSyncState::Done,
+            OperationStatus::Failed => ServiceOrderSyncState::Error,
+            OperationStatus::Conflict => ServiceOrderSyncState::Conflict,
+        };
+        let card = ServiceOrderCard {
+            order_id: operation.entity_id.clone(),
+            status,
+            version,
+            sync_state,
+            operation_id: operation.operation_id.clone(),
+            seq: operation.seq,
+            error_code: operation.last_error.clone(),
+        };
+        if let Some(previous) = cards
+            .iter_mut()
+            .find(|previous| previous.order_id == card.order_id)
+        {
+            if card.seq > previous.seq {
+                *previous = card;
+            }
+        } else {
+            cards.push(card);
+        }
+    }
+    cards.sort_by(|left, right| left.order_id.cmp(&right.order_id));
+    cards
+}
+
+fn parse_order_status(value: &str) -> Option<ServiceOrderStatus> {
+    match value {
+        "open" => Some(ServiceOrderStatus::Open),
+        "in_progress" => Some(ServiceOrderStatus::InProgress),
+        "paused" => Some(ServiceOrderStatus::Paused),
+        "completed" => Some(ServiceOrderStatus::Completed),
+        _ => None,
     }
 }
 
@@ -306,6 +455,7 @@ mod tests {
             false,
             true,
             AttendanceStatus::Ready,
+            Vec::new(),
         );
         assert_eq!(
             view.service_state,
@@ -323,8 +473,125 @@ mod tests {
                 false,
                 true,
                 AttendanceStatus::Ready,
+                Vec::new(),
             );
             assert!(view.can_submit);
         }
+    }
+
+    #[test]
+    fn order_mutations_carry_version_and_distinct_idempotency_keys() {
+        let mut form = AttendanceForm {
+            order_ref: "order-1".to_owned(),
+            order_version: "3".to_owned(),
+            action: AttendanceAction::AdvanceOrder,
+            ..AttendanceForm::default()
+        };
+        let advance = build_draft(&form).expect("advance");
+        assert_eq!(advance.idempotency_key, "cl03-advance-order-1-3");
+        assert_eq!(advance.payload["expected_version"], 3);
+
+        form.action = AttendanceAction::PauseOrder;
+        form.order_version = "4".to_owned();
+        let pause = build_draft(&form).expect("pause");
+        assert_eq!(pause.kind, OperationKind::FuneralServiceOrderPause);
+        assert_eq!(pause.idempotency_key, "cl03-pause-order-1-4");
+        assert_ne!(advance.idempotency_key, pause.idempotency_key);
+
+        form.action = AttendanceAction::CompleteOrder;
+        form.order_version = "5".to_owned();
+        let complete = build_draft(&form).expect("complete");
+        assert_eq!(complete.payload["expected_version"], 5);
+        assert_eq!(complete.payload["status"], "completed");
+    }
+
+    #[test]
+    fn service_order_cards_rebuild_from_persisted_queue_and_preserve_conflict() {
+        let mut queue = ClientQueue::new("tenant-a", "node-1").expect("queue");
+        let first = queue
+            .enqueue(
+                "operator-1",
+                OperationDraft {
+                    kind: OperationKind::FuneralServiceOrderAdvance,
+                    entity_id: "order-1".to_owned(),
+                    idempotency_key: "cl03-advance-order-1-0".to_owned(),
+                    payload: json!({"status": "in_progress", "expected_version": 0}),
+                },
+                10,
+            )
+            .expect("advance");
+        let second = queue
+            .enqueue(
+                "operator-1",
+                OperationDraft {
+                    kind: OperationKind::FuneralServiceOrderPause,
+                    entity_id: "order-1".to_owned(),
+                    idempotency_key: "cl03-pause-order-1-1".to_owned(),
+                    payload: json!({"status": "paused", "expected_version": 1}),
+                },
+                11,
+            )
+            .expect("pause");
+        let cards = service_order_cards(&queue);
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].status, ServiceOrderStatus::Paused);
+        assert_eq!(cards[0].version, 2);
+        assert_eq!(cards[0].sync_state, ServiceOrderSyncState::Queued);
+
+        queue
+            .reconcile(
+                &first.operation.operation_id,
+                crate::ReconciliationOutcome::Applied { server_cursor: 1 },
+                12,
+            )
+            .expect("advance synced");
+        queue
+            .reconcile(
+                &second.operation.operation_id,
+                crate::ReconciliationOutcome::Conflict {
+                    code: "CONFLICT_UNREVIEWED".to_owned(),
+                },
+                13,
+            )
+            .expect("pause conflict");
+        let cards = service_order_cards(&queue);
+        assert_eq!(cards[0].sync_state, ServiceOrderSyncState::Conflict);
+        assert_eq!(
+            cards[0].error_code.as_deref(),
+            Some("conflict:CONFLICT_UNREVIEWED")
+        );
+    }
+
+    #[test]
+    fn service_order_projection_survives_queue_reopen() {
+        let path =
+            std::env::temp_dir().join(format!("amparius-client-cl03-{}.json", crate::unix_now()));
+        {
+            let mut queue = ClientQueue::open(&path, "tenant-a", "node-1").expect("open");
+            queue
+                .set_connectivity(ConnectivityState::Contingency)
+                .expect("contingency");
+            queue
+                .enqueue(
+                    "operator-1",
+                    OperationDraft {
+                        kind: OperationKind::FuneralServiceOrderComplete,
+                        entity_id: "order-2".to_owned(),
+                        idempotency_key: "cl03-complete-order-2-4".to_owned(),
+                        payload: json!({"status": "completed", "expected_version": 4}),
+                    },
+                    10,
+                )
+                .expect("complete");
+        }
+        let queue = ClientQueue::open(&path, "tenant-a", "node-1").expect("reopen");
+        let cards = service_order_cards(&queue);
+        assert_eq!(queue.connectivity(), ConnectivityState::Contingency);
+        assert_eq!(cards[0].order_id, "order-2");
+        assert_eq!(cards[0].version, 5);
+        assert_eq!(cards[0].sync_state, ServiceOrderSyncState::Queued);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("tmp"));
+        let _ = std::fs::remove_file(path.with_extension("bak"));
     }
 }

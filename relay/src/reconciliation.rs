@@ -35,6 +35,7 @@ pub fn domain_for(kind: OperationKind) -> ReconciliationDomain {
         | OperationKind::CashClose => ReconciliationDomain::Money,
         OperationKind::FuneralJourneyCreate
         | OperationKind::FuneralServiceOrderAdvance
+        | OperationKind::FuneralServiceOrderPause
         | OperationKind::FuneralServiceOrderComplete => ReconciliationDomain::Funeral,
     }
 }

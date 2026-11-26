@@ -23,6 +23,7 @@ pub enum OperationKind {
     ContractCreate,
     FuneralJourneyCreate,
     FuneralServiceOrderAdvance,
+    FuneralServiceOrderPause,
     FuneralServiceOrderComplete,
     CashOpen,
     CashMovement,
@@ -37,6 +38,7 @@ impl OperationKind {
             Self::ContractCreate => "contract_create",
             Self::FuneralJourneyCreate => "funeral_journey_create",
             Self::FuneralServiceOrderAdvance => "funeral_service_order_advance",
+            Self::FuneralServiceOrderPause => "funeral_service_order_pause",
             Self::FuneralServiceOrderComplete => "funeral_service_order_complete",
             Self::CashOpen => "cash_open",
             Self::CashMovement => "cash_movement",
@@ -243,12 +245,21 @@ pub fn validate_draft(draft: &OperationDraft) -> Result<(), QueueError> {
             if object.get("status").and_then(Value::as_str) != Some("in_progress") {
                 return Err(QueueError::InvalidPayload("status de avancoo invalido"));
             }
+            validate_expected_version(object)?;
+        }
+        OperationKind::FuneralServiceOrderPause => {
+            validate_opaque_field(object, "status")?;
+            if object.get("status").and_then(Value::as_str) != Some("paused") {
+                return Err(QueueError::InvalidPayload("status de pausa invalido"));
+            }
+            validate_expected_version(object)?;
         }
         OperationKind::FuneralServiceOrderComplete => {
             validate_opaque_field(object, "status")?;
             if object.get("status").and_then(Value::as_str) != Some("completed") {
                 return Err(QueueError::InvalidPayload("status de conclusao invalido"));
             }
+            validate_expected_version(object)?;
         }
         OperationKind::CashOpen => {
             require_cents(object, "opening_amount_cents", 0)?;
@@ -291,6 +302,19 @@ pub fn validate_draft(draft: &OperationDraft) -> Result<(), QueueError> {
         .map_err(|_| QueueError::InvalidPayload("payload nao serializavel"))?;
     if encoded.len() > MAX_PAYLOAD_BYTES {
         return Err(QueueError::PayloadTooLarge);
+    }
+    Ok(())
+}
+
+fn validate_expected_version(object: &Map<String, Value>) -> Result<(), QueueError> {
+    let Some(version) = object.get("expected_version") else {
+        return Ok(());
+    };
+    let version = version
+        .as_u64()
+        .ok_or(QueueError::InvalidPayload("expected_version invalido"))?;
+    if version > i64::MAX as u64 {
+        return Err(QueueError::InvalidPayload("expected_version invalido"));
     }
     Ok(())
 }

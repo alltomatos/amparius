@@ -17,6 +17,7 @@ use crate::transport::{
 use crate::ui::attendance::{
     AttendanceAction, AttendanceForm, AttendanceServiceState, AttendanceStatus, AttendanceView,
     EntitlementState, SCREEN_ID as ATTENDANCE_SCREEN_ID, build_draft, queued_status,
+    service_order_cards,
 };
 use crate::ui::day_panel::{
     Notice, PanelContext, PanelError, PanelPhase, SCREEN_ID, Severity, SyncSummary, SyncView,
@@ -300,6 +301,7 @@ impl ClientApp {
                 },
                 can_submit: false,
                 detail: "Corrija a fila local antes de iniciar o atendimento.",
+                service_orders: Vec::new(),
             };
         }
         let (connectivity, operator_configured) = self
@@ -316,6 +318,10 @@ impl ClientApp {
             self.config.relay.is_some(),
             operator_configured,
             self.attendance_status.clone(),
+            self.queue
+                .as_ref()
+                .map(|queue| service_order_cards(&lock(queue)))
+                .unwrap_or_default(),
         )
     }
 
@@ -350,6 +356,53 @@ impl ClientApp {
             };
             return;
         };
+        if !matches!(action, AttendanceAction::CreateJourney) {
+            let known_order = view
+                .service_orders
+                .iter()
+                .find(|order| order.order_id == self.attendance_form.order_ref.trim());
+            if let Some(order) = known_order {
+                match order.sync_state {
+                    crate::ui::attendance::ServiceOrderSyncState::Queued => {
+                        self.attendance_status = AttendanceStatus::Error {
+                            code: "ORDER_MUTATION_QUEUED".to_owned(),
+                            message: "A ordem já tem uma mutação aguardando sincronização."
+                                .to_owned(),
+                        };
+                        return;
+                    }
+                    crate::ui::attendance::ServiceOrderSyncState::Conflict => {
+                        self.attendance_status = AttendanceStatus::Conflict {
+                            operation_id: order.operation_id.clone(),
+                            code: order
+                                .error_code
+                                .clone()
+                                .unwrap_or_else(|| "CONFLICT_UNREVIEWED".to_owned()),
+                        };
+                        return;
+                    }
+                    crate::ui::attendance::ServiceOrderSyncState::Error => {
+                        self.attendance_status = AttendanceStatus::Error {
+                            code: "ORDER_MUTATION_ERROR".to_owned(),
+                            message:
+                                "A mutação anterior falhou e exige revisão antes de nova alteração."
+                                    .to_owned(),
+                        };
+                        return;
+                    }
+                    crate::ui::attendance::ServiceOrderSyncState::Done => {}
+                }
+                let expected = order.version.saturating_sub(1).to_string();
+                if self.attendance_form.order_version.trim() != expected {
+                    self.attendance_status = AttendanceStatus::Error {
+                        code: "ORDER_VERSION_STALE".to_owned(),
+                        message: "A versão local da ordem mudou; selecione a ordem novamente."
+                            .to_owned(),
+                    };
+                    return;
+                }
+            }
+        }
         let draft = match build_draft(&self.attendance_form) {
             Ok(draft) => draft,
             Err(error) => {
@@ -365,7 +418,11 @@ impl ClientApp {
             Ok(result) => {
                 self.attendance_status = queued_status(&result.operation);
                 info!(
-                    screen = ATTENDANCE_SCREEN_ID,
+                    screen = if matches!(action, AttendanceAction::CreateJourney) {
+                        ATTENDANCE_SCREEN_ID
+                    } else {
+                        crate::ui::attendance::SERVICE_ORDER_SCREEN_ID
+                    },
                     operation_kind = result.operation.kind.as_str(),
                     seq = result.operation.seq,
                     replayed = result.replayed,
@@ -422,6 +479,9 @@ impl eframe::App for ClientApp {
             }
             if actions.advance_order {
                 self.submit_attendance(AttendanceAction::AdvanceOrder);
+            }
+            if actions.pause_order {
+                self.submit_attendance(AttendanceAction::PauseOrder);
             }
             if actions.complete_order {
                 self.submit_attendance(AttendanceAction::CompleteOrder);

@@ -1,6 +1,6 @@
 # Contrato RELAY-OPERATIONS v1
 
-Escopo: fila offline de contrato e caixa do relay (RELAY-01B), log monotônico por
+Escopo: fila offline de contrato, funeral e caixa do relay (RELAY-01B), log monotônico por
 dispositivo e status visível. Este contrato não define transmissão, sincronização,
 reconciliação, PostgreSQL local nem emissão fiscal.
 
@@ -48,6 +48,10 @@ enxerga operações, sequência ou status de outro.
 | `cash_open` | `opening_amount_cents` inteiro | valor `>= 0` |
 | `cash_movement` | `direction` (`in`/`out`), `amount_cents` inteiro, `reason` texto | valor `> 0`; motivo não vazio e até 200 caracteres |
 | `cash_close` | `counted_amount_cents` inteiro; `expected_amount_cents` opcional | valores `>= 0` |
+| `funeral_journey_create` | `service_order` e `schedule` | referências opacas; não contém PII |
+| `funeral_service_order_advance` | `status: in_progress`; `expected_version` | versão-base opcional para compatibilidade com CL-02 |
+| `funeral_service_order_pause` | `status: paused`; `expected_version` | mutação operacional explícita; autoridade final é o serviço funeral |
+| `funeral_service_order_complete` | `status: completed`; `expected_version` | versão-base opcional para compatibilidade com CL-02 |
 | `fiscal_emission` | `document_ref` opaco | não contém XML, tributos ou PII; a transmissão ocorre no sincronizador |
 
 Todo dinheiro é inteiro em centavos. Float, valor negativo fora da regra, moeda

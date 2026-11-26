@@ -92,6 +92,21 @@ apresentados
 **Então** cada um possui rótulo textual acessível e não contém PII, token ou
 payload de atendimento.
 
+### CL-A07 — execução de OS sem duplicação
+
+**Dado** uma OS conhecida localmente e uma versão-base
+**Quando** o operador avança, pausa ou conclui em offline/contingência
+**Então** a tela lista a OS com `expected_version`, `seq` e estado `queued`, usa
+uma chave de idempotência diferente por mutação e a reabertura da fila preserva
+a projeção.
+
+### CL-A08 — conflito de OS preservado
+
+**Dado** uma mutação de OS que retorna conflito
+**Quando** a reconciliação marca a operação como `conflict`
+**Então** a tela mostra código técnico e revisão necessária, bloqueia nova
+mutação para a OS e não aplica last-write-wins.
+
 ## Evidência mínima do PR
 
 O PR deve anexar comandos reproduzíveis e saída para testes de contrato, acessibilidade/responsividade e fluxo offline. Sem evidência, a fatia permanece em andamento.

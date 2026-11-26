@@ -306,3 +306,54 @@ async fn status_and_operations_are_tenant_bound() {
 
     let _ = std::fs::remove_file(path);
 }
+
+#[tokio::test]
+async fn funeral_order_pause_is_versioned_and_idempotent() {
+    let path = temp_path();
+    let app = app(&path, "tenant-a", "operator-1");
+    let request = operation_request(
+        "funeral_service_order_pause",
+        "order-1",
+        "cl03-pause-order-1-1",
+        json!({"status": "paused", "expected_version": 1}),
+    );
+    let created = app.clone().oneshot(request).await.expect("create pause");
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let body = body_json(created).await;
+    assert_eq!(body["operation"]["seq"], 1);
+    assert_eq!(body["operation"]["kind"], "funeral_service_order_pause");
+    assert_eq!(body["operation"]["payload"]["expected_version"], 1);
+
+    let replay = app
+        .clone()
+        .oneshot(operation_request(
+            "funeral_service_order_pause",
+            "order-1",
+            "cl03-pause-order-1-1",
+            json!({"status": "paused", "expected_version": 1}),
+        ))
+        .await
+        .expect("replay pause");
+    assert_eq!(replay.status(), StatusCode::OK);
+    assert!(
+        body_json(replay).await["replayed"]
+            .as_bool()
+            .unwrap_or(false)
+    );
+
+    let conflict = app
+        .oneshot(operation_request(
+            "funeral_service_order_pause",
+            "order-1",
+            "cl03-pause-order-1-1",
+            json!({"status": "paused", "expected_version": 2}),
+        ))
+        .await
+        .expect("conflicting pause");
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        body_json(conflict).await["error"]["code"],
+        "idempotency_conflict"
+    );
+    let _ = std::fs::remove_file(path);
+}

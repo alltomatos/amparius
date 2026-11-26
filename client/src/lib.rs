@@ -35,6 +35,7 @@ pub enum OperationKind {
     ContractCreate,
     FuneralJourneyCreate,
     FuneralServiceOrderAdvance,
+    FuneralServiceOrderPause,
     FuneralServiceOrderComplete,
     CashOpen,
     CashMovement,
@@ -49,6 +50,7 @@ impl OperationKind {
             Self::ContractCreate => "contract_create",
             Self::FuneralJourneyCreate => "funeral_journey_create",
             Self::FuneralServiceOrderAdvance => "funeral_service_order_advance",
+            Self::FuneralServiceOrderPause => "funeral_service_order_pause",
             Self::FuneralServiceOrderComplete => "funeral_service_order_complete",
             Self::CashOpen => "cash_open",
             Self::CashMovement => "cash_movement",
@@ -65,6 +67,7 @@ impl OperationKind {
             }
             Self::FuneralJourneyCreate
             | Self::FuneralServiceOrderAdvance
+            | Self::FuneralServiceOrderPause
             | Self::FuneralServiceOrderComplete => OperationDomain::Funeral,
             Self::FiscalEmission => OperationDomain::Fiscal,
         }
@@ -175,6 +178,7 @@ pub struct ReconciliationResult {
 #[serde(rename_all = "snake_case")]
 pub enum ReviewTaskKind {
     SyncFailure,
+    FuneralConflict,
     MasterConflict,
     MoneyConflict,
     FiscalConflict,
@@ -680,7 +684,7 @@ impl ClientQueue {
                     match domain {
                         OperationDomain::Master => ReviewTaskKind::MasterConflict,
                         OperationDomain::Money => ReviewTaskKind::MoneyConflict,
-                        OperationDomain::Funeral => ReviewTaskKind::SyncFailure,
+                        OperationDomain::Funeral => ReviewTaskKind::FuneralConflict,
                         OperationDomain::Fiscal => ReviewTaskKind::FiscalConflict,
                     },
                     &code,
@@ -944,12 +948,21 @@ pub fn validate_draft(draft: &OperationDraft) -> Result<(), ClientError> {
             if object.get("status").and_then(Value::as_str) != Some("in_progress") {
                 return Err(ClientError::InvalidPayload("status de avancoo invalido"));
             }
+            validate_expected_version(object)?;
+        }
+        OperationKind::FuneralServiceOrderPause => {
+            validate_opaque_field(object, "status")?;
+            if object.get("status").and_then(Value::as_str) != Some("paused") {
+                return Err(ClientError::InvalidPayload("status de pausa invalido"));
+            }
+            validate_expected_version(object)?;
         }
         OperationKind::FuneralServiceOrderComplete => {
             validate_opaque_field(object, "status")?;
             if object.get("status").and_then(Value::as_str) != Some("completed") {
                 return Err(ClientError::InvalidPayload("status de conclusao invalido"));
             }
+            validate_expected_version(object)?;
         }
         OperationKind::CashOpen => require_cents(object, "opening_amount_cents", 0)?,
         OperationKind::CashMovement => {
@@ -988,6 +1001,17 @@ pub fn validate_draft(draft: &OperationDraft) -> Result<(), ClientError> {
         .map_err(|_| ClientError::InvalidPayload("payload nao serializavel"))?;
     if encoded.len() > MAX_PAYLOAD_BYTES {
         return Err(ClientError::PayloadTooLarge);
+    }
+    Ok(())
+}
+
+fn validate_expected_version(object: &Map<String, Value>) -> Result<(), ClientError> {
+    let version = object
+        .get("expected_version")
+        .and_then(Value::as_u64)
+        .ok_or(ClientError::InvalidPayload("expected_version invalido"))?;
+    if version > i64::MAX as u64 {
+        return Err(ClientError::InvalidPayload("expected_version invalido"));
     }
     Ok(())
 }

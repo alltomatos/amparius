@@ -28,7 +28,7 @@ hml.amparius.com {
 
 	@preview {
 		method GET HEAD
-		path / /assets/brand/amparius-logo.svg /staging.css /client-demo.js /painel/ /painel/styles.css /painel/helpers.js /painel/app.js /painel/panel-demo.js
+		path / /assets/brand/amparius-logo.svg /staging.css /client-demo.js /styles.css
 	}
 	handle @preview {
 		root * /srv/amparius-preview

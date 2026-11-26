@@ -64,5 +64,21 @@ test("preview package emits a manager tree with root-relative branding", () => {
   const script = readSource("../../../deploy/staging/prepare-preview.sh");
   assert.ok(script.includes("$destination/manager/index.html"));
   assert.ok(script.includes("./assets/brand/amparius-logo.svg"));
-  assert.ok(script.includes("https://hml.amparius.com/"));
+});
+test("web client has no pointer to the SaaS panel", () => {
+  const markup = readSource("../../staging/index.html");
+  assert.ok(!markup.includes("/painel/"), "web client must not link to /painel/");
+  assert.ok(!markup.includes("manager.amparius.com"), "web client must not reference the manager host");
+  assert.ok(!markup.includes("Abrir painel SaaS"), "web client must not advertise the SaaS panel");
+});
+
+test("staging package keeps the surfaces separate", () => {
+  const caddy = readSource("../../../deploy/staging/Caddyfile");
+  const hml = caddy.split("hml.amparius.com {")[1]?.split("\n}")[0];
+  assert.ok(hml, "Missing hml.amparius.com site block");
+  assert.ok(!hml.includes("/painel/"), "hml must not serve the admin panel");
+  assert.ok(hml.includes("/styles.css"), "hml must serve the shared stylesheet");
+  const script = readSource("../../../deploy/staging/prepare-preview.sh");
+  assert.ok(!script.includes("$destination/painel"), "package must not emit the panel under /painel/");
+  assert.ok(script.includes("$destination/manager/index.html"));
 });

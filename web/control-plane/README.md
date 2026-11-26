@@ -34,7 +34,7 @@ node --test web/control-plane/tests/contract.test.mjs
 ```
 ## Prévia de homologação
 
-A [prévia sintética](https://hml.amparius.com/painel/) usa esta interface.
+A [prévia sintética](https://manager.amparius.com/) usa esta interface.
 Ela carrega o cenário de demonstração antes de `app.js` e mantém as alterações
 e a auditoria somente em memória. Consulte o
 [guia de staging](../../docs/userguide/operacao-staging.md) para preparar

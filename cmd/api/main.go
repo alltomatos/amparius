@@ -153,6 +153,7 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 			return nil, func() {}, fmt.Errorf("criar repositório de catálogo: %w", err)
 		}
 		catalogHandler = catalog.NewDevelopmentHTTPHandler(catalogRepository)
+		authenticatedRoutes = append(authenticatedRoutes, catalog.AuthenticatedRoutes(catalogRepository)...)
 
 		financeRepository, err := finance.NewRepository(database)
 		if err != nil {
@@ -239,6 +240,13 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 				httpserver.AuthenticatedRoute{Pattern: "PATCH /v1/companies/{companyId}/entitlements/{module}", Permission: platformauth.PermissionEntitlementWrite, Handler: http.HandlerFunc(controlHandler.PatchEntitlement)},
 			)
 		}
+		catalogRepository, err := catalog.NewRepository(database)
+		if err != nil {
+			closeAll()
+			return nil, func() {}, fmt.Errorf("criar repositório de catálogo: %w", err)
+		}
+		authenticatedRoutes = append(authenticatedRoutes, catalog.AuthenticatedRoutes(catalogRepository)...)
+
 		partyHandler := party.NewProductionHTTPHandler(partyRepository)
 		// A política aprovada por tenant será injetada quando houver um provedor.
 		var policyProvider audit.PolicyProvider

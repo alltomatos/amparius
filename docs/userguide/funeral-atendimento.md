@@ -10,7 +10,9 @@ Esta jornada é a sequência mínima do atendimento:
    Ele ainda responde `503` até o provedor OIDC/MFA ser conectado; em ambiente
    privado, teste só com dados sintéticos.
 3. Consulte ou cadastre o falecido e vincule o familiar. Veja [Cadastro pela API](#cadastro-de-falecido-e-vínculo-familiar-pela-api).
-4. Escolha o item do catálogo e abra o contrato. O contrato congela os itens e
+4. Consulte a [oferta de serviço](#consulta-da-oferta-de-serviço). A abertura
+   do contrato autenticado com essa oferta segue na [#76](https://github.com/alltomatos/amparius/issues/76).
+   No fluxo dev, o contrato congela os itens e
    gera o plano de parcelas.
 5. Ative o contrato. Só contratos `active` podem abrir OS.
 6. Abra a OS:
@@ -57,6 +59,25 @@ configurado e sem política disponível, os dois POSTs retornam
 `503 PRIVACY_POLICY_UNAVAILABLE`. O fluxo do mockup Loja 02 é simulado.
 Veja o [contrato HTTP](../contracts/party-deceased-family-link-v1.md) e
 [auditoria e privacidade](auditoria-lgpd.md#falecido-e-vínculo-familiar).
+
+## Consulta da oferta de serviço
+
+Em `GET /v1/catalog/offers`, informe os IDs `item_id` e `list_id` e a
+data civil `on` no formato `AAAA-MM-DD`. A tabela precisa ter iniciado.
+O preço vale do início ao fim, incluindo as duas datas. Sem data final,
+o preço tem prazo aberto. O valor vem em centavos. Em integrações, use
+um parser JSON que preserve inteiros de 64 bits.
+
+Operadores e auditores podem consultar. Owner, admin e manager também
+podem cadastrar serviço, tabela e preço. A sessão exige empresa válida
+e MFA. Se receber `404 OFFER_NOT_FOUND`, confira IDs, escopo, atividade
+do serviço e vigência. Se receber `409 OFFER_AMBIGUOUS`, peça ao responsável
+pelo catálogo que revise os preços vigentes na data. Sem OIDC/MFA no
+servidor, a API retorna `503 AUTHENTICATION_UNAVAILABLE`.
+
+A Loja 02 simula a seleção. Descoberta e seleção no cliente operacional
+seguem na [#75](https://github.com/alltomatos/amparius/issues/75).
+Veja o [contrato HTTP](../contracts/catalog-operational-v1.md).
 
 ## Agenda de velório e sepultamento
 

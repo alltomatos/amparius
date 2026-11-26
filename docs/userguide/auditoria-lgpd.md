@@ -15,6 +15,19 @@ política aprovada pelo responsável de privacidade/DPO; o sistema não escolhe
 prazo por aproximação. Expurgo, anonimização e atendimento ao titular exigem
 fluxo operacional próprio e não são executados automaticamente por esta fatia.
 
+## Falecido e vínculo familiar
+
+Nas duas criações da API autenticada, a política do tenant fornece
+finalidade, base legal e retenção. O cadastro de falecido e sua trilha
+são gravados na mesma transação. Para o vínculo familiar, a API exige
+o UUID da evidência externa e grava vínculo, consentimento `granted`
+e auditoria em uma única transação. Se uma gravação falhar, toda a
+transação é desfeita. A verificação do artefato externo e a retirada do
+consentimento ficam fora da #73.
+
+A operação depende do provedor real de autenticação e da política
+aprovada pelo DPO. Veja o [ADR 0042](../adr/0042-falecido-vinculo-familiar-consentimento-v1.md).
+
 Em suporte, use o `X-Request-Id` e o `X-Trace-Id` para correlacionar logs sem
 solicitar dados pessoais. Métricas devem usar somente labels de baixa
 cardinalidade, como tenant, módulo, estado e resultado.

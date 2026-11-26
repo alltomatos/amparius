@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alltomatos/amparius/internal/platform/audit"
 	"github.com/alltomatos/amparius/internal/platform/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -27,7 +28,20 @@ var (
 	// ErrFamilyLinkRelationInvalid means the relation is not an active value of
 	// the party_family_relation domain in the database.
 	ErrFamilyLinkRelationInvalid = errors.New("relação familiar inválida")
+	// ErrFamilyLinkAlreadyExists means the relative is already linked to the
+	// same deceased in this tenant.
+	ErrFamilyLinkAlreadyExists = errors.New("familiar já vinculado a este falecido")
+	// ErrFamilyLinkEvidenceRequired means the caller did not supply the opaque
+	// consent evidence reference required by ADR 0042 before granting consent.
+	ErrFamilyLinkEvidenceRequired = errors.New("evidência de consentimento é obrigatória")
+	ErrFamilyLinkSelf             = errors.New("a pessoa falecida não pode ser vinculada a si mesma")
 )
+
+// policyPurposeFamilyLinkConsent identifies, for audit.PolicyProvider, the
+// DPO-approved policy that must exist before a family link can be created
+// (ADR 0042 §3/§4). It is a lookup key, not a legal basis or purpose code by
+// itself — those come only from the resolved audit.Policy.
+const policyPurposeFamilyLinkConsent = "party.family_link.register"
 
 // FamilyLinkCreate references an existing deceased and an existing natural
 // person. Neither record is created implicitly by this operation.
@@ -60,6 +74,33 @@ type FamilyLinkService interface {
 // CreateFamilyLink links an existing deceased to an existing natural person of
 // the same tenant with a relation validated against the database domain.
 func (r *Repository) CreateFamilyLink(ctx context.Context, input FamilyLinkCreate) (FamilyLink, error) {
+	return r.createFamilyLink(ctx, input, nil)
+}
+
+// CreateFamilyLinkWithConsent records the link, consent and audit in one transaction.
+func (r *Repository) CreateFamilyLinkWithConsent(ctx context.Context, input FamilyLinkCreate, evidenceRef uuid.UUID, provider audit.PolicyProvider) (FamilyLink, error) {
+	if evidenceRef == uuid.Nil {
+		return FamilyLink{}, ErrFamilyLinkEvidenceRequired
+	}
+	policy, err := audit.ResolvePolicy(ctx, provider, policyPurposeFamilyLinkConsent)
+	if err != nil {
+		return FamilyLink{}, err
+	}
+	return r.createFamilyLink(ctx, input, func(ctx context.Context, tx pgx.Tx) error {
+		_, err := audit.RecordConsentTx(ctx, tx, audit.Consent{
+			SubjectType:    "party.person",
+			SubjectID:      input.PersonID,
+			PurposeCode:    policy.PurposeCode,
+			LegalBasisCode: policy.LegalBasisCode,
+			Status:         "granted",
+			EvidenceRef:    evidenceRef.String(),
+			RetentionUntil: policy.RetentionUntil,
+		})
+		return err
+	})
+}
+
+func (r *Repository) createFamilyLink(ctx context.Context, input FamilyLinkCreate, recordConsent func(context.Context, pgx.Tx) error) (FamilyLink, error) {
 	tenantID, err := db.TenantFromContext(ctx)
 	if err != nil {
 		return FamilyLink{}, err
@@ -77,41 +118,64 @@ func (r *Repository) CreateFamilyLink(ctx context.Context, input FamilyLinkCreat
 
 	var result FamilyLink
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		valid, err := familyRelationExists(ctx, tx, relation)
-		if err != nil {
-			return err
+		var err error
+		result, err = createFamilyLinkTx(ctx, tx, tenantID, input, relation)
+		if err == nil && recordConsent != nil {
+			return recordConsent(ctx, tx)
 		}
-		if !valid {
-			return ErrFamilyLinkRelationInvalid
-		}
-		deceased, err := findDeceasedPersonForLink(ctx, tx, tenantID, input.DeceasedID)
-		if err != nil {
-			return err
-		}
-		relative, err := findPersonForLink(ctx, tx, tenantID, input.PersonID)
-		if err != nil {
-			return err
-		}
-
-		result.TenantID = tenantID
-		result.DeceasedID = input.DeceasedID
-		result.PersonID = input.PersonID
-		result.Relation = relation
-		result.Deceased = deceased
-		result.Person = relative
-		return tx.QueryRow(ctx, `
-			INSERT INTO party.family_link (tenant_id, deceased_id, person_id, relation)
-			VALUES ($1, $2, $3, $4)
-			RETURNING id`, tenantID, input.DeceasedID, input.PersonID, relation).Scan(&result.ID)
+		return err
 	})
-	switch {
-	case errors.Is(err, ErrFamilyLinkDeceasedNotFound),
-		errors.Is(err, ErrFamilyLinkPersonNotFound),
-		errors.Is(err, ErrFamilyLinkPersonNotApplicable),
-		errors.Is(err, ErrFamilyLinkRelationInvalid):
-		return FamilyLink{}, err
-	case err != nil:
+	if err != nil {
 		return FamilyLink{}, fmt.Errorf("criar vínculo familiar: %w", err)
+	}
+	return result, nil
+}
+
+func createFamilyLinkTx(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, input FamilyLinkCreate, relation string) (FamilyLink, error) {
+	valid, err := familyRelationExists(ctx, tx, relation)
+	if err != nil {
+		return FamilyLink{}, err
+	}
+	if !valid {
+		return FamilyLink{}, ErrFamilyLinkRelationInvalid
+	}
+	deceased, err := findDeceasedPersonForLink(ctx, tx, tenantID, input.DeceasedID)
+	if err != nil {
+		return FamilyLink{}, err
+	}
+	if deceased.ID == input.PersonID {
+		return FamilyLink{}, ErrFamilyLinkSelf
+	}
+	relative, err := findPersonForLink(ctx, tx, tenantID, input.PersonID)
+	if err != nil {
+		return FamilyLink{}, err
+	}
+
+	if err := lockPartyCreate(ctx, tx, "family_link", tenantID, input.DeceasedID); err != nil {
+		return FamilyLink{}, err
+	}
+	var exists bool
+	if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM party.family_link WHERE tenant_id = $1 AND deceased_id = $2 AND person_id = $3)",
+		tenantID, input.DeceasedID, input.PersonID).Scan(&exists); err != nil {
+		return FamilyLink{}, err
+	}
+	if exists {
+		return FamilyLink{}, ErrFamilyLinkAlreadyExists
+	}
+	result := FamilyLink{
+		TenantID:   tenantID,
+		DeceasedID: input.DeceasedID,
+		PersonID:   input.PersonID,
+		Relation:   relation,
+		Deceased:   deceased,
+		Person:     relative,
+	}
+	err = tx.QueryRow(ctx, `
+		INSERT INTO party.family_link (tenant_id, deceased_id, person_id, relation)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id`, tenantID, input.DeceasedID, input.PersonID, relation).Scan(&result.ID)
+	if err != nil {
+		return FamilyLink{}, err
 	}
 	return result, nil
 }

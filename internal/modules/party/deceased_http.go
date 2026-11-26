@@ -184,6 +184,8 @@ func writeDevelopmentDeceasedServiceError(w http.ResponseWriter, err error, crea
 		writeDevelopmentDeceasedError(w, http.StatusNotFound, "pessoa não encontrada neste tenant")
 	case errors.Is(err, ErrDeceasedPersonNotApplicable):
 		writeDevelopmentDeceasedError(w, http.StatusConflict, "pessoa jurídica não pode ser cadastrada como falecida")
+	case errors.Is(err, ErrDeceasedAlreadyExists):
+		writeDevelopmentDeceasedError(w, http.StatusConflict, ErrDeceasedAlreadyExists.Error())
 	case errors.Is(err, ErrDeceasedNotFound):
 		writeDevelopmentDeceasedError(w, http.StatusNotFound, "falecido não encontrado")
 	case errors.Is(err, db.ErrTenantRequired):

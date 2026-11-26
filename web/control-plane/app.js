@@ -5,7 +5,7 @@
   const escapeHtml = H.escapeHtml || ((v) => String(v ?? ""));
   const config = window.AMPARIUS_CONFIG || {};
   const apiBase = String(config.apiBase || "/").replace(/\/$/, "");
-  const state = { companies: [], companyCursor: null, companyHistory: [], selectedCompany: null, entitlements: [], entitlementCursor: null, entitlementHistory: [] };
+  const state = { companies: [], companyCursor: null, companyHistory: [], selectedCompany: null, entitlements: [], entitlementCursor: null, entitlementHistory: [], selectedEntitlement: null };
   const $ = (id) => document.getElementById(id);
 
   function setConnection(message, kind) {
@@ -55,8 +55,10 @@
       const used = Number(item.used || 0);
       const quota = Number(item.quota || 0);
       const percent = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
-      return `<article class="entitlement-card"><div class="card-row"><span class="card-title">${escapeHtml(item.moduleName || item.module)}</span><span class="license-status ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span></div><p class="muted">${escapeHtml(item.kind || "modulo")} - valido ate ${H.displayDate ? H.displayDate(item.validTo) : (item.validTo || "sem validade final")}</p><div class="meter" aria-label="Uso ${used} de ${quota || "sem quota"}"><span style="width:${percent}%"></span></div><p class="muted">Uso: ${used} / ${quota || "sem quota configurada"}</p></article>`;
+      const selected = state.selectedEntitlement && state.selectedEntitlement.module === item.module ? "selected" : "";
+      return `<button class="entitlement-card ${selected}" data-entitlement-module="${escapeHtml(item.module)}" aria-pressed="${selected === "selected"}"><div class="card-row"><span class="card-title">${escapeHtml(item.moduleName || item.module)}</span><span class="license-status ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span></div><p class="muted">${escapeHtml(item.kind || "modulo")} - valido ate ${H.displayDate ? H.displayDate(item.validTo) : (item.validTo || "sem validade final")}</p><div class="meter" aria-label="Uso ${used} de ${quota || "sem quota"}"><span style="width:${percent}%"></span></div><p class="muted">Uso: ${used} / ${quota || "sem quota configurada"}</p></button>`;
     }).join("");
+    document.querySelectorAll("[data-entitlement-module]").forEach((button) => button.addEventListener("click", () => selectEntitlement(button.dataset.entitlementModule)));
     if (!state.entitlements.length) showState("entitlements-state", "Nenhum modulo disponivel para esta empresa.", "empty");
   }
 
@@ -93,6 +95,8 @@
     state.entitlementHistory = [];
     state.entitlementCursor = null;
     state.entitlements = [];
+    state.selectedEntitlement = null;
+    renderEntitlementDetail();
     renderCompanies();
     showState("entitlements-state", "Carregando entitlements...");
     await loadEntitlements(id);
@@ -105,11 +109,33 @@
       state.entitlementCursor = payload.nextCursor || null;
       showState("entitlements-state", state.entitlements.length ? `${state.entitlements.length} modulo(s) encontrado(s).` : "Nenhum modulo disponivel para esta empresa.", state.entitlements.length ? "" : "empty");
       renderEntitlements();
+      renderEntitlementDetail();
       renderPagination("entitlements-pagination", state.entitlementCursor, state.entitlementHistory, (c) => loadEntitlements(id, c));
     } catch (error) {
       showState("entitlements-state", `${error.code || "ERRO"}: ${H.errorText ? H.errorText(error) : error.message}`, "error");
       setTrace(error);
     }
+  }
+
+  function selectEntitlement(module) {
+    state.selectedEntitlement = state.entitlements.find((item) => item.module === module) || null;
+    renderEntitlements();
+    renderEntitlementDetail();
+  }
+
+  function renderEntitlementDetail() {
+    const item = state.selectedEntitlement;
+    $("selected-entitlement").textContent = item ? (item.moduleName || item.module) : "Selecione um modulo";
+    if (!item) {
+      $("entitlement-detail").innerHTML = "";
+      showState("entitlement-detail-state", "Selecione um entitlement para ver o detalhe somente leitura.", "empty");
+      return;
+    }
+    const used = Number(item.used || 0);
+    const quota = Number(item.quota || 0);
+    const quotaText = item.quotaConfigured ? `${used} / ${quota}` : "sem quota configurada";
+    $("entitlement-detail").innerHTML = `<dl class="detail-list"><div><dt>Modulo canonico</dt><dd>${escapeHtml(item.module)}</dd></div><div><dt>Status/licenca</dt><dd>${escapeHtml(item.status)}</dd></div><div><dt>Tipo</dt><dd>${escapeHtml(item.kind || "nao informado")}</dd></div><div><dt>Valido de</dt><dd>${H.displayDate ? H.displayDate(item.validFrom) : (item.validFrom || "sem inicio")}</dd></div><div><dt>Valido ate</dt><dd>${H.displayDate ? H.displayDate(item.validTo) : (item.validTo || "sem validade final")}</dd></div><div><dt>Quota/uso</dt><dd>${escapeHtml(quotaText)}</dd></div><div><dt>Atualizado em</dt><dd>${H.displayDate ? H.displayDate(item.updatedAt) : (item.updatedAt || "nao informado")}</dd></div></dl><div class="detail-actions"><p class="muted">Concessao, revogacao e ajuste de quota nao estao disponiveis nesta fatia: nao ha contrato/endpoint de escrita exposto pelo control plane.</p><p class="muted">Auditoria do entitlement nao esta disponivel: nao ha endpoint GET /v1/entitlements/{id}/audit implementado.</p><button type="button" disabled aria-disabled="true">Conceder (indisponivel)</button><button type="button" disabled aria-disabled="true">Revogar (indisponivel)</button><button type="button" disabled aria-disabled="true">Ajustar quota (indisponivel)</button></div>`;
+    showState("entitlement-detail-state", "Detalhe somente leitura carregado a partir do contrato existente.", "");
   }
 
   function renderPagination(id, nextCursor, history, loader) {

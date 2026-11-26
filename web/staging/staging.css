@@ -12,6 +12,7 @@
 .demo-agenda li { display: flex; flex-wrap: wrap; gap: 8px; padding-block: 10px; border-bottom: 1px solid var(--line); }
 .demo-agenda time { font-variant-numeric: tabular-nums; }
 .demo-intake { margin-top: 8px; }
+#queue { min-width: 44px; min-height: 44px; }
 .demo-feedback { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
 .demo-feedback:empty { border: 0; padding: 0; }
 #operations { margin: 0; padding-left: 24px; }

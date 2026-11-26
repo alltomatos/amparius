@@ -1,6 +1,38 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createPanelDemo } from "../../staging/panel-demo.js";
+
+function readSource(path) {
+  return readFileSync(new URL(path, import.meta.url), "utf8");
+}
+
+function assertTouchTarget(styles, selector) {
+  const rule = styles.split(`${selector} {`)[1]?.split("}")[0];
+  assert.ok(rule, `Missing touch target rule for ${selector}`);
+  for (const dimension of ["width", "height"]) {
+    const pixels = rule.match(new RegExp(`min-${dimension}:\\s*(\\d+)px\\s*;`))?.[1];
+    assert.ok(Number(pixels) >= 44, `${selector} must have a minimum ${dimension} of 44px`);
+  }
+}
+
+test("staging confirmation button has a 44px minimum touch target", () => {
+  const markup = readSource("../../staging/index.html");
+  assert.match(markup, /<link rel="stylesheet" href="\/staging\.css">/);
+  assert.match(markup, /<button[^>]+id="queue"/);
+  assertTouchTarget(readSource("../../staging/staging.css"), "#queue");
+});
+
+test("control-plane license action buttons share a 44px minimum touch target", () => {
+  const markup = readSource("../app.js");
+  const actions = markup.split('<div class="detail-actions">')[1]?.split("</div>")[0];
+  assert.ok(actions, "Missing license actions");
+  assert.deepEqual(
+    [...actions.matchAll(/<button[^>]+data-action="([^"]+)"/g)].map((match) => match[1]),
+    ["grant", "revoke", "quota", "validity"],
+  );
+  assertTouchTarget(readSource("../styles.css"), ".detail-actions button[data-action]");
+});
 
 test("staging uses isolated fixtures with versioning and idempotency", async () => {
   const path = "/v1/companies/empresa-demo/entitlements/funeral";

@@ -93,7 +93,7 @@ func (s *Service) ListForCompany(ctx context.Context, companyID uuid.UUID, at ti
 		            AND used.valid_from <= $3::date
 		            AND (used.valid_to IS NULL OR used.valid_to >= $3::date)
 		       ), 0),
-		       a.id, a.valid_from, a.valid_to, a.version, a.updated_at
+		       a.id, a.valid_from, a.valid_to, COALESCE(a.version, 0), a.updated_at
 		  FROM entitlement.module m
 		  LEFT JOIN entitlement.license_pool lp
 		    ON lp.tenant_id = $1 AND lp.module_code = m.code

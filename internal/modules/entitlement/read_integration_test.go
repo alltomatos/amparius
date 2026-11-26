@@ -54,9 +54,10 @@ func TestListForCompanyScopesByTenantAndIncludesCoreModules(t *testing.T) {
 		}
 	})
 	from := time.Now().UTC().Truncate(24 * time.Hour)
-	if _, err := service.Activate(db.WithTenant(ctx, tenantA), uuid.New(), entitlement.ActivateInput{
+	assignment, err := service.Activate(db.WithTenant(ctx, tenantA), uuid.New(), entitlement.ActivateInput{
 		ModuleCode: entitlement.ModuleFuneral, CompanyID: companyA, Origin: entitlement.OriginAdmin, ValidFrom: &from,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	page, err := service.ListForCompany(db.WithTenant(ctx, tenantA), companyA, time.Now().UTC(), "", 100)
@@ -66,18 +67,59 @@ func TestListForCompanyScopesByTenantAndIncludesCoreModules(t *testing.T) {
 	if len(page.Items) == 0 {
 		t.Fatal("catálogo deveria incluir módulos core")
 	}
-	var foundFuneral bool
+	var foundFuneral, foundCore, foundUnlicensedOptional bool
 	for _, item := range page.Items {
 		if item.ModuleCode == entitlement.ModuleFuneral {
 			foundFuneral = true
-			if item.Status != entitlement.StatusActive || item.CompanyID != companyA {
+			if item.Status != entitlement.StatusActive || item.CompanyID != companyA || item.Version != assignment.Version {
 				t.Fatalf("entitlement da empresa A inesperado: %+v", item)
+			}
+		}
+		if item.ModuleCode == entitlement.ModuleFinance {
+			foundCore = true
+			if item.Status != entitlement.StatusActive || item.Version != 0 {
+				t.Fatalf("modulo core sem assignment deveria ser active/version=0: %+v", item)
+			}
+		}
+		if item.ModuleCode == entitlement.ModuleInventory {
+			foundUnlicensedOptional = true
+			if item.Status != entitlement.StatusInactive || item.Version != 0 {
+				t.Fatalf("modulo opcional sem assignment deveria ser inactive/version=0: %+v", item)
 			}
 		}
 	}
 	if !foundFuneral {
 		t.Fatal("funeral não apareceu na leitura")
 	}
+	if !foundCore {
+		t.Fatal("finance core sem assignment nao apareceu na leitura")
+	}
+	if !foundUnlicensedOptional {
+		t.Fatal("inventory opcional sem assignment nao apareceu na leitura")
+	}
+
+	core, err := service.GetForCompany(db.WithTenant(ctx, tenantA), companyA, entitlement.ModuleFinance, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("detalhe do core sem assignment nao deveria falhar: %v", err)
+	}
+	if core.Status != entitlement.StatusActive || core.Version != 0 {
+		t.Fatalf("detalhe do core sem assignment inesperado: %+v", core)
+	}
+	optional, err := service.GetForCompany(db.WithTenant(ctx, tenantA), companyA, entitlement.ModuleInventory, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("detalhe do opcional sem assignment nao deveria falhar: %v", err)
+	}
+	if optional.Status != entitlement.StatusInactive || optional.Version != 0 {
+		t.Fatalf("detalhe do opcional sem assignment inesperado: %+v", optional)
+	}
+	licensed, err := service.GetForCompany(db.WithTenant(ctx, tenantA), companyA, entitlement.ModuleFuneral, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("detalhe do modulo licenciado falhou: %v", err)
+	}
+	if licensed.Status != entitlement.StatusActive || licensed.Version != assignment.Version {
+		t.Fatalf("detalhe do modulo licenciado inesperado: %+v", licensed)
+	}
+
 	otherPage, err := service.ListForCompany(db.WithTenant(ctx, tenantB), companyB, time.Now().UTC(), "", 100)
 	if err != nil {
 		t.Fatal(err)

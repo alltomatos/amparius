@@ -264,3 +264,21 @@ serviço. Preserve os volumes do Caddy para reutilizar o estado do ACME.
   `preview-395c8ef/manager/index.html`.
 - O container anterior ficou parado como
   `amparius-staging-https-pre-395c8ef` para rollback.
+### 2026-11-26 · Navegação e cadastros de exemplo
+
+- O cliente web passou a servir o pacote 0f6a057
+  ([PR #70](https://github.com/alltomatos/amparius/pull/70)). SHA-256 de
+  index.html: 5ce26eaabc2dcec8902128b25ccef703fcd2bd1456fd7c41688b7523d767bc21.
+  HTML, JavaScript e CSS públicos coincidiram com o pacote e mantiveram a
+  política connect-src 'none'.
+- O navegador abriu Cadastros no domínio público e cadastrou uma PF de
+  exemplo. Os probes responderam 200 em hml.amparius.com e
+  hml.amparius.com.br. Em hml.amparius.com, /_dev/parties, /v1/context e
+  /painel/ responderam 404.
+- O diretório manager foi preservado byte a byte e respondeu 200 no domínio
+  administrativo. Seu caminho /client-demo.js respondeu 404. Somente o
+  container do edge foi substituído, com os mesmos volumes ACME e Caddyfile.
+- O rollback usa o container parado amparius-staging-https-pre-0f6a057,
+  montado com preview-0d22237 e Caddyfile.a0e0ed7. Para restaurar, pare e
+  renomeie o edge novo, devolva o nome amparius-staging-https ao anterior,
+  inicie-o e repita os probes e a verificação pública dos arquivos.

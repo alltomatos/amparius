@@ -117,7 +117,7 @@ func handleDevelopmentDeceasedGet(w http.ResponseWriter, r *http.Request, servic
 }
 
 func decodeDevelopmentDeceasedBody(w http.ResponseWriter, r *http.Request) (DeceasedCreate, error) {
-	trimmed, err := decodeDevelopmentJSONObject(w, r)
+	trimmed, err := decodeJSONObject(w, r)
 	if err != nil {
 		return DeceasedCreate{}, err
 	}

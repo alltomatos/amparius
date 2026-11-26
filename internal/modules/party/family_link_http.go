@@ -129,7 +129,7 @@ func handleDevelopmentFamilyLinkGet(w http.ResponseWriter, r *http.Request, serv
 }
 
 func decodeDevelopmentFamilyLinkBody(w http.ResponseWriter, r *http.Request) (FamilyLinkCreate, error) {
-	trimmed, err := decodeDevelopmentJSONObject(w, r)
+	trimmed, err := decodeJSONObject(w, r)
 	if err != nil {
 		return FamilyLinkCreate{}, err
 	}

@@ -215,9 +215,9 @@ func createItem(w http.ResponseWriter, r *http.Request, service DevelopmentServi
 	}
 
 	w.Header().Set("Location", "/_dev/catalog/items/"+created.ID.String())
-	writeDevelopmentCatalogJSON(w, http.StatusCreated, map[string]any{
+	writeCatalogJSON(w, http.StatusCreated, map[string]any{
 		"status": "ok",
-		"item":   developmentItemFromModel(created),
+		"item":   itemFromModel(created),
 	})
 }
 
@@ -235,9 +235,9 @@ func getItem(w http.ResponseWriter, r *http.Request, service DevelopmentService,
 		writeDevelopmentCatalogServiceError(w, err, "consultar item")
 		return
 	}
-	writeDevelopmentCatalogJSON(w, http.StatusOK, map[string]any{
+	writeCatalogJSON(w, http.StatusOK, map[string]any{
 		"status": "ok",
-		"item":   developmentItemFromModel(found),
+		"item":   itemFromModel(found),
 	})
 }
 
@@ -257,9 +257,9 @@ func listItems(w http.ResponseWriter, r *http.Request, service DevelopmentServic
 	}
 	response := make([]itemResponse, 0, len(items))
 	for _, item := range items {
-		response = append(response, developmentItemFromModel(item))
+		response = append(response, itemFromModel(item))
 	}
-	writeDevelopmentCatalogJSON(w, http.StatusOK, map[string]any{
+	writeCatalogJSON(w, http.StatusOK, map[string]any{
 		"status": "ok",
 		"items":  response,
 	})
@@ -281,9 +281,9 @@ func createPriceList(w http.ResponseWriter, r *http.Request, service Development
 		return
 	}
 	w.Header().Set("Location", "/_dev/catalog/price-lists/"+created.ID.String())
-	writeDevelopmentCatalogJSON(w, http.StatusCreated, map[string]any{
+	writeCatalogJSON(w, http.StatusCreated, map[string]any{
 		"status":     "ok",
-		"price_list": developmentPriceListFromModel(created),
+		"price_list": priceListFromModel(created),
 	})
 }
 
@@ -301,9 +301,9 @@ func getPriceList(w http.ResponseWriter, r *http.Request, service DevelopmentSer
 		writeDevelopmentCatalogServiceError(w, err, "consultar lista de preços")
 		return
 	}
-	writeDevelopmentCatalogJSON(w, http.StatusOK, map[string]any{
+	writeCatalogJSON(w, http.StatusOK, map[string]any{
 		"status":     "ok",
-		"price_list": developmentPriceListFromModel(found),
+		"price_list": priceListFromModel(found),
 	})
 }
 
@@ -323,9 +323,9 @@ func listPriceLists(w http.ResponseWriter, r *http.Request, service DevelopmentS
 	}
 	response := make([]priceListResponse, 0, len(lists))
 	for _, list := range lists {
-		response = append(response, developmentPriceListFromModel(list))
+		response = append(response, priceListFromModel(list))
 	}
-	writeDevelopmentCatalogJSON(w, http.StatusOK, map[string]any{
+	writeCatalogJSON(w, http.StatusOK, map[string]any{
 		"status":      "ok",
 		"price_lists": response,
 	})
@@ -347,9 +347,9 @@ func createPrice(w http.ResponseWriter, r *http.Request, service DevelopmentServ
 		return
 	}
 	w.Header().Set("Location", "/_dev/catalog/prices/"+created.ID.String())
-	writeDevelopmentCatalogJSON(w, http.StatusCreated, map[string]any{
+	writeCatalogJSON(w, http.StatusCreated, map[string]any{
 		"status": "ok",
-		"price":  developmentPriceFromModel(created),
+		"price":  priceFromModel(created),
 	})
 }
 
@@ -367,9 +367,9 @@ func getPrice(w http.ResponseWriter, r *http.Request, service DevelopmentService
 		writeDevelopmentCatalogServiceError(w, err, "consultar preço")
 		return
 	}
-	writeDevelopmentCatalogJSON(w, http.StatusOK, map[string]any{
+	writeCatalogJSON(w, http.StatusOK, map[string]any{
 		"status": "ok",
-		"price":  developmentPriceFromModel(found),
+		"price":  priceFromModel(found),
 	})
 }
 
@@ -389,9 +389,9 @@ func listPrices(w http.ResponseWriter, r *http.Request, service DevelopmentServi
 	}
 	response := make([]priceResponse, 0, len(prices))
 	for _, price := range prices {
-		response = append(response, developmentPriceFromModel(price))
+		response = append(response, priceFromModel(price))
 	}
-	writeDevelopmentCatalogJSON(w, http.StatusOK, map[string]any{
+	writeCatalogJSON(w, http.StatusOK, map[string]any{
 		"status": "ok",
 		"prices": response,
 	})
@@ -586,7 +586,7 @@ func parseDevelopmentID(w http.ResponseWriter, raw, resource string) (uuid.UUID,
 	return id, true
 }
 
-func developmentItemFromModel(model CatalogItem) itemResponse {
+func itemFromModel(model CatalogItem) itemResponse {
 	return itemResponse{
 		ID:     model.ID.String(),
 		Kind:   model.Kind,
@@ -596,7 +596,7 @@ func developmentItemFromModel(model CatalogItem) itemResponse {
 	}
 }
 
-func developmentPriceListFromModel(model PriceList) priceListResponse {
+func priceListFromModel(model PriceList) priceListResponse {
 	return priceListResponse{
 		ID:        model.ID.String(),
 		Name:      model.Name,
@@ -604,7 +604,7 @@ func developmentPriceListFromModel(model PriceList) priceListResponse {
 	}
 }
 
-func developmentPriceFromModel(model Price) priceResponse {
+func priceFromModel(model Price) priceResponse {
 	response := priceResponse{
 		ID:          model.ID.String(),
 		ItemID:      model.ItemID.String(),
@@ -676,10 +676,10 @@ func decodeDevelopmentJSONObject(w http.ResponseWriter, r *http.Request) ([]byte
 }
 
 func writeDevelopmentCatalogError(w http.ResponseWriter, status int, message string) {
-	writeDevelopmentCatalogJSON(w, status, map[string]string{"status": "error", "error": message})
+	writeCatalogJSON(w, status, map[string]string{"status": "error", "error": message})
 }
 
-func writeDevelopmentCatalogJSON(w http.ResponseWriter, status int, payload any) {
+func writeCatalogJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)

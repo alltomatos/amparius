@@ -22,7 +22,9 @@
     const headers = { Accept: "application/json", ...(config.accessToken ? { Authorization: `Bearer ${config.accessToken}` } : {}), ...(options.headers || {}) };
     const init = { method, headers, credentials: "same-origin" };
     if (options.body !== undefined) { headers["Content-Type"] = "application/json"; init.body = JSON.stringify(options.body); }
-    const response = await fetch(`${apiBase}${path}${query.size ? `?${query}` : ""}`, init);
+    const response = config.demo
+      ? config.demo(path, init)
+      : await fetch(`${apiBase}${path}${query.size ? `?${query}` : ""}`, init);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       const err = H.normalizeError ? H.normalizeError(payload, response.status) : { code: payload.code, message: payload.message, traceId: payload.traceId, details: payload.details };
@@ -73,7 +75,7 @@
       $("context-title").textContent = context.company?.legalName || "Contexto autenticado";
       $("context-meta").textContent = `${context.tenant?.name || "Tenant"} - CNPJ ${H.maskCnpj ? H.maskCnpj(context.company?.cnpj) : (context.company?.cnpj || "mascarado")}`;
       $("context-badge").textContent = context.company?.status || "ativo";
-      setConnection("SaaS online", "online");
+      setConnection(config.demo ? "Demonstração · dados sintéticos" : "SaaS online", "online");
     } catch (error) {
       showState("companies-state", `${error.code || "ERRO"}: ${H.errorText ? H.errorText(error) : error.message}`, "error");
       setConnection("Contexto indisponivel", "error");
@@ -276,6 +278,12 @@
         state.detail = res;
         state.actionState = "Validade ajustada com sucesso.";
         showState("entitlement-detail-state", "Validade ajustada.", "success");
+      }
+      if (config.demo) {
+        const index = state.entitlements.findIndex((item) => item.module === module);
+        if (index !== -1) state.entitlements[index] = state.detail;
+        state.selectedEntitlement = state.detail;
+        renderEntitlements();
       }
       renderEntitlementDetail();
       await loadAudit(company.id, module);

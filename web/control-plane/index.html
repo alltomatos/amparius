@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="Control plane Amparius">
-    <title>Amparius Â· Control plane</title>
+    <title>Amparius · Painel SaaS</title>
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
@@ -12,63 +12,62 @@
       <header class="topbar">
         <div>
           <p class="eyebrow">AMPARIUS</p>
-          <h1>Control plane</h1>
+          <h1>Painel SaaS</h1>
         </div>
-        <div id="connection" class="status status-loading" role="status">Carregando contextoâ€¦</div>
+        <div id="connection" class="status status-loading" role="status">Carregando contexto…</div>
       </header>
 
       <section class="context-card" data-name="active-context" aria-labelledby="context-title">
         <div>
           <p class="eyebrow">CONTEXTO ATIVO</p>
-          <h2 id="context-title">â€”</h2>
-          <p id="context-meta" class="muted">Tenant e empresa vÃªm do token autenticado.</p>
+          <h2 id="context-title">—</h2>
+          <p id="context-meta" class="muted">Tenant e empresa vêm do token autenticado.</p>
         </div>
-        <div class="context-badge" id="context-badge">â€”</div>
+        <div class="context-badge" id="context-badge">—</div>
       </section>
 
       <section class="toolbar" data-name="companies-toolbar" aria-labelledby="companies-title">
         <div>
-          <p class="eyebrow">ADMINISTRAÃ‡ÃƒO</p>
+          <p class="eyebrow">ADMINISTRAÇÃO</p>
           <h2 id="companies-title">Empresas</h2>
         </div>
         <label class="search-label" for="company-search">Filtrar empresas
-          <input id="company-search" type="search" placeholder="RazÃ£o social" autocomplete="off">
+          <input id="company-search" type="search" placeholder="Razão social" autocomplete="off">
         </label>
       </section>
 
       <section id="companies-state" class="state-panel" data-name="companies-state" aria-live="polite">
-        Carregando empresasâ€¦
+        Carregando empresas…
       </section>
       <div id="companies" class="company-grid" data-name="company-list"></div>
-      <nav id="companies-pagination" class="pagination" aria-label="PaginaÃ§Ã£o de empresas"></nav>
+      <nav id="companies-pagination" class="pagination" aria-label="Paginação de empresas"></nav>
 
       <section class="toolbar entitlement-heading" data-name="entitlements-toolbar" aria-labelledby="entitlements-title">
         <div>
-          <p class="eyebrow">LICENÃ‡AS</p>
-          <h2 id="entitlements-title">Entitlements da empresa</h2>
+          <p class="eyebrow">LICENÇAS</p>
+          <h2 id="entitlements-title">Licenças da empresa</h2>
         </div>
         <div id="selected-company" class="muted">Selecione uma empresa</div>
       </section>
       <section id="entitlements-state" class="state-panel" data-name="entitlements-state" aria-live="polite">
-        Selecione uma empresa para consultar os mÃ³dulos.
+        Selecione uma empresa para consultar os módulos.
       </section>
       <div id="entitlements" class="entitlement-grid" data-name="entitlement-list"></div>
-      <nav id="entitlements-pagination" class="pagination" aria-label="PaginaÃ§Ã£o de entitlements"></nav>
+      <nav id="entitlements-pagination" class="pagination" aria-label="Paginação de licenças"></nav>
 
       <footer>
-        <p>Tenant Ã© derivado do token. O cabeÃ§alho <code>X-Tenant-Id</code> nÃ£o autoriza escopo.</p>
+        <p>Tenant é derivado do token. O cabeçalho <code>X-Tenant-Id</code> não autoriza escopo.</p>
         <p id="trace" class="muted"></p>
       </footer>
           <section class="detail-card" data-name="entitlement-detail" aria-labelledby="entitlement-detail-title">
         <div class="toolbar entitlement-heading">
           <div>
-            <p class="eyebrow">CP-06</p>
-            <h2 id="entitlement-detail-title">Detalhe da licenca</h2>
+            <h2 id="entitlement-detail-title">Detalhe da licença</h2>
           </div>
-          <div id="selected-entitlement" class="muted">Selecione um modulo</div>
+          <div id="selected-entitlement" class="muted">Selecione um módulo</div>
         </div>
         <section id="entitlement-detail-state" class="state-panel" data-name="entitlement-detail-state" aria-live="polite">
-          Selecione um entitlement para ver o detalhe somente leitura.
+          Selecione uma licença para ver os detalhes.
         </section>
         <div id="entitlement-detail" class="detail-grid" data-name="entitlement-detail-body"></div>
         <section class="detail-card" data-name="audit" aria-labelledby="audit-title">
@@ -80,7 +79,7 @@
           </div>
           <section id="audit-state" class="state-panel" data-name="audit-state" aria-live="polite">Selecione um entitlement.</section>
           <ul id="audit-list" class="audit-list" data-name="audit-list"></ul>
-          <nav id="audit-pagination" class="pagination" aria-label="Paginacao de auditoria"></nav>
+          <nav id="audit-pagination" class="pagination" aria-label="Paginação de auditoria"></nav>
         </section>
       </section></main>
     <script src="./helpers.js" defer></script>

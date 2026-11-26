@@ -100,4 +100,17 @@ func TestBuildHandlerSobreviveCelulaIndisponivelSemDevESemControlPlane(t *testin
 	if !strings.Contains(postRecord.Body.String(), `"code":"AUTHENTICATION_UNAVAILABLE"`) {
 		t.Fatalf("POST /v1/parties sem AUTHENTICATION_UNAVAILABLE: %s", postRecord.Body.String())
 	}
+
+	for _, route := range []struct{ method, path string }{
+		{http.MethodPost, "/v1/deceased"},
+		{http.MethodGet, "/v1/deceased/id"},
+		{http.MethodPost, "/v1/deceased/id/family-links"},
+		{http.MethodGet, "/v1/family-links/id"},
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(route.method, route.path, nil))
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"code":"AUTHENTICATION_UNAVAILABLE"`) {
+			t.Fatalf("%s %s = %d %s, esperado 503 AUTHENTICATION_UNAVAILABLE", route.method, route.path, rec.Code, rec.Body)
+		}
+	}
 }

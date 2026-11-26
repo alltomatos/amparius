@@ -200,6 +200,10 @@ func writeDevelopmentFamilyLinkServiceError(w http.ResponseWriter, err error, cr
 		writeDevelopmentFamilyLinkError(w, http.StatusConflict, "pessoa jurídica não pode ser vinculada como familiar")
 	case errors.Is(err, ErrFamilyLinkRelationInvalid):
 		writeDevelopmentFamilyLinkError(w, http.StatusBadRequest, "relação familiar inválida")
+	case errors.Is(err, ErrFamilyLinkSelf):
+		writeDevelopmentFamilyLinkError(w, http.StatusBadRequest, ErrFamilyLinkSelf.Error())
+	case errors.Is(err, ErrFamilyLinkAlreadyExists):
+		writeDevelopmentFamilyLinkError(w, http.StatusConflict, ErrFamilyLinkAlreadyExists.Error())
 	case errors.Is(err, ErrFamilyLinkNotFound):
 		writeDevelopmentFamilyLinkError(w, http.StatusNotFound, "vínculo familiar não encontrado")
 	case errors.Is(err, db.ErrTenantRequired):

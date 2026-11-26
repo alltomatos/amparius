@@ -31,7 +31,7 @@ continua sem provedor OIDC/MFA e responde `503`.
 | --- | --- | --- | --- |
 | Menus Loja 01–04 | **Funcional como navegação:** dez destinos com tela e indicador ativo, incluindo Cadastros e Sincronização. | Links e contexto da [prévia](../../web/staging/index.html). | P0 coberto nesta fatia visual. |
 | Loja 01 / CL-01 · Painel do dia | **Simulado.** Agenda e pendência demonstrativa, unidade fixa e estado da fila. KPIs operacionais e resumo mensal ausentes. | **Parcial:** projeção da fila na [UI Rust](../../client/src/ui/day_panel.rs). A API tem agenda por [contrato](../../internal/modules/funeral/schedule_http.go). | P1, projeção de agenda e pendências por contexto após cadastro e jornada. |
-| PRD RF-003/004 / Loja 02 / CL-02 · Partes | **Simulado.** Cadastrar exemplos PF, PJ, falecido e vínculo, filtrar e selecionar responsável no atendimento. | **Parcial:** [party dev](../../internal/modules/party/http.go) cria PF, busca e atualiza nome social. Para PF, [`/v1/parties`](../../internal/modules/party/production_http.go) (#72) cria e busca somente pessoas físicas no tenant do principal, com permissão e escopo; sem provedor OIDC/MFA no bootstrap responde `503`. [Falecido](../../internal/modules/party/deceased_http.go) e [vínculo](../../internal/modules/party/family_link_http.go) têm criação e consulta por ID. PJ, contatos, endereços e consentimento continuam sem fluxo de cadastro integrado. Rust recebe IDs no [atendimento](../../client/src/ui/attendance.rs). | P0. PF autenticado entregue na #72; falecido, vínculo e consentimento autenticados ficam na #73; depois PJ, contato/endereço e cache autorizado. |
+| PRD RF-003/004 / Loja 02 / CL-02 · Partes | **Simulado.** Cadastro de exemplos PF, PJ, falecido e vínculo e seleção de responsável. | **Parcial.** PF autenticada na #72. O [contrato da #73](../contracts/party-deceased-family-link-v1.md) cobre falecido e vínculo por API. As duas criações exigem política e gravam auditoria atomicamente. O vínculo registra consentimento com UUID externo e rejeita autovínculo. Duplicidades novas retornam 409 e o legado mantém os IDs. Sem migração nova. | P0. No binário atual, as quatro rotas da #73 retornam `503 AUTHENTICATION_UNAVAILABLE`. Com autenticador e sem política, os POSTs retornam `503 PRIVACY_POLICY_UNAVAILABLE`. Provedor real, política DPO, UI integrada, PJ, contatos, endereços e cache autorizado pendentes. |
 | PRD §4.1 / Loja 02 · Catálogo | **Simulado.** Produto ou serviço de exemplo; só serviços podem ser usados no atendimento. Sem preços ou regra fiscal. | **Parcial:** [catálogo dev](../../internal/modules/catalog/http.go) tem itens, listas e preços. Nenhum consumo no atendimento nativo identificado. | P0, leitura e escrita autorizadas, depois ofertas e vigências no contrato. |
 | Loja 02 / CL-02 · Atendimento e Contratos | **Simulado.** Escolha de responsável/serviço e enfileiramento com contrato ativo de exemplo. Jornada de contrato novo, pagamento e assinatura ausentes. | **Parcial:** [Go funeral](../../internal/modules/funeral/http.go) e [jornada](../../internal/modules/funeral/journey.go) cobrem contrato, OS e agenda em dev. Rust enfileira jornada por referência ativa. | P0, partir dos cadastros reais, montar contrato e confirmar OS/agenda. Implementar pagamento e assinatura em fatias distintas. |
 | CL-03 · Ordens e agenda | **Ausente.** Atendimento da prévia só representa o enfileiramento. | **Parcial:** [OS](../../internal/modules/funeral/service_order_http.go), [agenda](../../internal/modules/funeral/schedule_http.go) e UI [Rust](../../client/src/ui/render.rs) de ordens com estado derivado da fila. | P1, após contrato, testar criação, transição e conflito pelo caminho normal. |
@@ -66,7 +66,8 @@ continua sem provedor OIDC/MFA e responde `503`.
    cadastrados no atendimento. Confirmar duas vezes mantém uma operação,
    reconexão permite simular o envio e recarregar repõe o cenário inicial.
 3. **Cadastros operacionais, próximo P0.** Pessoa física autenticada já está
-   no backend (#72). Falecido, vínculo familiar e consentimento seguem na #73.
+   no backend (#72), assim como falecido, vínculo e consentimento (#73).
+   Próxima fatia funcional: [#74, catálogo operacional, serviço e preço vigente](https://github.com/alltomatos/amparius/issues/74).
    Em ambiente local ou privado,
    autenticar com contexto de tenant e papel, emitir contrato versionado de
    PF/busca/falecido/vínculo e catálogo, testar 401/403, acesso cruzado negado,
@@ -110,5 +111,9 @@ continua sem provedor OIDC/MFA e responde `503`.
   busca persistidas, isolamento entre tenants, busca que não consome o limite
   com pessoa jurídica e ausência de PII em erros e logs. Os dados são sintéticos
   e o verificador OIDC é de teste. Não são evidência de produção, de OIDC/MFA,
-  de UI real nem das suítes legadas. Próxima fatia: #73 (falecido, vínculo
-  familiar e consentimento).
+  de UI real nem das suítes legadas. O [ADR 0042](../adr/0042-falecido-vinculo-familiar-consentimento-v1.md#verificação)
+  registra a validação independente da #73 com política sintética e duplos
+  de OIDC/MFA, incluindo RLS, rollback, concorrência, legado e limpeza.
+  Provedor OIDC/MFA real, política DPO, UI operacional e emissão fiscal
+  estão fora da evidência. A [#82](https://github.com/alltomatos/amparius/issues/82)
+  acompanha o rascunho 0036 no banco dev compartilhado.

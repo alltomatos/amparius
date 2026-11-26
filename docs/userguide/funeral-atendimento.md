@@ -9,8 +9,7 @@ Esta jornada é a sequência mínima do atendimento:
    descrito em [autenticação e acesso](authentication.md#cadastro-de-pessoa-física-pela-api-autenticada-v1parties).
    Ele ainda responde `503` até o provedor OIDC/MFA ser conectado; em ambiente
    privado, teste só com dados sintéticos.
-3. Consulte ou cadastre o falecido e os familiares pelos endpoints de party.
-   O contrato só aceita referências já existentes.
+3. Consulte ou cadastre o falecido e vincule o familiar. Veja [Cadastro pela API](#cadastro-de-falecido-e-vínculo-familiar-pela-api).
 4. Escolha o item do catálogo e abra o contrato. O contrato congela os itens e
    gera o plano de parcelas.
 5. Ative o contrato. Só contratos `active` podem abrir OS.
@@ -38,6 +37,26 @@ A resposta inclui o estado atual e `status_history`. Repetir uma chave com o
 mesmo conteúdo devolve o mesmo agregado; reutilizá-la com conteúdo diferente
 é conflito. A descrição não é publicada na outbox. A rota é dev-only e não
 substitui autenticação de produção.
+
+## Cadastro de falecido e vínculo familiar pela API
+
+1. Em `POST /v1/deceased`, informe o ID da pessoa física já cadastrada e
+   a data e hora do óbito. Certidão e local de sepultamento são opcionais.
+2. Em `POST /v1/deceased/{deceasedId}/family-links`, use o ID do
+   falecido retornado no passo anterior. Informe o ID de outra pessoa
+   física, o código ativo de parentesco e `consentEvidenceRef`, o UUID
+   da evidência externa de consentimento. Autovínculo retorna 400.
+3. Consulte pelo ID em `GET /v1/deceased/{id}` ou
+   `GET /v1/family-links/{id}`. Os registros legados mantêm seus IDs.
+   Novas tentativas de criação para um registro duplicado retornam 409.
+
+As duas criações exigem permissão de escrita e política de privacidade
+do tenant. As consultas exigem permissão de leitura. No binário atual, as
+quatro rotas retornam `503 AUTHENTICATION_UNAVAILABLE`. Com autenticador
+configurado e sem política disponível, os dois POSTs retornam
+`503 PRIVACY_POLICY_UNAVAILABLE`. O fluxo do mockup Loja 02 é simulado.
+Veja o [contrato HTTP](../contracts/party-deceased-family-link-v1.md) e
+[auditoria e privacidade](auditoria-lgpd.md#falecido-e-vínculo-familiar).
 
 ## Agenda de velório e sepultamento
 

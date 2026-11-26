@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alltomatos/amparius/internal/platform/audit"
 	"github.com/alltomatos/amparius/internal/platform/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -22,6 +23,9 @@ var (
 	ErrDeceasedPersonNotFound = errors.New("pessoa não encontrada")
 	// ErrDeceasedPersonNotApplicable identifies a company in the current tenant.
 	ErrDeceasedPersonNotApplicable = errors.New("pessoa jurídica não pode ser cadastrada como falecida")
+	// ErrDeceasedAlreadyExists means the referenced person already has a
+	// deceased record in the same tenant.
+	ErrDeceasedAlreadyExists = errors.New("pessoa já cadastrada como falecida")
 )
 
 // DeceasedCreate contains only references and attributes of the deceased
@@ -54,6 +58,28 @@ type DeceasedService interface {
 // CreateDeceased creates a deceased record for an existing natural person in
 // the tenant from the context.
 func (r *Repository) CreateDeceased(ctx context.Context, input DeceasedCreate) (Deceased, error) {
+	return r.createDeceased(ctx, input, nil)
+}
+
+// CreateDeceasedWithAudit registers the deceased and its privacy audit entry
+// in the same tenant transaction.
+func (r *Repository) CreateDeceasedWithAudit(ctx context.Context, input DeceasedCreate, provider audit.PolicyProvider) (Deceased, error) {
+	const action = "party.deceased.register"
+	policy, err := audit.ResolvePolicy(ctx, provider, action)
+	if err != nil {
+		return Deceased{}, err
+	}
+	return r.createDeceased(ctx, input, func(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+		_, err := audit.AppendTx(ctx, tx, audit.Entry{
+			Action: action, ResourceType: "party.deceased", ResourceID: id,
+			Outcome: audit.OutcomeSuccess, RetentionUntil: policy.RetentionUntil,
+			Detail: []byte(fmt.Sprintf("{%q:%q,%q:%q}", "purpose_code", policy.PurposeCode, "legal_basis_code", policy.LegalBasisCode)),
+		})
+		return err
+	})
+}
+
+func (r *Repository) createDeceased(ctx context.Context, input DeceasedCreate, appendAudit func(context.Context, pgx.Tx, uuid.UUID) error) (Deceased, error) {
 	tenantID, err := db.TenantFromContext(ctx)
 	if err != nil {
 		return Deceased{}, err
@@ -64,29 +90,67 @@ func (r *Repository) CreateDeceased(ctx context.Context, input DeceasedCreate) (
 
 	var result Deceased
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		person, err := findDeceasedPerson(ctx, tx, tenantID, input.PersonID)
-		if err != nil {
-			return err
+		var err error
+		result, err = createDeceasedTx(ctx, tx, tenantID, input)
+		if err == nil && appendAudit != nil {
+			return appendAudit(ctx, tx, result.ID)
 		}
-		result.Person = person
-		result.TenantID = tenantID
-		result.PersonID = input.PersonID
-		result.DeathAt = input.DeathAt
-		result.DeathCertificate = normalizeDeceasedText(input.DeathCertificate)
-		result.BurialSite = normalizeDeceasedText(input.BurialSite)
-		return tx.QueryRow(ctx, `
-			INSERT INTO party.deceased (tenant_id, person_id, death_at, death_certificate, burial_site)
-			VALUES ($1, $2, $3, $4, $5)
-			RETURNING id`, tenantID, input.PersonID, input.DeathAt,
-			result.DeathCertificate, result.BurialSite).Scan(&result.ID)
+		return err
 	})
-	if errors.Is(err, ErrDeceasedPersonNotFound) || errors.Is(err, ErrDeceasedPersonNotApplicable) {
-		return Deceased{}, err
-	}
 	if err != nil {
 		return Deceased{}, fmt.Errorf("criar registro de falecido: %w", err)
 	}
 	return result, nil
+}
+
+func createDeceasedTx(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, input DeceasedCreate) (Deceased, error) {
+	person, err := findDeceasedPerson(ctx, tx, tenantID, input.PersonID)
+	if err != nil {
+		return Deceased{}, err
+	}
+	if err := lockPartyCreate(ctx, tx, "deceased", tenantID, input.PersonID); err != nil {
+		return Deceased{}, err
+	}
+	var exists bool
+	if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM party.deceased WHERE tenant_id = $1 AND person_id = $2)",
+		tenantID, input.PersonID).Scan(&exists); err != nil {
+		return Deceased{}, err
+	}
+	if exists {
+		return Deceased{}, ErrDeceasedAlreadyExists
+	}
+	result := Deceased{
+		Person:           person,
+		TenantID:         tenantID,
+		PersonID:         input.PersonID,
+		DeathAt:          input.DeathAt,
+		DeathCertificate: normalizeDeceasedText(input.DeathCertificate),
+		BurialSite:       normalizeDeceasedText(input.BurialSite),
+	}
+	err = tx.QueryRow(ctx, `
+		INSERT INTO party.deceased (tenant_id, person_id, death_at, death_certificate, burial_site)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id`, tenantID, input.PersonID, input.DeathAt,
+		result.DeathCertificate, result.BurialSite).Scan(&result.ID)
+	if err != nil {
+		return Deceased{}, err
+	}
+	return result, nil
+}
+
+// lockPartyCreate serializes writers for a tenant and aggregate through commit.
+// With READ COMMITTED the following statement sees the previous writer's insert.
+func lockPartyCreate(ctx context.Context, tx pgx.Tx, aggregate string, tenantID, recordID uuid.UUID) error {
+	key := "party.create." + aggregate + ":" + tenantID.String() + ":" + recordID.String()
+	var isolation string
+	if err := tx.QueryRow(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0)), current_setting('transaction_isolation')",
+		key).Scan(nil, &isolation); err != nil {
+		return fmt.Errorf("serializar cadastro de party: %w", err)
+	}
+	if isolation != "read committed" {
+		return errors.New("cadastro de party exige transação READ COMMITTED")
+	}
+	return nil
 }
 
 // GetDeceasedByID loads a deceased record and resolves names from party.party

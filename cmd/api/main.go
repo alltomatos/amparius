@@ -20,6 +20,7 @@ import (
 	"github.com/alltomatos/amparius/internal/modules/identity"
 	"github.com/alltomatos/amparius/internal/modules/outbox"
 	"github.com/alltomatos/amparius/internal/modules/party"
+	"github.com/alltomatos/amparius/internal/platform/audit"
 	platformauth "github.com/alltomatos/amparius/internal/platform/auth"
 	"github.com/alltomatos/amparius/internal/platform/config"
 	"github.com/alltomatos/amparius/internal/platform/db"
@@ -239,9 +240,17 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 			)
 		}
 		partyHandler := party.NewProductionHTTPHandler(partyRepository)
+		// A política aprovada por tenant será injetada quando houver um provedor.
+		var policyProvider audit.PolicyProvider
+		deceasedHandler := party.NewProductionDeceasedHTTPHandler(partyRepository, policyProvider)
+		familyLinkHandler := party.NewProductionFamilyLinkHTTPHandler(partyRepository, policyProvider)
 		authenticatedRoutes = append(authenticatedRoutes,
 			httpserver.AuthenticatedRoute{Pattern: "POST /v1/parties", Permission: platformauth.PermissionPartyWrite, Handler: http.HandlerFunc(partyHandler.Create)},
 			httpserver.AuthenticatedRoute{Pattern: "GET /v1/parties", Permission: platformauth.PermissionPartyRead, Handler: http.HandlerFunc(partyHandler.Search)},
+			httpserver.AuthenticatedRoute{Pattern: "POST /v1/deceased", Permission: platformauth.PermissionPartyWrite, Handler: http.HandlerFunc(deceasedHandler.Create)},
+			httpserver.AuthenticatedRoute{Pattern: "GET /v1/deceased/{id}", Permission: platformauth.PermissionPartyRead, Handler: http.HandlerFunc(deceasedHandler.Get)},
+			httpserver.AuthenticatedRoute{Pattern: "POST /v1/deceased/{deceasedId}/family-links", Permission: platformauth.PermissionPartyWrite, Handler: http.HandlerFunc(familyLinkHandler.Create)},
+			httpserver.AuthenticatedRoute{Pattern: "GET /v1/family-links/{id}", Permission: platformauth.PermissionPartyRead, Handler: http.HandlerFunc(familyLinkHandler.Get)},
 		)
 	}
 

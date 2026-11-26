@@ -9,71 +9,175 @@
     <link rel="stylesheet" href="/staging.css">
     <script src="/client-demo.js" defer></script>
   </head>
-  <body>
-    <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
+  <body class="store-preview">
+    <a class="skip-link" href="#screen-title">Pular para o conteúdo</a>
     <aside class="side-rail" aria-label="Cliente de loja">
       <div class="brand"><img src="/assets/brand/amparius-logo.svg" alt="Amparius" width="144" height="106"></div>
       <nav aria-label="Operação da loja">
-        <a href="#conteudo">Painel do dia</a>
+        <a href="#painel" aria-current="page">Painel do dia</a>
         <a href="#atendimento">Atendimento</a>
+        <a href="#contratos">Contratos</a>
+        <a href="#cadastros">Cadastros</a>
+        <a href="#cemiterio">Cemitério</a>
+        <a href="#flores">Flores</a>
+        <a href="#financeiro">Financeiro</a>
+        <a href="#fiscal">Fiscal</a>
+        <a href="#relatorios">Relatórios</a>
         <a href="#sincronizacao">Sincronização</a>
       </nav>
     </aside>
     <main class="shell" id="conteudo" tabindex="-1">
       <header class="topbar">
         <div>
-          <h1>Painel do dia</h1>
-          <p class="muted">Cliente web · Unidade Demonstração</p>
-        </div>
-      </header>
-
-      <section class="context-card" aria-labelledby="scenario-title">
-        <div>
-          <h2 id="scenario-title">Estado da estação</h2>
-          <p class="muted">Dados sintéticos. A fila da demonstração é reiniciada ao recarregar.</p>
+          <h1 id="screen-title" tabindex="-1">Painel do dia</h1>
+          <p class="muted">Unidade Demonstração · Dados sintéticos</p>
         </div>
         <p class="status status-loading" id="connection" role="status">Offline simulado</p>
-      </section>
+      </header>
 
-      <div class="demo-columns">
-        <section class="state-panel demo-section" aria-labelledby="agenda-title">
-          <h2 id="agenda-title">Agenda de hoje</h2>
-          <ul class="demo-agenda">
-            <li><time datetime="09:00">09:00</time> Revisar atendimento de exemplo <span class="muted">Programado</span></li>
-            <li><time datetime="14:00">14:00</time> Conferir fila da estação <span class="muted">Programado</span></li>
-          </ul>
+      <div data-screen="painel">
+        <section class="context-card" aria-labelledby="scenario-title">
+          <div>
+            <h2 id="scenario-title">Estado da estação</h2>
+            <p class="muted">Dados sintéticos. A fila da demonstração é reiniciada ao recarregar.</p>
+          </div>
         </section>
-        <aside class="state-panel demo-section" aria-labelledby="attention-title">
-          <h2 id="attention-title">Precisa de atenção</h2>
-          <p id="pending" role="status">Nenhuma operação registrada.</p>
-          <h3>Assistente contextual</h3>
-          <p>Indisponível na demonstração. Consulte o atendimento e a fila para ver o próximo passo.</p>
-        </aside>
+
+        <div class="demo-columns">
+          <section class="state-panel demo-section" aria-labelledby="agenda-title">
+            <h2 id="agenda-title">Agenda de hoje</h2>
+            <ul class="demo-agenda">
+              <li><time datetime="09:00">09:00</time> Revisar atendimento de exemplo <span class="muted">Programado</span></li>
+              <li><time datetime="14:00">14:00</time> Conferir fila da estação <span class="muted">Programado</span></li>
+            </ul>
+          </section>
+          <aside class="state-panel demo-section" aria-labelledby="attention-title">
+            <h2 id="attention-title">Precisa de atenção</h2>
+            <p id="pending" role="status">Nenhuma operação registrada.</p>
+            <h3>Assistente contextual</h3>
+            <p>Indisponível na demonstração. Consulte o atendimento e a fila para ver o próximo passo.</p>
+          </aside>
+        </div>
       </div>
 
-      <section class="state-panel demo-section" aria-labelledby="atendimento">
-        <h2 id="atendimento" tabindex="-1">Atendimento funeral de demonstração</h2>
+      <section class="state-panel demo-section" data-screen="atendimento" aria-labelledby="attendance-title" hidden>
+        <h2 id="attendance-title">Atendimento funeral de demonstração</h2>
         <details>
           <summary>Revisar atendimento DEMO-001</summary>
           <dl class="detail-list demo-intake">
             <div><dt>Contrato</dt><dd>DEMO-001 · ativo</dd></div>
-            <div><dt>Serviço</dt><dd>Atendimento funeral de exemplo</dd></div>
+            <div><dt>Cenário</dt><dd>Atendimento funeral de exemplo</dd></div>
             <div><dt>Pagamento</dt><dd>Fora do cenário demonstrado</dd></div>
           </dl>
+          <div class="store-fields demo-intake">
+            <label for="attendance-person">Responsável de exemplo
+              <select id="attendance-person"></select>
+            </label>
+            <label for="attendance-service">Serviço de exemplo
+              <select id="attendance-service"></select>
+            </label>
+          </div>
+          <p><a href="#cadastros">Consultar cadastros</a></p>
           <div class="detail-actions">
             <button type="button" id="queue">Confirmar atendimento e enfileirar</button>
+            <a class="store-action-link" href="#sincronizacao">Ver fila da estação</a>
           </div>
         </details>
       </section>
 
-      <section class="state-panel demo-section" aria-labelledby="sincronizacao">
-        <h2 id="sincronizacao" tabindex="-1">Fila da estação</h2>
+      <section class="state-panel demo-section" data-screen="contratos" hidden>
+        <h2>Contratos na prévia</h2>
+        <p>O atendimento usa um contrato ativo de exemplo. A criação, o parcelamento e a assinatura ainda precisam de integração.</p>
+        <p><a href="#atendimento">Revisar o contrato DEMO-001 no atendimento</a></p>
+      </section>
+
+      <div data-screen="cadastros" hidden>
+        <section class="state-panel demo-section" aria-labelledby="records-title">
+          <h2 id="records-title">Cadastros de loja</h2>
+          <p>Use apenas os exemplos disponíveis. Os cadastros e vínculos desta aba reiniciam ao recarregar.</p>
+          <div class="store-fields">
+            <label for="record-kind">Tipo de cadastro
+              <select id="record-kind">
+                <option value="person">Pessoa física</option>
+                <option value="company">Pessoa jurídica</option>
+                <option value="deceased">Falecido</option>
+                <option value="catalog">Produto ou serviço</option>
+              </select>
+            </label>
+            <label for="record-fixture">Exemplo disponível
+              <select id="record-fixture"></select>
+            </label>
+          </div>
+          <div class="detail-actions">
+            <button type="button" id="save-record">Cadastrar exemplo</button>
+          </div>
+          <label for="record-search" class="store-search">Filtrar cadastros por nome
+            <input type="search" id="record-search" autocomplete="off" maxlength="80" placeholder="Ex.: Família Demo">
+          </label>
+          <p id="records-empty" role="status" hidden>Nenhum cadastro encontrado.</p>
+          <ul class="store-list" id="records-list" aria-label="Cadastros encontrados"></ul>
+        </section>
+
+        <section class="state-panel demo-section" aria-labelledby="family-title">
+          <h2 id="family-title">Vínculos familiares</h2>
+          <p>Selecione uma pessoa física e um falecido cadastrados nesta aba.</p>
+          <div class="store-fields">
+            <label for="family-person">Pessoa física
+              <select id="family-person"></select>
+            </label>
+            <label for="family-deceased">Falecido
+              <select id="family-deceased"></select>
+            </label>
+            <label for="family-role">Parentesco
+              <select id="family-role">
+                <option>Filho(a)</option>
+                <option>Cônjuge</option>
+                <option>Outro</option>
+              </select>
+            </label>
+          </div>
+          <div class="detail-actions">
+            <button type="button" id="save-family">Vincular familiar</button>
+          </div>
+          <ul class="store-list" id="family-list" aria-label="Vínculos cadastrados"></ul>
+          <p><a href="#atendimento">Usar cadastros no atendimento</a></p>
+        </section>
+      </div>
+
+      <section class="state-panel demo-section" data-screen="cemiterio" hidden>
+        <h2>Mapa e concessões</h2>
+        <p>O mapa de jazigos e as concessões ainda não estão disponíveis nesta prévia.</p>
+      </section>
+
+      <section class="state-panel demo-section" data-screen="flores" hidden>
+        <h2>Pedidos e entregas</h2>
+        <p>O pedido de floricultura, o estoque e a entrega ainda não estão disponíveis nesta prévia.</p>
+      </section>
+
+      <section class="state-panel demo-section" data-screen="financeiro" hidden>
+        <h2>Contas a receber e caixa</h2>
+        <p>A consulta de títulos, as baixas e o caixa aguardam integração autorizada com a API financeira.</p>
+      </section>
+
+      <section class="state-panel demo-section" data-screen="fiscal" hidden>
+        <h2>Emissão e acompanhamento</h2>
+        <p>A emissão fiscal está indisponível na prévia. Nenhum documento fiscal é gerado.</p>
+      </section>
+
+      <section class="state-panel demo-section" data-screen="relatorios" hidden>
+        <h2>Fechamento e relatórios</h2>
+        <p>O fechamento mensal e a exportação aguardam projeções autorizadas de financeiro e fiscal.</p>
+      </section>
+
+      <section class="state-panel demo-section" data-screen="sincronizacao" aria-labelledby="sync-title" hidden>
+        <h2 id="sync-title">Fila da estação</h2>
         <ul id="operations"></ul>
         <div class="detail-actions">
           <button type="button" id="connect">Simular reconexão</button>
           <button type="button" id="sync" disabled>Simular sincronização</button>
         </div>
         <p>Nenhuma conexão com o relay é usada nesta demonstração.</p>
+        <p><a href="#atendimento">Abrir atendimento</a></p>
       </section>
       <p id="feedback" class="demo-feedback" role="status" aria-atomic="true"></p>
     </main>

@@ -100,11 +100,11 @@ Let's Encrypt. O Caddy escuta em TCP 443 e usa ACME TLS-ALPN-01. A porta 80
 continua com o nginx dos demos, portanto use URLs com `https://`.
 
 O [Caddyfile](../../deploy/staging/Caddyfile) encaminha somente `GET` e
-`HEAD` de `/healthz` e `/readyz` para a API. Em `hml.amparius.com` ele
-também serve dois fluxos públicos de demonstração com dados sintéticos:
+`HEAD` de `/healthz` e `/readyz` para a API. O edge serve duas superfícies públicas com dados sintéticos:
 
-- [Cliente web](https://hml.amparius.com/) — enfileirar um atendimento de
-  exemplo, repetir a ação, simular reconexão e reenviar a mesma operação.
+- [Cliente web](https://hml.amparius.com/) — navegar pelos destinos da loja,
+  consultar e cadastrar exemplos, selecionar responsável e serviço, enfileirar
+  atendimento, simular reconexão e reenviar a mesma operação.
 - [Painel SaaS](https://manager.amparius.com/) — abrir a empresa de exemplo,
   selecionar **Funerária**, ajustar quota, conceder ou revogar licença e
   conferir a versão e auditoria de demonstração.
@@ -127,9 +127,17 @@ ssh -N -L 127.0.0.1:18080:127.0.0.1:18080 omniroute
 
 ### Roteiro da prévia visual
 
-- No cliente web, abra **Atendimento**, revise o cenário DEMO-001 e confirme
-  duas vezes. A fila apresenta uma operação. Simule a reconexão e a
-  sincronização. Repetir o envio preserva a mesma sequência.
+- No cliente web, abra **Cadastros**, selecione um tipo e clique em
+  **Cadastrar exemplo**. Cadastre uma pessoa física, um falecido e um serviço.
+  Filtre por nome e vincule os dois cadastros em **Vínculos familiares**.
+- Abra **Atendimento**, escolha o responsável e o serviço cadastrados e
+  confirme duas vezes. **Sincronização** mostra uma operação com os exemplos
+  escolhidos. Simule a reconexão e a sincronização. Repetir o envio preserva a
+  mesma sequência. Recarregar repõe os exemplos iniciais.
+- Os menus **Contratos**, **Cemitério**, **Flores**, **Financeiro**, **Fiscal**
+  e **Relatórios** informam o que ainda está indisponível. A
+  [matriz do MVP](../design/mvp-mockup-gap-matrix.md) aponta os contratos e a
+  ordem das próximas integrações.
 - Em **Painel SaaS**, selecione a empresa e o módulo **Funerária**. A revogação
   altera o indicador de licenças ativas e aparece em **Auditoria**. Recarregar a
   página repõe o cenário inicial.

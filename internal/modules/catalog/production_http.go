@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/alltomatos/amparius/internal/platform/auth"
 	httpserver "github.com/alltomatos/amparius/internal/platform/http"
@@ -20,6 +21,8 @@ type OperationalService interface {
 	CreatePriceList(context.Context, PriceList) (PriceList, error)
 	CreatePrice(context.Context, Price) (Price, error)
 	ResolveServiceOffer(context.Context, uuid.UUID, uuid.UUID, string) (ServiceOffer, error)
+	SearchActiveServices(context.Context, string, int) ([]CatalogItem, error)
+	SearchAvailablePriceLists(context.Context, string, string, int) ([]PriceList, error)
 }
 
 type operationalHandler struct{ service OperationalService }
@@ -32,6 +35,8 @@ func AuthenticatedRoutes(service OperationalService) []httpserver.AuthenticatedR
 		{Pattern: "POST /v1/catalog/items", Permission: auth.PermissionCatalogWrite, Handler: h.available(h.createService)},
 		{Pattern: "POST /v1/catalog/price-lists", Permission: auth.PermissionCatalogWrite, Handler: h.available(h.createPriceList)},
 		{Pattern: "POST /v1/catalog/prices", Permission: auth.PermissionCatalogWrite, Handler: h.available(h.createPrice)},
+		{Pattern: "GET /v1/catalog/items", Permission: auth.PermissionCatalogRead, Handler: h.available(h.searchServices)},
+		{Pattern: "GET /v1/catalog/price-lists", Permission: auth.PermissionCatalogRead, Handler: h.available(h.searchPriceLists)},
 		{Pattern: "GET /v1/catalog/offers", Permission: auth.PermissionCatalogRead, Handler: h.available(h.getOffer)},
 	}
 }
@@ -88,6 +93,66 @@ func (h operationalHandler) createPrice(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeCatalogJSON(w, http.StatusCreated, priceFromModel(created))
+}
+
+func (h operationalHandler) searchServices(w http.ResponseWriter, r *http.Request) {
+	query, limit, err := parseDiscoveryQuery(r.URL.RawQuery, false)
+	if err != nil {
+		writeOperationalServiceError(w, r, err)
+		return
+	}
+	items, err := h.service.SearchActiveServices(r.Context(), query.Get("q"), limit)
+	if err != nil {
+		writeOperationalServiceError(w, r, err)
+		return
+	}
+	response := make([]itemResponse, 0, len(items))
+	for _, item := range items {
+		response = append(response, itemFromModel(item))
+	}
+	writeCatalogJSON(w, http.StatusOK, struct {
+		Items []itemResponse `json:"items"`
+	}{response})
+}
+
+func (h operationalHandler) searchPriceLists(w http.ResponseWriter, r *http.Request) {
+	query, limit, err := parseDiscoveryQuery(r.URL.RawQuery, true)
+	if err != nil {
+		writeOperationalServiceError(w, r, err)
+		return
+	}
+	lists, err := h.service.SearchAvailablePriceLists(r.Context(), query.Get("q"), query.Get("on"), limit)
+	if err != nil {
+		writeOperationalServiceError(w, r, err)
+		return
+	}
+	response := make([]priceListResponse, 0, len(lists))
+	for _, list := range lists {
+		response = append(response, priceListFromModel(list))
+	}
+	writeCatalogJSON(w, http.StatusOK, struct {
+		Items []priceListResponse `json:"items"`
+	}{response})
+}
+
+func parseDiscoveryQuery(rawQuery string, requireDate bool) (url.Values, int, error) {
+	query, err := url.ParseQuery(rawQuery)
+	if err != nil || (requireDate && len(query["on"]) != 1) {
+		return nil, 0, ErrInvalidCatalogRequest
+	}
+	for key, values := range query {
+		if len(values) != 1 || (key != "q" && key != "limit" && !(requireDate && key == "on")) {
+			return nil, 0, ErrInvalidCatalogRequest
+		}
+	}
+	limit := DefaultListLimit
+	if query.Has("limit") {
+		limit, err = strconv.Atoi(query.Get("limit"))
+		if err != nil || limit < 1 || limit > MaxListLimit {
+			return nil, 0, ErrInvalidCatalogRequest
+		}
+	}
+	return query, limit, nil
 }
 
 func (h operationalHandler) getOffer(w http.ResponseWriter, r *http.Request) {

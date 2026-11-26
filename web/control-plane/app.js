@@ -50,7 +50,7 @@
   function renderCompanies() {
     const filter = ($("company-search")?.value || "").trim().toLocaleLowerCase("pt-BR");
     const items = state.companies.filter((company) => (company.legalName || "").toLocaleLowerCase("pt-BR").includes(filter));
-    $("companies").innerHTML = items.map((company) => `<button class="company-card ${state.selectedCompany?.id === company.id ? "selected" : ""}" data-company-id="${escapeHtml(company.id)}" aria-pressed="${state.selectedCompany?.id === company.id}"><div class="card-row"><span class="card-title">${escapeHtml(company.legalName)}</span><span class="company-status ${escapeHtml(company.status)}">${escapeHtml(company.status)}</span></div><p class="muted">CNPJ ${escapeHtml(H.maskCnpj ? H.maskCnpj(company.cnpj) : (company.cnpj || "mascarado"))}</p><p class="muted">${escapeHtml(company.kind || "empresa")}</p></button>`).join("");
+    $("companies").innerHTML = items.map((company) => `<button class="company-card ${state.selectedCompany?.id === company.id ? "selected" : ""}" data-company-id="${escapeHtml(company.id)}" aria-pressed="${state.selectedCompany?.id === company.id}"><div class="card-row"><span class="card-title">${escapeHtml(company.legalName)}</span><span class="company-status ${escapeHtml(company.status)}">${escapeHtml(company.status)}</span></div><p class="muted">CNPJ ${escapeHtml(H.displayCnpj ? H.displayCnpj(company.cnpj) : (company.cnpj || "mascarado"))}</p><p class="muted">${escapeHtml(company.kind || "empresa")}</p></button>`).join("");
     if (!items.length) showState("companies-state", "Nenhuma empresa encontrada para este filtro.", "empty");
     else showState("companies-state", `${items.length} empresa(s) no contexto autorizado.`, "");
     document.querySelectorAll("[data-company-id]").forEach((button) => button.addEventListener("click", () => selectCompany(button.dataset.companyId)));
@@ -73,7 +73,7 @@
     try {
       const context = await request("/v1/context");
       $("context-title").textContent = context.company?.legalName || "Contexto autenticado";
-      $("context-meta").textContent = `${context.tenant?.name || "Tenant"} - CNPJ ${H.maskCnpj ? H.maskCnpj(context.company?.cnpj) : (context.company?.cnpj || "mascarado")}`;
+      $("context-meta").textContent = `${context.tenant?.name || "Tenant"} - CNPJ ${H.displayCnpj ? H.displayCnpj(context.company?.cnpj) : (context.company?.cnpj || "mascarado")}`;
       $("context-badge").textContent = context.company?.status || "ativo";
       setConnection(config.demo ? "Demonstração · dados sintéticos" : "SaaS online", "online");
     } catch (error) {

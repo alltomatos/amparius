@@ -45,7 +45,7 @@ input:focus { outline: 3px solid #7cc0f866; outline-offset: 2px; border-color: v
 .card-title { font-weight: 750; margin-bottom: 8px; }
 .card-row { align-items: center; display: flex; justify-content: space-between; gap: 12px; }
 .company-status, .license-status { font-size: .74rem; font-weight: 750; text-transform: uppercase; }
-.active { color: var(--success); } .inactive, .expired { color: var(--danger); } .pending { color: #805900; }
+.active { color: var(--success); } .inactive, .expired, .revoked { color: var(--danger); } .pending { color: #805900; } .suspended { color: #805900; }
 .entitlement-heading { border-top: 1px solid var(--line); margin-top: 36px; padding-top: 28px; }
 .meter { background: #e9eff5; border-radius: 99px; height: 8px; margin-top: 12px; overflow: hidden; }
 .meter > span { background: var(--blue); display: block; height: 100%; }

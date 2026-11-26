@@ -10,6 +10,14 @@
       if (digits.length < 4) return "**********" + String(value).slice(-4);
       return "*".repeat(Math.max(0, digits.length - 4)) + digits.slice(-4);
     },
+    displayCnpj(value) {
+      if (!value) return "mascarado";
+      const raw = String(value);
+      if (raw.includes("*")) return raw;
+      const digits = raw.replace(/\D/g, "");
+      if (digits.length < 11) return raw;
+      return helpers.maskCnpj(value);
+    },
     displayDate(value) {
       if (!value) return "sem validade final";
       const d = new Date(value);

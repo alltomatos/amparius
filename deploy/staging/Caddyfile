@@ -46,6 +46,29 @@ hml.amparius.com {
 	}
 }
 
+manager.amparius.com {
+	import staging_api
+
+	@panel {
+		method GET HEAD
+		path / /staging.css /panel-demo.js /styles.css /helpers.js /app.js /assets/brand/amparius-logo.svg
+	}
+	handle @panel {
+		root * /srv/amparius-preview/manager
+		header {
+			Cache-Control "no-store"
+			Content-Security-Policy "default-src 'none'; script-src 'self'; img-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+			X-Content-Type-Options "nosniff"
+			Referrer-Policy "no-referrer"
+			X-Robots-Tag "noindex, nofollow"
+		}
+		file_server
+	}
+	handle {
+		respond 404
+	}
+}
+
 hml.amparius.com.br {
 	import staging_api
 

@@ -50,3 +50,19 @@ test("staging uses isolated fixtures with versioning and idempotency", async () 
   assert.equal(demo(path.replace("empresa-demo", "other-company"), { method: "GET" }).status, 404);
   assert.equal((await createPanelDemo()(path, { method: "GET" }).json()).quota, 5);
 });
+
+
+test("manager.amparius.com serves the SaaS panel at the root", () => {
+  const caddy = readSource("../../../deploy/staging/Caddyfile");
+  const block = caddy.split("manager.amparius.com {")[1]?.split("\n}")[0];
+  assert.ok(block, "Missing manager.amparius.com site block");
+  assert.ok(block.includes("root * /srv/amparius-preview/manager"));
+  assert.ok(block.includes("path / /staging.css /panel-demo.js /styles.css /helpers.js /app.js"));
+});
+
+test("preview package emits a manager tree with root-relative branding", () => {
+  const script = readSource("../../../deploy/staging/prepare-preview.sh");
+  assert.ok(script.includes("$destination/manager/index.html"));
+  assert.ok(script.includes("./assets/brand/amparius-logo.svg"));
+  assert.ok(script.includes("https://hml.amparius.com/"));
+});

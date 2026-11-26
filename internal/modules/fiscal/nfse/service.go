@@ -199,7 +199,7 @@ func (s *Service) Emit(ctx context.Context, input ServiceInput) (ServiceResult, 
 		return result, fmt.Errorf("consultar historico de emissao: %w", err)
 	}
 	if autorizado := latestAttempt(attempts, "authorized"); autorizado != nil {
-		return s.resultFromAttempt(*autorizado, dps), nil
+		return s.resultFromAttempt(*autorizado, dps)
 	}
 	if rejeitado := latestAttempt(attempts, "rejected"); rejeitado != nil {
 		return s.resultFromRejected(*rejeitado, dps)
@@ -423,14 +423,27 @@ func registerAttemptWithDocument(store AttemptStore, ctx context.Context, attemp
 	return store.Register(ctx, attempt)
 }
 
-func (s *Service) resultFromAttempt(attempt fiscal.EmissionAttempt, dps DPS) ServiceResult {
+// resultFromAttempt devolve o fechamento persistido para a mesma chave de
+// idempotencia/documento. Reuso da chave com payload identico (mesmo hash) e
+// replay legitimo; payload diferente e conflito, nunca reautorizacao
+// silenciosa (AGENTS.md #3).
+func (s *Service) resultFromAttempt(attempt fiscal.EmissionAttempt, dps DPS) (ServiceResult, error) {
+	if derefString(attempt.RequestHash) != dps.XMLHash {
+		return ServiceResult{}, fmt.Errorf("%w: chave de idempotencia reutilizada com payload diferente do autorizado", ErrIdempotencyConflict)
+	}
 	return ServiceResult{
 		Status: "authorized", AccessKey: derefString(attempt.AccessKey),
 		IDDps: dps.IDDps, RequestHash: dps.XMLHash,
-	}
+	}, nil
 }
 
+// resultFromRejected aplica a mesma regra de idempotencia do caminho
+// autorizado: so repete a rejeicao persistida quando o hash do novo request
+// coincide com o hash original.
 func (s *Service) resultFromRejected(attempt fiscal.EmissionAttempt, dps DPS) (ServiceResult, error) {
+	if derefString(attempt.RequestHash) != dps.XMLHash {
+		return ServiceResult{}, fmt.Errorf("%w: chave de idempotencia reutilizada com payload diferente do rejeitado", ErrIdempotencyConflict)
+	}
 	code, description, _ := parseRejection(attempt)
 	result := ServiceResult{
 		Status: "rejected", IDDps: dps.IDDps, RequestHash: dps.XMLHash,

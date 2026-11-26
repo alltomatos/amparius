@@ -111,9 +111,10 @@ também serve dois fluxos públicos de demonstração com dados sintéticos:
 
 O painel SaaS é servido na raiz de `manager.amparius.com` (mesmo conjunto
 sintético de `/`, `/styles.css`, `/helpers.js`, `/app.js`, `/panel-demo.js`,
-`/staging.css` e `/assets/brand/amparius-logo.svg`). A cópia em
-`hml.amparius.com/painel/` continua disponível para comparação. O domínio
-`manager.amparius.com` é a superfície administrativa definida no ADR 0040.
+`/staging.css` e `/assets/brand/amparius-logo.svg`). `manager.amparius.com` é
+a superfície administrativa definida no ADR 0040. As duas superfícies são
+separadas: o cliente web não tem link para o painel e `hml.amparius.com` não
+serve `/painel/`.
 
 A fila e as mutações são isoladas por aba e reiniciam ao recarregar. A
 política de conteúdo impede conexões da aplicação com API ou relay. A
@@ -173,11 +174,11 @@ for host in hml.amparius.com hml.amparius.com.br; do
   curl -sS -o /dev/null -w '%{http_code}\n' "https://$host/v1/context"
 done
 curl -fsS https://hml.amparius.com/ -o /dev/null
-curl -fsS https://hml.amparius.com/painel/ -o /dev/null
+curl -fsS https://manager.amparius.com/ -o /dev/null
 ```
 
-O resultado esperado é `200` nos dois probes e na prévia, e `404` em
-`/_dev/` e `/v1/context`. No host,
+O resultado esperado é `200` nos dois probes e nas duas superfícies, `404` em
+`/_dev/`, `/v1/context` e `hml.amparius.com/painel/`. No host,
 `docker port staging-api-1 8080/tcp` deve mostrar `127.0.0.1:18080`. Para
 retirar o edge, pare apenas `amparius-staging-https` e remova a regra UFW
 criada para ele se a porta 443 continuar reservada exclusivamente a esse

@@ -33,12 +33,8 @@ func (r *Repository) ResolveServiceOffer(ctx context.Context, itemID, listID uui
 	if itemID == uuid.Nil || listID == uuid.Nil {
 		return ServiceOffer{}, ErrInvalidCatalogRequest
 	}
-	date, err := parseCatalogDate("on", &on, true)
-	if err != nil {
+	if err := validateReferenceDate(on); err != nil {
 		return ServiceOffer{}, err
-	}
-	if date != on || !supportedCatalogDate(date) {
-		return ServiceOffer{}, fmt.Errorf("%w: on deve ser uma data AAAA-MM-DD entre 0001 e 9999", ErrInvalidCatalogRequest)
 	}
 
 	offer := ServiceOffer{
@@ -59,7 +55,7 @@ func (r *Repository) ResolveServiceOffer(ctx context.Context, itemID, listID uui
 			  AND l.valid_from <= $4::text::date
 			  AND p.valid_from <= $4::text::date
 			  AND (p.valid_to IS NULL OR p.valid_to >= $4::text::date)
-			LIMIT 2`, tenantID, itemID, listID, date)
+			LIMIT 2`, tenantID, itemID, listID, on)
 		if err != nil {
 			return err
 		}
@@ -93,6 +89,17 @@ func (r *Repository) ResolveServiceOffer(ctx context.Context, itemID, listID uui
 		return ServiceOffer{}, fmt.Errorf("resolver oferta de serviço: %w", err)
 	}
 	return offer, nil
+}
+
+func validateReferenceDate(on string) error {
+	date, err := parseCatalogDate("on", &on, true)
+	if err != nil {
+		return err
+	}
+	if date != on || !supportedCatalogDate(date) {
+		return fmt.Errorf("%w: on deve ser uma data AAAA-MM-DD entre 0001 e 9999", ErrInvalidCatalogRequest)
+	}
+	return nil
 }
 
 // As datas recebidas aqui já foram normalizadas por parseCatalogDate.

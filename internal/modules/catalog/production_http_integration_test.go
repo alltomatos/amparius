@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -198,6 +199,28 @@ func TestOperationalCatalogPostgres(t *testing.T) {
 		}
 	})
 
+	t.Run("descoberta exige autenticação, escopo e catalog:read", func(t *testing.T) {
+		restricted, err := auth.NewRolePolicy(map[string][]auth.Permission{"owner": {auth.PermissionCatalogWrite}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		withoutRead, err := auth.NewService(oidc, mfa, identities, identities, restricted, logger)
+		if err != nil {
+			t.Fatal(err)
+		}
+		denied := httpserver.New(logger, httpserver.Options{
+			Authenticator: withoutRead, AuthenticatedRoutes: catalog.AuthenticatedRoutes(repo),
+		}).Handler()
+		for _, path := range []string{items, lists + "?on=2026-11-10"} {
+			request(t, handler, http.MethodGet, path, "", "", 401, "AUTHENTICATION_REQUIRED")
+			request(t, handler, http.MethodGet, path, "invalid-scope", "", 403, "SCOPE_FORBIDDEN")
+			request(t, denied, http.MethodGet, path, "owner-a", "", 403, "PERMISSION_DENIED")
+			if body := request(t, handler, http.MethodGet, path, "auditor", "", 200, ""); strings.TrimSpace(string(body)) != `{"items":[]}` {
+				t.Fatalf("resposta vazia: %s", body)
+			}
+		}
+	})
+
 	decodeID := func(t *testing.T, body []byte) uuid.UUID {
 		t.Helper()
 		var result struct{ ID uuid.UUID }
@@ -222,6 +245,64 @@ func TestOperationalCatalogPostgres(t *testing.T) {
 	priceA := create(t, prices, "owner-a", priceBody(itemA, listA, "999999999999999999", startA, `"2026-11-20"`))
 	nextA := create(t, prices, "owner-a", priceBody(itemA, listA, "0", "2026-11-21", "null"))
 	priceB := create(t, prices, "owner-b", priceBody(itemB, listB, "123", startA, "null"))
+	t.Run("descoberta filtra, ordena, limita e isola por tenant", func(t *testing.T) {
+		checkIDs := func(path, token string, want ...uuid.UUID) {
+			t.Helper()
+			body := request(t, handler, http.MethodGet, path, token, "", 200, "")
+			var result struct {
+				Items []struct{ ID uuid.UUID }
+			}
+			if err := json.Unmarshal(body, &result); err != nil || result.Items == nil {
+				t.Fatalf("coleção inválida: %s (%v)", body, err)
+			}
+			ids := make([]uuid.UUID, 0, len(result.Items))
+			for _, item := range result.Items {
+				ids = append(ids, item.ID)
+			}
+			if !slices.Equal(ids, want) {
+				t.Fatalf("%s: IDs %v, esperado %v", path, ids, want)
+			}
+		}
+		duplicate := create(t, items, "owner-a", serviceBody)
+		first := create(t, items, "owner-a", `{"kind":"service","name":"A sintético","unit":"service"}`)
+		create(t, items, "owner-a", `{"kind":"service","name":"A inativo sintético","unit":"service","active":false}`)
+		deleted := create(t, items, "owner-a", `{"kind":"service","name":"A excluído sintético","unit":"service"}`)
+		if _, err := admin.Exec(ctx, "UPDATE catalog.catalog_item SET deleted_at=now() WHERE id=$1", deleted); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.CreateItem(db.WithTenant(ctx, ownerA.TenantID), catalog.CatalogItem{
+			Kind: catalog.KindProduct, Name: "A produto sintético", Unit: catalog.UnitUnit, Active: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		tied := []uuid.UUID{itemA, duplicate}
+		slices.SortFunc(tied, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
+		checkIDs(items+"?q=%20SINT%C3%89TICO%20", "owner-a", first, tied[0], tied[1])
+		checkIDs(items+"?q=tico&limit=1", "owner-a", first)
+		checkIDs(items+"?q=tico", "owner-b", itemB)
+		checkIDs(items+"?q=%25", "owner-a")
+
+		future := create(t, lists, "owner-a", `{"name":"A tabela futura","valid_from":"2026-11-11"}`)
+		checkIDs(lists+"?on=2026-11-09", "owner-a")
+		checkIDs(lists+"?on=2026-11-10", "owner-a", listA)
+		checkIDs(lists+"?on=2026-11-11&q=TABELA", "owner-a", future, listA)
+		checkIDs(lists+"?on=2026-11-11&limit=1", "owner-a", future)
+		checkIDs(lists+"?on=2026-11-11", "owner-b", listB)
+		checkIDs(lists+"?on=2026-11-11&q=futura", "owner-b")
+	})
+
+	t.Run("descoberta rejeita filtros inválidos", func(t *testing.T) {
+		for _, path := range []string{
+			items + "?limit=0", items + "?limit=101", items + "?limit=1&limit=2",
+			items + "?q=a&q=b", items + "?q=%00", items + "?q=%FF", items + "?q=" + strings.Repeat("a", 201),
+			items + "?tenant_id=" + ownerB.TenantID.String(), items + "?on=2026-11-10",
+			lists, lists + "?on=2026-11-1", lists + "?on=0000-01-01",
+			lists + "?on=2026-02-30", lists + "?on=2026-11-10&on=2026-11-11",
+		} {
+			request(t, handler, http.MethodGet, path, "owner-a", "", 400, "VALIDATION_ERROR")
+		}
+	})
+
 	offerPath := func(itemID, listID uuid.UUID, on string) string {
 		return fmt.Sprintf("%s?item_id=%s&list_id=%s&on=%s", offers, itemID, listID, on)
 	}

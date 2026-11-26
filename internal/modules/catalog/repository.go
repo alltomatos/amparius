@@ -20,7 +20,7 @@ const (
 	UnitMonth   = "month"
 	UnitService = "service"
 
-	// DefaultListLimit e MaxListLimit limitam as listagens dev-only. O
+	// DefaultListLimit e MaxListLimit limitam as listagens de catálogo. O
 	// repositório nunca devolve mais que MaxListLimit linhas.
 	DefaultListLimit = 50
 	MaxListLimit     = 100

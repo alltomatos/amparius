@@ -20,6 +20,8 @@ admin e manager têm leitura e escrita, conforme o RBAC existente.
 | POST /v1/catalog/items | catalog:write | kind igual a service, name, unit e active opcional (padrão true) | 201 com o item |
 | POST /v1/catalog/price-lists | catalog:write | name e valid_from | 201 com a tabela |
 | POST /v1/catalog/prices | catalog:write | item_id, list_id, amount_cents, valid_from e valid_to opcional | 201 com o preço |
+| GET /v1/catalog/items | catalog:read | q e limit opcionais | 200 com items, coleção de serviços ativos |
+| GET /v1/catalog/price-lists | catalog:read | on=AAAA-MM-DD obrigatório, q e limit opcionais | 200 com items, coleção de tabelas disponíveis |
 | GET /v1/catalog/offers?item_id=…&list_id=…&on=AAAA-MM-DD | catalog:read | Os três parâmetros, cada um exatamente uma vez | 200 com item, price_list e price |
 
 O corpo dos POSTs é um objeto JSON de até 16 KiB, com campos conhecidos,
@@ -53,6 +55,25 @@ credencial ausente ou inválida, 403 para MFA, escopo ou permissão insuficiente
 e 503 quando a autenticação ou o catálogo estiver indisponível. Respostas
 protegidas usam Cache-Control: no-store.
 
+## Descoberta para a Loja 02
+
+A primeira fatia da [#75](https://github.com/alltomatos/amparius/issues/75)
+fornece à seleção de serviço do mockup duas coleções autenticadas de leitura.
+Cada item usa os mesmos campos da criação correspondente. A busca q é uma
+substring literal do nome, com até 200 caracteres após aparar espaços,
+insensível a caixa conforme a configuração do PostgreSQL. Ausência de q
+ou q vazio lista sem filtro por nome. A ordenação usa lower(name) e id
+como desempate, antes do corte. O limite padrão é 50 e aceita inteiros de
+1 a 100. Parâmetros desconhecidos, repetidos ou inválidos retornam
+400 VALIDATION_ERROR. Sem resultados, a resposta é 200 com `{"items":[]}`.
+
+Serviços inativos, excluídos logicamente e produtos ficam fora da busca.
+Uma tabela aparece desde valid_from inclusive. Use a mesma data civil on
+nas buscas de tabelas e de ofertas. A tabela pode existir sem preço para o
+serviço selecionado. GET /v1/catalog/offers continua responsável por
+confirmar se o par tem um único preço vigente. As consultas usam o tenant
+resolvido pela sessão e RLS no PostgreSQL.
+
 ## Uso pelo contrato e limites
 
 O módulo de catálogo expõe Repository.ResolveServiceOffer com contexto do
@@ -67,11 +88,9 @@ ambígua ou de outro tenant e provar que o valor enviado pelo cliente não
 substitui o preço persistido. O contrato
 legado de atendimento permanece separado dessa resolução.
 
-A fatia é online e consulta por IDs conhecidos. Descoberta e seleção no
-cliente operacional seguem na [#75](https://github.com/alltomatos/amparius/issues/75).
- Descoberta de serviços e
-tabelas, UI da Loja 02, catálogo offline, assinatura, cobrança e emissão
-fiscal ficam fora desta entrega. Com o bootstrap atual da API sem provedor
+A descoberta e a resolução de ofertas usam a API online. A integração com
+a UI privada da Loja 02 segue na #75. Catálogo offline, assinatura, cobrança
+e emissão fiscal seguem em fatias próprias. Com o bootstrap atual da API sem provedor
 OIDC/MFA, as rotas registradas falham fechado com 503. Os testes exercitam
 OIDC/MFA sintéticos e PostgreSQL real.
 
@@ -106,3 +125,13 @@ zero e o contêiner e o volume foram removidos. Também passaram `goose validate
 `go test ./... -count=1` sem DSNs, `go vet ./...`, `go build ./...` e
 `git diff --check`. A evidência cobre backend com autenticação sintética,
 sem execução em produção ou na interface.
+
+Na primeira fatia da #75, o comando direcionado acima passou no banco
+PostgreSQL 16 descartável com migrações até 0035. Os nove cenários do teste
+operacional passaram, incluindo 401, 403 de escopo e de RBAC, vazio,
+busca literal, filtros inválidos, ordenação, limite, vigência e isolamento
+com RLS ativo no papel amparius_app. Também passaram a integração dev e
+o teste de bootstrap. O pacote catá­logo levou 2,611 s. As contagens de
+tenants, itens, tabelas e preços ficaram em zero após a limpeza. O
+contêiner e seu volume foram removidos. OIDC/MFA usaram verificadores
+sintéticos.

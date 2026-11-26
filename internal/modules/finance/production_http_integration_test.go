@@ -226,7 +226,7 @@ func TestFinanceProductionHTTPPostgres(t *testing.T) {
 			}
 			return rec.Body.Bytes()
 		}
-		body := `{"installment_id":"` + installment.ID.String() + `","amount_cents":5000,"method":"pix","reference":"replay"}`
+		body := `{"installment_id":"` + installment.ID.String() + `","amount_cents":10000,"method":"pix","reference":"replay"}`
 		first := pay(handler, "owner-a", "k1", body)
 		var p1 struct{ ID string }
 		_ = json.Unmarshal(first, &p1)
@@ -242,6 +242,17 @@ func TestFinanceProductionHTTPPostgres(t *testing.T) {
 		}
 		if count != 1 {
 			t.Fatalf("esperado exatamente um lançamento, obtido %d", count)
+		}
+
+		// Sobrepagamento com chave diferente continua rejeitado: a parcela de
+		// 100,00 já foi quitada, então um segundo pagamento de 50,00 excede.
+		overpay := httptest.NewRequest(http.MethodPost, payments, strings.NewReader(`{"installment_id":"`+installment.ID.String()+`","amount_cents":5000,"method":"pix"}`)).WithContext(ctx)
+		overpay.Header.Set("Authorization", "Bearer owner-a")
+		overpay.Header.Set("Idempotency-Key", "k-over")
+		recOver := httptest.NewRecorder()
+		handler.ServeHTTP(recOver, overpay)
+		if recOver.Code != http.StatusConflict || !strings.Contains(recOver.Body.String(), "FINANCE_CONFLICT") {
+			t.Fatalf("sobrepagamento deveria ser 409, status=%d body=%s", recOver.Code, recOver.Body)
 		}
 
 		request(t, handler, http.MethodGet, titles+"/"+title.ID, "owner-b", "", 404, "FINANCE_REFERENCE_NOT_FOUND")

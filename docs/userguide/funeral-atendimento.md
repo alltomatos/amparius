@@ -4,7 +4,11 @@ Esta jornada é a sequência mínima do atendimento:
 
 1. Busque o cliente em `GET /_dev/parties?q=termo` ou `?query=termo`.
 2. Se não existir, cadastre-o em `POST /_dev/parties`. O cadastro não aceita
-   `tenant_id`; o tenant vem do contexto autenticado/dev-only.
+   `tenant_id`; o tenant vem do contexto autenticado/dev-only. Na API de
+   produção, pessoa física tem o contrato `POST` e `GET /v1/parties` (#72),
+   descrito em [autenticação e acesso](authentication.md#cadastro-de-pessoa-física-pela-api-autenticada-v1parties).
+   Ele ainda responde `503` até o provedor OIDC/MFA ser conectado; em ambiente
+   privado, teste só com dados sintéticos.
 3. Consulte ou cadastre o falecido e os familiares pelos endpoints de party.
    O contrato só aceita referências já existentes.
 4. Escolha o item do catálogo e abra o contrato. O contrato congela os itens e

@@ -18,13 +18,20 @@ sem Cadastros. https://manager.amparius.com/ mostrava Painel, Empresas,
 Licenças e Auditoria, com contexto fixo. O domínio .com.br serve probes
 conforme o [edge](../../deploy/staging/Caddyfile).
 
+Atualização da fatia #72 (26/11/2026), sobre a base b741578 da branch
+`feat/mvp-integrated-journey`: o cadastro de pessoa física autenticado
+(`POST` e `GET /v1/parties`, [contrato](../contracts/party-pf-v1.md) e
+[ADR 0041](../adr/0041-cadastro-pf-autenticado-v1.md)) entrou no backend. A
+prévia pública continua sintética e sem essa rota; o bootstrap de produção
+continua sem provedor OIDC/MFA e responde `503`.
+
 ## Loja
 
 | Referência | Prévia web após esta fatia | Go e Rust | Prioridade e dependência |
 | --- | --- | --- | --- |
 | Menus Loja 01–04 | **Funcional como navegação:** dez destinos com tela e indicador ativo, incluindo Cadastros e Sincronização. | Links e contexto da [prévia](../../web/staging/index.html). | P0 coberto nesta fatia visual. |
 | Loja 01 / CL-01 · Painel do dia | **Simulado.** Agenda e pendência demonstrativa, unidade fixa e estado da fila. KPIs operacionais e resumo mensal ausentes. | **Parcial:** projeção da fila na [UI Rust](../../client/src/ui/day_panel.rs). A API tem agenda por [contrato](../../internal/modules/funeral/schedule_http.go). | P1, projeção de agenda e pendências por contexto após cadastro e jornada. |
-| PRD RF-003/004 / Loja 02 / CL-02 · Partes | **Simulado.** Cadastrar exemplos PF, PJ, falecido e vínculo, filtrar e selecionar responsável no atendimento. | **Parcial:** [party dev](../../internal/modules/party/http.go) cria PF, busca e atualiza nome social. [Falecido](../../internal/modules/party/deceased_http.go) e [vínculo](../../internal/modules/party/family_link_http.go) têm criação e consulta por ID. PJ, contatos, endereços e consentimento continuam sem fluxo de cadastro integrado. Rust recebe IDs no [atendimento](../../client/src/ui/attendance.rs). | P0, fluxo PF/falecido/vínculo autenticado e consentimento; depois PJ, contato/endereço e cache autorizado. |
+| PRD RF-003/004 / Loja 02 / CL-02 · Partes | **Simulado.** Cadastrar exemplos PF, PJ, falecido e vínculo, filtrar e selecionar responsável no atendimento. | **Parcial:** [party dev](../../internal/modules/party/http.go) cria PF, busca e atualiza nome social. Para PF, [`/v1/parties`](../../internal/modules/party/production_http.go) (#72) cria e busca somente pessoas físicas no tenant do principal, com permissão e escopo; sem provedor OIDC/MFA no bootstrap responde `503`. [Falecido](../../internal/modules/party/deceased_http.go) e [vínculo](../../internal/modules/party/family_link_http.go) têm criação e consulta por ID. PJ, contatos, endereços e consentimento continuam sem fluxo de cadastro integrado. Rust recebe IDs no [atendimento](../../client/src/ui/attendance.rs). | P0. PF autenticado entregue na #72; falecido, vínculo e consentimento autenticados ficam na #73; depois PJ, contato/endereço e cache autorizado. |
 | PRD §4.1 / Loja 02 · Catálogo | **Simulado.** Produto ou serviço de exemplo; só serviços podem ser usados no atendimento. Sem preços ou regra fiscal. | **Parcial:** [catálogo dev](../../internal/modules/catalog/http.go) tem itens, listas e preços. Nenhum consumo no atendimento nativo identificado. | P0, leitura e escrita autorizadas, depois ofertas e vigências no contrato. |
 | Loja 02 / CL-02 · Atendimento e Contratos | **Simulado.** Escolha de responsável/serviço e enfileiramento com contrato ativo de exemplo. Jornada de contrato novo, pagamento e assinatura ausentes. | **Parcial:** [Go funeral](../../internal/modules/funeral/http.go) e [jornada](../../internal/modules/funeral/journey.go) cobrem contrato, OS e agenda em dev. Rust enfileira jornada por referência ativa. | P0, partir dos cadastros reais, montar contrato e confirmar OS/agenda. Implementar pagamento e assinatura em fatias distintas. |
 | CL-03 · Ordens e agenda | **Ausente.** Atendimento da prévia só representa o enfileiramento. | **Parcial:** [OS](../../internal/modules/funeral/service_order_http.go), [agenda](../../internal/modules/funeral/schedule_http.go) e UI [Rust](../../client/src/ui/render.rs) de ordens com estado derivado da fila. | P1, após contrato, testar criação, transição e conflito pelo caminho normal. |
@@ -58,7 +65,9 @@ conforme o [edge](../../deploy/staging/Caddyfile).
    exemplos, vincular familiar sem duplicar e usar responsável e serviço
    cadastrados no atendimento. Confirmar duas vezes mantém uma operação,
    reconexão permite simular o envio e recarregar repõe o cenário inicial.
-3. **Cadastros operacionais, próximo P0.** Em ambiente local ou privado,
+3. **Cadastros operacionais, próximo P0.** Pessoa física autenticada já está
+   no backend (#72). Falecido, vínculo familiar e consentimento seguem na #73.
+   Em ambiente local ou privado,
    autenticar com contexto de tenant e papel, emitir contrato versionado de
    PF/busca/falecido/vínculo e catálogo, testar 401/403, acesso cruzado negado,
    criação/consulta persistida e ausência de PII nos logs. Usar credenciais e
@@ -93,3 +102,13 @@ conforme o [edge](../../deploy/staging/Caddyfile).
   O teste em PostgreSQL avalia os handlers privados separadamente. Ficam
   pendentes gravação operacional pela web, OIDC real e sincronização ponta a
   ponta entre estação, relay e SaaS.
+- Fatia #72 (PF autenticado, ADR 0041): `go test -p 1 ./internal/modules/party
+  -run '^TestProductionPartiesIntegration' -count=1 -v` passou com 8 casos em
+  PostgreSQL 16 temporário, migrations até 0035 e papel `amparius_app` sem
+  superuser e sem bypass de RLS; o container foi removido. Os casos cobrem 401,
+  403 por papel, empresa sem vínculo, falha fechada sem provedor, criação e
+  busca persistidas, isolamento entre tenants, busca que não consome o limite
+  com pessoa jurídica e ausência de PII em erros e logs. Os dados são sintéticos
+  e o verificador OIDC é de teste. Não são evidência de produção, de OIDC/MFA,
+  de UI real nem das suítes legadas. Próxima fatia: #73 (falecido, vínculo
+  familiar e consentimento).

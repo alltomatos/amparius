@@ -206,9 +206,27 @@ func (r *Repository) List(ctx context.Context, limit int) ([]Party, error) {
 	return result, nil
 }
 
-// Search procura parties do tenant por nome civil, nome social ou documento.
-// A consulta retorna apenas dados já autorizados pelo tenant; não cria cadastro.
+// Search procura parties do tenant, de qualquer kind, por nome civil, nome
+// social ou documento. A consulta retorna apenas dados já autorizados pelo
+// tenant; não cria cadastro. Usada pelas rotas dev-only, que preservam a
+// busca irrestrita por kind.
 func (r *Repository) Search(ctx context.Context, query string, limit int) ([]Party, error) {
+	return r.search(ctx, query, limit, "")
+}
+
+// SearchPersons restringe a busca a pessoas físicas (kind=person) no SQL,
+// antes de ORDER/LIMIT — correção da issue #72: /v1/parties não deve devolver
+// pessoa jurídica mesmo quando ela compartilha o termo buscado e é mais
+// recente que a pessoa física correspondente.
+func (r *Repository) SearchPersons(ctx context.Context, query string, limit int) ([]Party, error) {
+	return r.search(ctx, query, limit, KindPerson)
+}
+
+// search é o núcleo compartilhado por Search e SearchPersons. kind vazio não
+// filtra por tipo (comportamento dev preservado); qualquer outro valor filtra
+// na própria cláusula WHERE, antes de ORDER BY/LIMIT, para que o corte de
+// limite nunca devolva um resultado do kind errado em vez do correto.
+func (r *Repository) search(ctx context.Context, query string, limit int, kind string) ([]Party, error) {
 	tenantID, err := db.TenantFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -225,8 +243,10 @@ func (r *Repository) Search(ctx context.Context, query string, limit int) ([]Par
 		rows, err := tx.Query(ctx, `SELECT p.id, p.tenant_id, p.kind, p.name, COALESCE(p.document, ''), p.status, pe.social_name
 			FROM party.party p
 			LEFT JOIN party.person pe ON pe.tenant_id = p.tenant_id AND pe.party_id = p.id
-			WHERE p.tenant_id = $1 AND (p.name ILIKE '%' || $2 || '%' OR COALESCE(pe.social_name, '') ILIKE '%' || $2 || '%' OR COALESCE(p.document, '') ILIKE '%' || $2 || '%')
-			ORDER BY p.updated_at DESC, p.id LIMIT $3`, tenantID, query, limit)
+			WHERE p.tenant_id = $1
+			  AND ($4 = '' OR p.kind = $4)
+			  AND (p.name ILIKE '%' || $2 || '%' OR COALESCE(pe.social_name, '') ILIKE '%' || $2 || '%' OR COALESCE(p.document, '') ILIKE '%' || $2 || '%')
+			ORDER BY p.updated_at DESC, p.id LIMIT $3`, tenantID, query, limit, kind)
 		if err != nil {
 			return err
 		}

@@ -60,16 +60,25 @@ type Querier interface {
 type DB struct{ pool *pgxpool.Pool }
 
 func New(ctx context.Context, dsn string) (*DB, error) {
+	database, err := NewLazy(ctx, dsn)
+	if err != nil {
+		return nil, err
+	}
+	if err := database.pool.Ping(ctx); err != nil {
+		database.Close()
+		return nil, fmt.Errorf("conectar ao PostgreSQL: %w", err)
+	}
+	return database, nil
+}
+
+// NewLazy prepara o pool e abre conexões sob demanda.
+func NewLazy(ctx context.Context, dsn string) (*DB, error) {
 	if dsn == "" {
 		return nil, errors.New("DSN do PostgreSQL vazio")
 	}
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("criar pool PostgreSQL: %w", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("conectar ao PostgreSQL: %w", err)
 	}
 	return &DB{pool: pool}, nil
 }

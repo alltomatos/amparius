@@ -276,9 +276,10 @@ func developmentTenantID(r *http.Request) (uuid.UUID, error) {
 	return tenantID, nil
 }
 
-// decodeDevelopmentJSONObject lê exatamente um objeto JSON do corpo e devolve
-// os bytes normalizados para uma segunda decodificação estrita.
-func decodeDevelopmentJSONObject(w http.ResponseWriter, r *http.Request) ([]byte, error) {
+// decodeJSONObject lê exatamente um objeto JSON do corpo e devolve os bytes
+// normalizados para uma segunda decodificação estrita. Compartilhado pelos
+// handlers de desenvolvimento e pelo contrato autenticado /v1.
+func decodeJSONObject(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxDevelopmentBodyBytes)
 	decoder := json.NewDecoder(r.Body)
 	var raw json.RawMessage
@@ -300,7 +301,7 @@ func decodeDevelopmentJSONObject(w http.ResponseWriter, r *http.Request) ([]byte
 }
 
 func decodeDevelopmentPartyBody(w http.ResponseWriter, r *http.Request) (developmentPartyPayload, error) {
-	trimmed, err := decodeDevelopmentJSONObject(w, r)
+	trimmed, err := decodeJSONObject(w, r)
 	if err != nil {
 		return developmentPartyPayload{}, err
 	}
@@ -316,7 +317,7 @@ func decodeDevelopmentPartyBody(w http.ResponseWriter, r *http.Request) (develop
 // decodeDevelopmentSocialNamePayload exige o campo social_name (texto ou null)
 // e rejeita qualquer outro campo. Devolve nil para null, vazio ou só espaços.
 func decodeDevelopmentSocialNamePayload(w http.ResponseWriter, r *http.Request) (*string, error) {
-	trimmed, err := decodeDevelopmentJSONObject(w, r)
+	trimmed, err := decodeJSONObject(w, r)
 	if err != nil {
 		return nil, err
 	}

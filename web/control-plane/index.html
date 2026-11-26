@@ -71,6 +71,17 @@
           Selecione um entitlement para ver o detalhe somente leitura.
         </section>
         <div id="entitlement-detail" class="detail-grid" data-name="entitlement-detail-body"></div>
+        <section class="detail-card" data-name="audit" aria-labelledby="audit-title">
+          <div class="toolbar entitlement-heading">
+            <div>
+              <p class="eyebrow">AUDITORIA</p>
+              <h2 id="audit-title">Eventos</h2>
+            </div>
+          </div>
+          <section id="audit-state" class="state-panel" data-name="audit-state" aria-live="polite">Selecione um entitlement.</section>
+          <ul id="audit-list" class="audit-list" data-name="audit-list"></ul>
+          <nav id="audit-pagination" class="pagination" aria-label="Paginacao de auditoria"></nav>
+        </section>
       </section></main>
     <script src="./helpers.js" defer></script>
     <script src="./app.js" defer></script>

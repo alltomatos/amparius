@@ -35,3 +35,21 @@ test("pageState", () => {
   assert.equal(H.pageState([], true, null), "loading");
   assert.equal(H.pageState([], false, new Error("x")), "error");
 });
+
+test("buildIdempotencyKey bounded and unique", () => {
+  const a = H.buildIdempotencyKey("grant", "funeral", 1);
+  const b = H.buildIdempotencyKey("grant", "funeral", 2);
+  assert.notEqual(a, b);
+  assert.ok(a.length <= 200);
+  assert.match(a, /grant-funeral-/);
+});
+
+test("parseVersion", () => {
+  assert.equal(H.parseVersion(3), 3);
+  assert.equal(H.parseVersion("0"), 0);
+  assert.equal(H.parseVersion(null), 0);
+});
+
+test("formatError includes trace", () => {
+  assert.equal(H.formatError({ code: "STALE_VERSION", message: "obsoleta", traceId: "t9" }), "STALE_VERSION: obsoleta (rastreio t9)");
+});

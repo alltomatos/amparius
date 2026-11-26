@@ -33,6 +33,24 @@
       if (!items || items.length === 0) return "empty";
       return "success";
     },
+    buildIdempotencyKey(intent, module, seed) {
+      const base = String(intent || "op").replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+      const mod = String(module || "module").replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+      const nonce = String(seed || Date.now()) + "-" + Math.random().toString(36).slice(2, 10);
+      const key = `${base}-${mod}-${nonce}`;
+      return key.length <= 200 ? key : key.slice(0, 200);
+    },
+    parseVersion(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : 0;
+    },
+    formatError(error) {
+      if (!error) return "";
+      const code = error.code || "ERRO";
+      const msg = error.message || "Falha desconhecida";
+      const trace = error.traceId ? ` (rastreio ${error.traceId})` : "";
+      return `${code}: ${msg}${trace}`;
+    },
   };
   if (typeof module !== "undefined" && module.exports) module.exports = helpers;
   root.AmpariusHelpers = helpers;

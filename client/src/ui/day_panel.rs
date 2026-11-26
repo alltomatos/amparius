@@ -202,6 +202,9 @@ pub struct SyncView {
     pub severity: Severity,
     pub can_start: bool,
     pub running: bool,
+    /// Indica que a ação disponível reapresenta operações ainda `pending`.
+    /// Nunca reabre conflito ou falha de negócio.
+    pub retry: bool,
 }
 
 impl SyncView {
@@ -216,6 +219,7 @@ impl SyncView {
                 severity: Severity::Neutral,
                 can_start: false,
                 running: false,
+                retry: false,
             }
         } else {
             Self {
@@ -226,6 +230,7 @@ impl SyncView {
                 severity: Severity::Info,
                 can_start: true,
                 running: false,
+                retry: false,
             }
         }
     }
@@ -237,6 +242,7 @@ impl SyncView {
             severity: Severity::Info,
             can_start: false,
             running: true,
+            retry: false,
         }
     }
 
@@ -247,6 +253,7 @@ impl SyncView {
             severity: Severity::Warning,
             can_start: false,
             running: false,
+            retry: false,
         }
     }
 
@@ -257,6 +264,7 @@ impl SyncView {
             severity: Severity::Danger,
             can_start: true,
             running: false,
+            retry: true,
         }
     }
 }
@@ -290,8 +298,9 @@ impl SyncSummary {
             label: "Sincronização concluída".to_owned(),
             detail: Some(detail),
             severity,
-            can_start: self.remaining_pending > 0 && self.stopped.is_none(),
+            can_start: self.remaining_pending > 0,
             running: false,
+            retry: self.stopped.is_some(),
         }
     }
 }

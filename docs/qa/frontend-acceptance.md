@@ -107,6 +107,35 @@ a projeção.
 **Então** a tela mostra código técnico e revisão necessária, bloqueia nova
 mutação para a OS e não aplica last-write-wins.
 
+## CL-05 — sincronização e revisão de conflitos
+
+### CL-A09 — backlog e resultado sem dados sensíveis
+
+**Dado** uma fila com pendências, duplicidades, falhas e conflitos
+**Quando** o operador abre "Sincronização e revisão"
+**Então** a tela lista operação, tipo, `seq`, status e código técnico, mostra
+as contagens do último `SyncReport` e não exibe payload, PII, tenant, dispositivo
+ou token.
+
+### CL-A10 — retry seguro
+
+**Dado** uma interrupção de transporte com operação ainda `pending`
+**Quando** o operador seleciona "Tentar novamente"
+**Então** o cliente reapresenta a mesma operação idempotente, sem nova
+sequência ou duplicata; falha terminal, conflito e rejeição fiscal não são
+reabertos pela UI.
+
+### CL-A11 — revisão sem last-write-wins
+
+**Dado** conflito financeiro ou fiscal com tarefa de revisão aberta
+**Quando** o operador seleciona "Abrir revisão"
+**Então** a tela abre o detalhe somente leitura, preserva o estado local e não
+resolve, fecha ou sobrescreve a operação.
+
 ## Evidência mínima do PR
 
-O PR deve anexar comandos reproduzíveis e saída para testes de contrato, acessibilidade/responsividade e fluxo offline. Sem evidência, a fatia permanece em andamento.
+O PR deve anexar comandos reproduzíveis e saída para testes de contrato, acessibilidade/responsividade e fluxo offline. Para CL-05, a evidência mínima inclui os testes headless do backlog e da revisão, além de `cargo test`, `cargo clippy` e `git diff --check`. Sem evidência, a fatia permanece em andamento.
+
+Contrato e decisão da CL-05: `docs/contracts/client-sync-review-v1.md` e
+`docs/adr/0037-cliente-sync-review.md`. Guia operacional:
+`docs/userguide/cliente-sincronizacao-revisao.md`.

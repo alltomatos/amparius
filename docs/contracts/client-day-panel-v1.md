@@ -98,6 +98,7 @@ botão "Tentar novamente".
 | "Sincronizar agora" | `sync_pending` em thread com runtime próprio; fila em `Arc<Mutex<_>>` | cada resultado passa por `reconcile`, que persiste antes de confirmar |
 | "Atualizar"/"Recarregar estado" | reabre a fila do disco | leitura |
 | "Tentar novamente" (erro) | reabre a fila | leitura |
+| "Sincronização e revisão" | abre a tela CL-05 | leitura |
 
 Bloqueios: "Atualizar" é recusado enquanto uma sincronização roda. A tela não
 resolve conflito, não reaplica local e não cria atendimento/ordem de serviço —
@@ -129,10 +130,10 @@ isso pertence a CL-02/CL-03/CL-05.
 - `client/src/ui/day_panel.rs`: 9 testes de estado (vazio, offline,
   contingência, conflito/falha priorizados, ausência de identidade/payload,
   indisponibilidade de sync, erro fatal, horário local, sanitização).
-- `client/src/ui/render.rs`: 3 testes de renderização headless com `egui_kittest`
+- `client/src/ui/render.rs`: 5 testes de renderização headless com `egui_kittest`
   (árvore de UI real: vazio, conflito/revisão e erro fatal com ação).
 - `client/src/ui/app.rs`: 2 testes de mapeamento de `SyncReport` e configuração.
-- Suíte total do cliente: 39 testes.
+- Suíte total do cliente: 51 testes.
 
 ## Fora de escopo / limites
 

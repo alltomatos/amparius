@@ -1,8 +1,9 @@
-# Painel do dia do cliente (CL-01)
+# Painel do dia e sincronização do cliente (CL-01/CL-05)
 
 Guia da tela inicial da estação Amparius. Ela mostra o estado da fila offline da
-estação e permite sincronizar com o relay local. Atendimento funeral, ordens de
-serviço e revisão de conflito têm telas próprias e ainda não estão nesta versão.
+estação e permite sincronizar com o relay local. A ação **Sincronização e
+revisão** abre a tela CL-05 com backlog, resultado do transporte e tarefas de
+revisão somente leitura.
 
 ## Antes de abrir
 
@@ -50,6 +51,20 @@ A credencial fica apenas em memória, nunca aparece na tela e nunca é gravada.
    preservado; a tela não sobrescreve nada.
 6. **Rodapé** — botão Atualizar e horário da última sincronização.
 
+## Tela de sincronização e revisão (CL-05)
+
+A tela mostra o backlog por sequência e tipo, com status, tentativas e código
+técnico sanitizado. O resultado da última execução separa sincronizadas,
+duplicadas, falhas, conflitos e retentativas. Nenhum payload, tenant,
+dispositivo, token ou PII aparece na tela.
+
+- **Tentar novamente** reapresenta somente operações ainda pendentes. A mesma
+  operação idempotente é enviada; uma nova sequência nunca é criada.
+- **Abrir revisão** exibe a tarefa e seu código em modo somente leitura.
+  Não existe resolução automática nem `last-write-wins`.
+- Conflito financeiro ou fiscal permanece bloqueado e exige revisão autorizada;
+  rejeição fiscal não é reenviada pela tela.
+
 ## Ações
 
 - **Escolher conexão** (Online/Offline/Contingência): registra o estado real da
@@ -60,8 +75,8 @@ A credencial fica apenas em memória, nunca aparece na tela e nunca é gravada.
   para a próxima tentativa.
 - **Atualizar**: relê a fila do disco. Fica bloqueado enquanto uma sincronização
   está em andamento.
-- **Conflito ou falha**: abra a tela de sincronização e conflitos (fatia futura)
-  para revisar. Não existe botão de "resolver" no painel.
+- **Conflito ou falha**: abra a tela de sincronização e conflitos para revisar.
+  Não existe botão de "resolver" no cliente.
 
 ## Quando algo dá errado
 
@@ -83,5 +98,7 @@ atual. Limite conhecido desta versão: não há anúncio automático equivalente
 ## Referências
 
 - Contrato da tela: [client-day-panel-v1.md](../contracts/client-day-panel-v1.md)
+- Contrato de sincronização e revisão: [client-sync-review-v1.md](../contracts/client-sync-review-v1.md)
+- Guia da tela CL-05: [cliente-sincronizacao-revisao.md](cliente-sincronizacao-revisao.md)
 - Fila e reconciliação: [client-offline-state-v1.md](../contracts/client-offline-state-v1.md)
 - Decisão de interface: [ADR 0036](../adr/0036-cliente-ui-nativa-egui-painel-dia.md)

@@ -1,6 +1,6 @@
 # ADR 0036 — UI nativa do cliente (egui/eframe) e modelo de apresentação do painel do dia
 
-- **Status:** aceito em 25/11/2026 — CL-01; estendido em 26/11/2026 — CL-02/CL-03
+- **Status:** aceito em 25/11/2026 — CL-01; estendido em 26/11/2026 — CL-02/CL-03/CL-05
 - **Escopo:** primeira superfície gráfica do cliente de estação Rust (`client/`)
 - **Relaciona-se com:** ADR 0001 (stack), ADR 0002 (operação offline), ADR 0006
   (instalador e papéis), ADR 0023/0034/0035 (fila e transporte), ADR 0026
@@ -42,8 +42,8 @@ reuse o mesmo modelo, tokens e códigos — sem criar um terceiro produto de dad
    `idle/running/completed/unavailable/failed`. Não existe tela em branco.
 4. **Nada de last-write-wins na UI.** Linha em `conflict` ou `failed` mostra
    código técnico filtrado e o aviso de que o valor local foi preservado e exige
-   revisão. A UI desta fatia **não** resolve conflito; CL-05 fará isso com
-   registro de revisão.
+   revisão. A UI não resolve conflito; CL-05 registra a tarefa e abre seu
+   detalhe somente leitura, sem aplicar last-write-wins.
 5. **Sem PII e sem payload.** O modelo expõe apenas `seq`, tipo de operação,
    referência opaca (`entity_id` já validado em `lib.rs`), estado, tentativas,
    horário local, idade e código técnico sanitizado. Payload, XML fiscal,
@@ -98,7 +98,8 @@ reuse o mesmo modelo, tokens e códigos — sem criar um terceiro produto de dad
   `egui_kittest` sem backend gráfico (somente árvore de UI).
 - Boot e primeiro quadro passam a ser medidos e logados
   (`client first frame` com `boot_ms`) para evidência de entrega.
-- A resolução de conflito permanece fora desta fatia; CL-05 fará a revisão.
+- A resolução de conflito permanece fora do cliente; CL-05 entrega backlog e
+  revisão somente leitura. A decisão autorizada exige fluxo posterior próprio.
   CL-02/CL-03 reutilizam a mesma fila e os mesmos tokens. CL-03 projeta as OS
   conhecidas pela fila, envia avanço/pausa/conclusão com `expected_version` e
   chave própria por mutação, bloqueia nova mutação enquanto houver

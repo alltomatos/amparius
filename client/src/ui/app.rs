@@ -23,7 +23,7 @@ use crate::ui::day_panel::{
     Notice, PanelContext, PanelError, PanelPhase, SCREEN_ID, Severity, SyncSummary, SyncView,
     present,
 };
-use crate::ui::render::{DayPanelActions, render};
+use crate::ui::render::{DayPanelActions, SyncPanelActions, render, render_review, render_sync};
 use crate::ui::theme;
 use crate::{ClientQueue, ConnectivityState, unix_now};
 
@@ -86,6 +86,7 @@ pub struct ClientApp {
     notice: Option<Notice>,
     sync: SyncView,
     sync_rx: Option<Receiver<SyncOutcome>>,
+    last_report: Option<SyncReport>,
     last_sync_at: Option<u64>,
     started: Instant,
     first_frame: bool,
@@ -93,12 +94,15 @@ pub struct ClientApp {
     screen: Screen,
     attendance_form: AttendanceForm,
     attendance_status: AttendanceStatus,
+    selected_review: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
     Day,
     Attendance,
+    Sync,
+    Review,
 }
 
 impl ClientApp {
@@ -131,6 +135,7 @@ impl ClientApp {
             notice: None,
             sync,
             sync_rx: None,
+            last_report: None,
             last_sync_at: None,
             started,
             first_frame: true,
@@ -138,6 +143,7 @@ impl ClientApp {
             screen: Screen::Day,
             attendance_form: AttendanceForm::default(),
             attendance_status: AttendanceStatus::Ready,
+            selected_review: None,
         }
     }
 
@@ -148,6 +154,7 @@ impl ClientApp {
         match rx.try_recv() {
             Ok(SyncOutcome::Done(report)) => {
                 self.last_sync_at = Some(unix_now());
+                self.last_report = Some(report.clone());
                 self.sync = report_view(&report);
                 self.notice = None;
                 info!(
@@ -287,6 +294,47 @@ impl ClientApp {
         if actions.open_attendance {
             self.screen = Screen::Attendance;
             self.attendance_status = AttendanceStatus::Ready;
+        }
+        if actions.open_sync {
+            self.screen = Screen::Sync;
+        }
+        if let Some(operation_id) = actions.open_review {
+            self.selected_review = Some(operation_id);
+            self.screen = Screen::Review;
+        }
+    }
+
+    fn panel_view(&self, now: u64) -> crate::ui::day_panel::DayPanelView {
+        let guard = self.queue.as_ref().map(|queue| lock(queue));
+        let queue_ref = guard.as_deref();
+        let phase = if queue_ref.is_some() {
+            PanelPhase::Ready
+        } else {
+            PanelPhase::Error
+        };
+        let view = present(PanelContext {
+            queue: queue_ref,
+            phase,
+            error: self.open_error.clone(),
+            notice: self.notice.clone(),
+            sync: self.sync.clone(),
+            last_sync_at: self.last_sync_at,
+            now,
+        });
+        drop(guard);
+        view
+    }
+
+    fn handle_sync_actions(&mut self, actions: SyncPanelActions) {
+        if actions.sync {
+            self.start_sync();
+        }
+        if let Some(operation_id) = actions.open_review {
+            self.selected_review = Some(operation_id);
+            self.screen = Screen::Review;
+        }
+        if actions.back {
+            self.screen = Screen::Sync;
         }
     }
 
@@ -494,6 +542,39 @@ impl eframe::App for ClientApp {
             if title != self.last_title {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
                 self.last_title = title;
+            }
+            return;
+        }
+
+        if matches!(self.screen, Screen::Sync | Screen::Review) {
+            let now = unix_now();
+            let view = self.panel_view(now);
+            let mut actions = SyncPanelActions::default();
+            egui::CentralPanel::default()
+                .frame(
+                    egui::Frame::new()
+                        .fill(theme::palette(ui.visuals().dark_mode).surface)
+                        .inner_margin(egui::Margin::symmetric(16, 12)),
+                )
+                .show(ui, |ui| match self.screen {
+                    Screen::Sync => render_sync(ui, &view, self.last_report.as_ref(), &mut actions),
+                    Screen::Review => {
+                        render_review(ui, &view, self.selected_review.as_deref(), &mut actions)
+                    }
+                    Screen::Day | Screen::Attendance => unreachable!(),
+                });
+            self.handle_sync_actions(actions);
+            if self.sync.running {
+                ctx.request_repaint_after(Duration::from_millis(120));
+            }
+            let title = if self.screen == Screen::Review {
+                "Amparius — Revisão de sincronização"
+            } else {
+                "Amparius — Sincronização e revisão"
+            };
+            if title != self.last_title {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.to_owned()));
+                self.last_title = title.to_owned();
             }
             return;
         }
@@ -753,7 +834,8 @@ mod tests {
             stopped: Some(SyncStop::TransportTimeout),
         };
         let view = report_view(&report);
-        assert!(!view.can_start);
+        assert!(view.can_start);
+        assert!(view.retry);
         assert_eq!(view.severity, Severity::Warning);
         let detail = view.detail.unwrap_or_default();
         assert!(detail.contains("transport_timeout"));

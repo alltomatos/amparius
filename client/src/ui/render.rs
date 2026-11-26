@@ -10,6 +10,7 @@ use super::attendance::{
 };
 use super::day_panel::{DayPanelView, Notice, PanelPhase, Severity, StatusChip, SyncView};
 use super::theme::{Palette, palette, status_colors};
+use crate::transport::SyncReport;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DayPanelActions {
@@ -17,6 +18,15 @@ pub struct DayPanelActions {
     pub reload: bool,
     pub set_connectivity: Option<crate::ConnectivityState>,
     pub open_attendance: bool,
+    pub open_sync: bool,
+    pub open_review: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct SyncPanelActions {
+    pub back: bool,
+    pub sync: bool,
+    pub open_review: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -59,8 +69,8 @@ pub fn render(ui: &mut egui::Ui, view: &DayPanelView, actions: &mut DayPanelActi
             if view.empty {
                 empty(ui, &palette, actions);
             } else {
-                operations(ui, view, &palette);
-                reviews(ui, view, &palette);
+                operations(ui, view, &palette, actions);
+                reviews(ui, view, &palette, actions);
             }
 
             footer(ui, view, &palette, actions);
@@ -85,6 +95,12 @@ fn header(
             .clicked()
         {
             actions.open_attendance = true;
+        }
+        if ui
+            .add(egui::Button::new("Sincronização e revisão").min_size(egui::vec2(210.0, 44.0)))
+            .clicked()
+        {
+            actions.open_sync = true;
         }
     });
     ui.add_space(4.0);
@@ -531,6 +547,8 @@ fn sync_panel(
         ui.add_space(6.0);
         let button = egui::Button::new(if sync.running {
             "Sincronizando…"
+        } else if sync.retry {
+            "Tentar novamente"
         } else {
             "Sincronizar agora"
         })
@@ -541,7 +559,12 @@ fn sync_panel(
     });
 }
 
-fn operations(ui: &mut egui::Ui, view: &DayPanelView, palette: &Palette) {
+fn operations(
+    ui: &mut egui::Ui,
+    view: &DayPanelView,
+    palette: &Palette,
+    actions: &mut DayPanelActions,
+) {
     ui.label(RichText::new("Operações").strong().color(palette.text));
     ui.add_space(4.0);
     for row in &view.operations {
@@ -586,6 +609,12 @@ fn operations(ui: &mut egui::Ui, view: &DayPanelView, palette: &Palette) {
                         .small()
                         .color(palette.danger),
                 );
+                if ui
+                    .add(egui::Button::new("Abrir revisão").min_size(egui::vec2(160.0, 44.0)))
+                    .clicked()
+                {
+                    actions.open_review = Some(row.operation_id.clone());
+                }
             }
         });
         ui.add_space(6.0);
@@ -605,7 +634,12 @@ fn chip(ui: &mut egui::Ui, chip: &StatusChip, fg: Color32, bg: Color32) {
         });
 }
 
-fn reviews(ui: &mut egui::Ui, view: &DayPanelView, palette: &Palette) {
+fn reviews(
+    ui: &mut egui::Ui,
+    view: &DayPanelView,
+    palette: &Palette,
+    actions: &mut DayPanelActions,
+) {
     if view.reviews.is_empty() {
         return;
     }
@@ -634,10 +668,289 @@ fn reviews(ui: &mut egui::Ui, view: &DayPanelView, palette: &Palette) {
                 .color(palette.text_muted),
             );
             ui.label(RichText::new(review.guidance).small().color(palette.text));
-            let _ = &review.task_id;
+            if ui
+                .add(egui::Button::new("Abrir revisão").min_size(egui::vec2(160.0, 44.0)))
+                .clicked()
+            {
+                actions.open_review = Some(review.operation_id.clone());
+            }
         });
         ui.add_space(6.0);
     }
+}
+
+/// Renderiza a tela CL-05 com backlog, resultado da execução e revisões.
+/// Todas as ações permanecem limitadas a reapresentar `pending` ou abrir uma
+/// tarefa; nenhuma ação resolve conflito ou altera valor.
+pub fn render_sync(
+    ui: &mut egui::Ui,
+    view: &DayPanelView,
+    report: Option<&SyncReport>,
+    actions: &mut SyncPanelActions,
+) {
+    let palette = palette(ui.visuals().dark_mode);
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.heading(RichText::new("Sincronização e revisão").color(palette.brand_900));
+                ui.label(
+                    RichText::new("CL-05 · backlog, reconciliação e tarefas de revisão")
+                        .small()
+                        .color(palette.text_muted),
+                );
+            });
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(&view.status_line)
+                    .color(palette.text)
+                    .size(16.0),
+            );
+            ui.add_space(12.0);
+
+            panel_frame(palette.surface_alt, palette.border).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(
+                    RichText::new("Resultado da sincronização")
+                        .strong()
+                        .color(palette.text),
+                );
+                if let Some(report) = report {
+                    ui.horizontal_wrapped(|ui| {
+                        sync_count(
+                            ui,
+                            "Sincronizadas",
+                            report.synced,
+                            Severity::Success,
+                            &palette,
+                        );
+                        sync_count(
+                            ui,
+                            "Duplicadas",
+                            report.duplicates,
+                            Severity::Info,
+                            &palette,
+                        );
+                        sync_count(ui, "Falhas", report.rejected, Severity::Danger, &palette);
+                        sync_count(
+                            ui,
+                            "Conflitos",
+                            report.conflicts,
+                            Severity::Danger,
+                            &palette,
+                        );
+                        sync_count(
+                            ui,
+                            "Retentativas",
+                            report.retried,
+                            Severity::Warning,
+                            &palette,
+                        );
+                    });
+                } else {
+                    ui.label(
+                        RichText::new("Ainda não houve uma execução do transporte.")
+                            .color(palette.text_muted),
+                    );
+                }
+            });
+            ui.add_space(12.0);
+
+            panel_frame(palette.surface_alt, palette.border).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        RichText::new("Backlog da estação")
+                            .strong()
+                            .color(palette.text),
+                    );
+                    if view.sync.running {
+                        ui.add(egui::Spinner::new().size(16.0));
+                    }
+                });
+                ui.label(
+                    RichText::new(format!(
+                        "{} pendente(s), {} nova(s) tentativa(s), {} falha(s), {} conflito(s).",
+                        view.counters.pending,
+                        view.counters.retrying,
+                        view.counters.failed,
+                        view.counters.conflict
+                    ))
+                    .small()
+                    .color(palette.text_muted),
+                );
+                ui.add_space(6.0);
+                let label = if view.sync.retry {
+                    "Tentar novamente"
+                } else {
+                    "Sincronizar agora"
+                };
+                if ui
+                    .add_enabled(
+                        view.sync.can_start && !view.sync.running,
+                        egui::Button::new(label).min_size(egui::vec2(200.0, 44.0)),
+                    )
+                    .clicked()
+                {
+                    actions.sync = true;
+                }
+            });
+            ui.add_space(12.0);
+
+            ui.label(
+                RichText::new("Operações do backlog")
+                    .strong()
+                    .color(palette.text),
+            );
+            for row in &view.operations {
+                let (fg, bg) = status_colors(row.status.severity, &palette);
+                panel_frame(palette.surface_alt, palette.border).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            RichText::new(format!("#{}", row.seq))
+                                .monospace()
+                                .strong()
+                                .color(palette.text_muted),
+                        );
+                        ui.label(RichText::new(row.kind).strong().color(palette.text));
+                        chip(ui, &row.status, fg, bg);
+                    });
+                    ui.label(
+                        RichText::new(format!(
+                            "Operação {} · referência {}",
+                            row.operation_id, row.entity_ref
+                        ))
+                        .monospace()
+                        .small()
+                        .color(palette.text_muted),
+                    );
+                    if let Some(code) = &row.error_code {
+                        ui.label(
+                            RichText::new(format!("Código: {code}"))
+                                .monospace()
+                                .small()
+                                .color(palette.text_muted),
+                        );
+                    }
+                    if row.needs_review {
+                        ui.label(
+                            RichText::new("Bloqueada para revisão; nenhum valor foi sobrescrito.")
+                                .small()
+                                .color(palette.danger),
+                        );
+                        if ui
+                            .add(
+                                egui::Button::new("Abrir revisão")
+                                    .min_size(egui::vec2(160.0, 44.0)),
+                            )
+                            .clicked()
+                        {
+                            actions.open_review = Some(row.operation_id.clone());
+                        }
+                    }
+                });
+                ui.add_space(6.0);
+            }
+
+            if view.reviews.is_empty() {
+                ui.label(
+                    RichText::new("Nenhuma tarefa de revisão aberta.").color(palette.text_muted),
+                );
+            } else {
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new("Tarefas de revisão")
+                        .strong()
+                        .color(palette.text),
+                );
+                for review in &view.reviews {
+                    let (fg, bg) = status_colors(review.severity, &palette);
+                    panel_frame(bg, fg).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(RichText::new(review.kind).strong().color(palette.text));
+                        ui.label(
+                            RichText::new(format!(
+                                "Operação {} · código {}",
+                                review.operation_id, review.code
+                            ))
+                            .monospace()
+                            .small()
+                            .color(palette.text_muted),
+                        );
+                        ui.label(RichText::new(review.guidance).small().color(palette.text));
+                        if ui
+                            .add(
+                                egui::Button::new("Abrir revisão")
+                                    .min_size(egui::vec2(160.0, 44.0)),
+                            )
+                            .clicked()
+                        {
+                            actions.open_review = Some(review.operation_id.clone());
+                        }
+                    });
+                    ui.add_space(6.0);
+                }
+            }
+
+            ui.add_space(12.0);
+            if ui
+                .add(egui::Button::new("Voltar ao painel").min_size(egui::vec2(180.0, 44.0)))
+                .clicked()
+            {
+                actions.back = true;
+            }
+        });
+}
+
+fn sync_count(ui: &mut egui::Ui, label: &str, value: u32, severity: Severity, palette: &Palette) {
+    let (fg, bg) = status_colors(severity, palette);
+    panel_frame(bg, palette.border).show(ui, |ui| {
+        ui.vertical(|ui| {
+            ui.label(RichText::new(label).small().color(palette.text_muted));
+            ui.label(RichText::new(value.to_string()).strong().color(fg));
+        });
+    });
+}
+
+pub fn render_review(
+    ui: &mut egui::Ui,
+    view: &DayPanelView,
+    operation_id: Option<&str>,
+    actions: &mut SyncPanelActions,
+) {
+    let palette = palette(ui.visuals().dark_mode);
+    ui.vertical(|ui| {
+        ui.heading(RichText::new("Revisão de sincronização").color(palette.brand_900));
+        ui.label(RichText::new("CL-05 · conflito sem resolução automática").small().color(palette.text_muted));
+        ui.add_space(12.0);
+        if let Some(review) = view
+            .reviews
+            .iter()
+            .find(|review| Some(review.operation_id.as_str()) == operation_id)
+            .or_else(|| view.reviews.first())
+        {
+            let (fg, bg) = status_colors(review.severity, &palette);
+            panel_frame(bg, fg).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(RichText::new(review.kind).strong().color(palette.text));
+                ui.label(RichText::new(format!("Operação {}", review.operation_id)).monospace().color(palette.text_muted));
+                ui.label(RichText::new(format!("Código técnico: {}", review.code)).monospace().color(palette.text_muted));
+                ui.add_space(6.0);
+                ui.label(RichText::new(review.guidance).color(palette.text));
+                ui.label(RichText::new("O cliente não resolve esta tarefa nem aplica last-write-wins. O valor local permanece preservado.").strong().color(palette.danger));
+            });
+        } else {
+            ui.label(RichText::new("Nenhuma tarefa de revisão selecionada.").color(palette.text_muted));
+        }
+        ui.add_space(12.0);
+        if ui
+            .add(egui::Button::new("Voltar à sincronização").min_size(egui::vec2(220.0, 44.0)))
+            .clicked()
+        {
+            actions.back = true;
+        }
+    });
 }
 
 fn empty(ui: &mut egui::Ui, palette: &Palette, actions: &mut DayPanelActions) {
@@ -747,7 +1060,7 @@ pub fn required_labels(view: &DayPanelView) -> HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::day_panel::{PanelContext, PanelError, present};
+    use crate::ui::day_panel::{PanelContext, PanelError, SyncSummary, present};
     use crate::{ClientQueue, ConnectivityState};
     use egui_kittest::kittest::Queryable;
 
@@ -792,6 +1105,101 @@ mod tests {
         harness.get_by_label("Conflito");
         harness.get_by_label("Revisão necessária");
         harness.get_by_label("Requer revisão; o valor local foi preservado.");
+    }
+
+    #[test]
+    fn renders_sync_backlog_report_and_review_action_without_payload() {
+        let mut queue = ClientQueue::new("tenant-teste", "node-teste").expect("queue");
+        let pending = queue
+            .enqueue("operator-1", contract("retry-1"), 100)
+            .expect("pending");
+        queue
+            .reconcile(
+                &pending.operation.operation_id,
+                crate::ReconciliationOutcome::Retry {
+                    reason: crate::RetryReason::TransportTimeout,
+                },
+                110,
+            )
+            .expect("retry");
+        let conflict = queue
+            .enqueue("operator-1", contract("conflict-1"), 120)
+            .expect("conflict");
+        queue
+            .reconcile(
+                &conflict.operation.operation_id,
+                crate::ReconciliationOutcome::Conflict {
+                    code: "money_version_conflict<script>".to_owned(),
+                },
+                130,
+            )
+            .expect("conflict");
+        let view = present(PanelContext {
+            queue: Some(&queue),
+            phase: PanelPhase::Ready,
+            error: None,
+            notice: None,
+            sync: SyncSummary {
+                synced: 1,
+                duplicates: 2,
+                conflicts: 1,
+                rejected: 1,
+                retried: 1,
+                remaining_pending: 1,
+                stopped: Some("transport_timeout"),
+            }
+            .view(),
+            last_sync_at: None,
+            now: 200,
+        });
+        let report = SyncReport {
+            synced: 1,
+            duplicates: 2,
+            conflicts: 1,
+            rejected: 1,
+            retried: 1,
+            remaining_pending: 1,
+            ..SyncReport::default()
+        };
+        let text = view.visible_text().join("\n");
+        assert!(!text.contains("total_cents"));
+        assert!(!text.contains("operator-1"));
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            let mut actions = SyncPanelActions::default();
+            render_sync(ui, &view, Some(&report), &mut actions);
+        });
+        harness.run();
+        harness.get_by_label("Sincronização e revisão");
+        harness.get_by_label("Backlog da estação");
+        harness.get_by_label("Duplicadas");
+        harness.get_by_label("Tentar novamente");
+        assert!(harness.get_all_by_label("Abrir revisão").count() >= 2);
+    }
+
+    #[test]
+    fn renders_review_detail_as_read_only_without_payload() {
+        let view = conflict_view();
+        let operation_id = view
+            .reviews
+            .first()
+            .map(|review| review.operation_id.clone());
+        let mut harness = egui_kittest::Harness::new_ui(move |ui| {
+            let mut actions = SyncPanelActions::default();
+            render_review(ui, &view, operation_id.as_deref(), &mut actions);
+        });
+        harness.run();
+        harness.get_by_label("Revisão de sincronização");
+        harness.get_by_label("O cliente não resolve esta tarefa nem aplica last-write-wins. O valor local permanece preservado.");
+        harness.get_by_label("Voltar à sincronização");
+    }
+
+    fn contract(key: &str) -> crate::OperationDraft {
+        crate::OperationDraft {
+            kind: crate::OperationKind::ContractCreate,
+            entity_id: "contract-1".to_owned(),
+            idempotency_key: key.to_owned(),
+            payload: serde_json::json!({"total_cents": 100, "currency": "BRL"}),
+        }
     }
 
     fn conflict_view() -> DayPanelView {

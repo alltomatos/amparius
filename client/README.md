@@ -39,9 +39,14 @@ botão desabilitado; nada é simulado.
 A tela mostra online/offline/contingência, contadores da fila
 (pendentes/sincronizadas/falhas/conflitos/novas tentativas), operações
 priorizadas (conflito e falha primeiro), tarefas de revisão, códigos técnicos
-sanitizados e o resultado da sincronização. Conflito nunca é resolvido pela
-tela e o valor local é preservado. Contrato: `docs/contracts/client-day-panel-v1.md`;
+sanitizados e o resultado da sincronização. O botão **Sincronização e
+revisão** abre a tela CL-05 com backlog, duplicadas, falhas, conflitos e
+tarefas abertas. **Tentar novamente** reapresenta somente `pending`; **Abrir
+revisão** é somente leitura. Conflito nunca é resolvido pela tela e o valor
+local é preservado. Contrato: `docs/contracts/client-day-panel-v1.md` e
+`docs/contracts/client-sync-review-v1.md`;
 decisão de stack: `docs/adr/0036-cliente-ui-nativa-egui-painel-dia.md`.
+Decisão específica da tela: `docs/adr/0037-cliente-sync-review.md`.
 ## Atendimento funeral (CL-02)
 
 A tela nativa "Atendimento funeral" usa referências opacas e permite três
@@ -147,7 +152,7 @@ cargo clippy --locked --manifest-path client/Cargo.toml --all-targets -- -D warn
 git diff --check
 ```
 
-Medições desta entrega (build `dev`, Windows, 25/11/2026): 39 testes verdes,
+Medições desta entrega (build `dev`, Windows, 26/11/2026): 51 testes verdes,
 `fmt` e `clippy -D warnings` limpos, primeiro quadro registrado em
 `boot_ms=129` e janela aberta com o título refletindo o estado
 (`Amparius - Online - 0 pendente(s)`). A fila real em disco foi criada na

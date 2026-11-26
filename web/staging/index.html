@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Amparius · Homologação</title>
+    <link rel="stylesheet" href="/painel/styles.css">
+    <link rel="stylesheet" href="/staging.css">
+    <script src="/client-demo.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">AMPARIUS</p>
+          <h1>Cliente web · Painel do dia</h1>
+        </div>
+        <a href="/painel/">Abrir painel SaaS</a>
+      </header>
+      <section class="context-card" aria-labelledby="scenario-title">
+        <div>
+          <h2 id="scenario-title">Atendimento funeral de demonstração</h2>
+          <p class="muted">Dados sintéticos. A fila desta demonstração existe nesta aba até recarregar a página.</p>
+        </div>
+        <p class="context-badge" id="connection" role="status">Offline simulado</p>
+      </section>
+      <section class="state-panel" aria-labelledby="queue-title">
+        <h2 id="queue-title">Fila da estação</h2>
+        <p id="pending" role="status">Nenhuma operação registrada.</p>
+        <ul id="operations"></ul>
+        <div class="detail-actions">
+          <button type="button" id="queue">Enfileirar atendimento de exemplo</button>
+          <button type="button" id="connect">Simular reconexão</button>
+          <button type="button" id="sync" disabled>Simular sincronização</button>
+        </div>
+        <p id="feedback" role="status">Nenhuma conexão com o relay é usada nesta demonstração.</p>
+      </section>
+    </main>
+  </body>
+</html>

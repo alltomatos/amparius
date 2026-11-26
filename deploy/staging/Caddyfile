@@ -7,7 +7,7 @@
 	}
 }
 
-hml.amparius.com, hml.amparius.com.br {
+(staging_api) {
 	tls {
 		issuer acme {
 			disable_http_challenge
@@ -21,6 +21,34 @@ hml.amparius.com, hml.amparius.com.br {
 	handle @health {
 		reverse_proxy 127.0.0.1:18080
 	}
+}
+
+hml.amparius.com {
+	import staging_api
+
+	@preview {
+		method GET HEAD
+		path / /staging.css /client-demo.js /painel/ /painel/styles.css /painel/helpers.js /painel/app.js /painel/panel-demo.js
+	}
+	handle @preview {
+		root * /srv/amparius-preview
+		header {
+			Cache-Control "no-store"
+			Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+			X-Content-Type-Options "nosniff"
+			Referrer-Policy "no-referrer"
+			X-Robots-Tag "noindex, nofollow"
+		}
+		file_server
+	}
+	handle {
+		respond 404
+	}
+}
+
+hml.amparius.com.br {
+	import staging_api
+
 	handle {
 		respond 404
 	}

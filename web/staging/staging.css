@@ -1,0 +1,5 @@
+.demo-nav { margin-bottom: 24px; }
+.demo-nav a, .topbar a { color: var(--blue); }
+.state-panel:has(#operations) { display: grid; gap: 12px; }
+#operations { margin: 0; padding-left: 24px; }
+#operations:empty { display: none; }

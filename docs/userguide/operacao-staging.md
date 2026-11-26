@@ -99,9 +99,20 @@ A API do Compose escuta em `127.0.0.1:18080`. A homologação pública usa
 Let's Encrypt. O Caddy escuta em TCP 443 e usa ACME TLS-ALPN-01. A porta 80
 continua com o nginx dos demos, portanto use URLs com `https://`.
 
-O [Caddyfile](../../deploy/staging/Caddyfile) libera somente `GET` e `HEAD`
-em `/healthz` e `/readyz`. Para testar outros fluxos com dados sintéticos,
-abra o túnel SSH a partir de uma estação autorizada:
+O [Caddyfile](../../deploy/staging/Caddyfile) encaminha somente `GET` e
+`HEAD` de `/healthz` e `/readyz` para a API. Em `hml.amparius.com` ele
+também serve dois fluxos públicos de demonstração com dados sintéticos:
+
+- [Cliente web](https://hml.amparius.com/) — enfileirar um atendimento de
+  exemplo, repetir a ação, simular reconexão e reenviar a mesma operação.
+- [Painel SaaS](https://hml.amparius.com/painel/) — abrir a empresa de exemplo,
+  selecionar **Funerária**, ajustar quota, conceder ou revogar licença e
+  conferir a versão e auditoria de demonstração.
+
+A fila e as mutações são isoladas por aba e reiniciam ao recarregar. A
+política de conteúdo impede conexões da aplicação com API ou relay. A
+versão `.com.br` continua com os probes públicos. Para testar rotas de
+desenvolvimento com banco, abra o túnel a partir de uma estação autorizada:
 
 ```sh
 ssh -N -L 127.0.0.1:18080:127.0.0.1:18080 omniroute
@@ -114,6 +125,8 @@ disponível. Na raiz do checkout da VPS, execute:
 
 ```sh
 image=caddy@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
+release=/etc/amparius-staging/preview-$(git rev-parse --short HEAD)
+sh deploy/staging/prepare-preview.sh "$release"
 install -D -m 644 deploy/staging/Caddyfile /etc/amparius-staging/Caddyfile
 docker run --rm --network none \
   -v /etc/amparius-staging/Caddyfile:/etc/caddy/Caddyfile:ro \
@@ -121,9 +134,15 @@ docker run --rm --network none \
 ufw allow 443/tcp comment 'amparius-staging-https'
 docker run -d --name amparius-staging-https --restart unless-stopped --network host \
   -v /etc/amparius-staging/Caddyfile:/etc/caddy/Caddyfile:ro \
+  -v "$release:/srv/amparius-preview:ro" \
   -v amparius-staging-caddy-data:/data \
   -v amparius-staging-caddy-config:/config "$image"
 ```
+
+Se o edge já estiver instalado, salve a configuração e o caminho da versão
+anterior. Valide a nova configuração e os arquivos antes de substituir o
+container do edge, preservando o estado ACME. Para voltar, recrie somente
+o edge com a configuração e o diretório anteriores.
 
 Verifique de uma rede externa, com validação normal de certificado TLS:
 
@@ -132,10 +151,14 @@ for host in hml.amparius.com hml.amparius.com.br; do
   curl -fsS "https://$host/healthz"
   curl -fsS "https://$host/readyz"
   curl -sS -o /dev/null -w '%{http_code}\n' "https://$host/_dev/"
+  curl -sS -o /dev/null -w '%{http_code}\n' "https://$host/v1/context"
 done
+curl -fsS https://hml.amparius.com/ -o /dev/null
+curl -fsS https://hml.amparius.com/painel/ -o /dev/null
 ```
 
-O resultado esperado é `200` nos dois probes e `404` em `/_dev/`. No host,
+O resultado esperado é `200` nos dois probes e na prévia, e `404` em
+`/_dev/` e `/v1/context`. No host,
 `docker port staging-api-1 8080/tcp` deve mostrar `127.0.0.1:18080`. Para
 retirar o edge, pare apenas `amparius-staging-https` e remova a regra UFW
 criada para ele se a porta 443 continuar reservada exclusivamente a esse
@@ -150,6 +173,19 @@ serviço. Preserve os volumes do Caddy para reutilizar o estado do ACME.
   atualizaram a célula de `0018` para `0035` e o control plane de `0002`
   para `0003`. O papel `amparius_app` tinha RLS ativo nas tabelas consultadas
   e atributos `NOSUPERUSER` e `NOBYPASSRLS`.
-- O acesso autenticado ao painel depende do OIDC/MFA definido no ADR 0024.
-  A emissão real de NFS-e e a conclusão da jornada ponta a ponta dependem
-  dos gates nas issues #25, #59 e #60.
+- Para validar a prévia localmente, execute
+  `node --test web/control-plane/tests/*.test.mjs`. Para a estação Rust,
+  siga o [guia do cliente](../../client/README.md) com identificadores
+  sintéticos e rode `cargo test --locked --manifest-path client/Cargo.toml`
+  e `cargo test --locked --manifest-path relay/Cargo.toml`.
+- Na validação da prévia, passaram 10 testes web, 52 do cliente e 51 do relay.
+  Em instância descartável de PostgreSQL 16, passaram a jornada funeral
+  (OS, agenda, replay, rollback e isolamento) e os testes CP-06 de licença,
+  cota, auditoria, versão e isolamento. Os papéis dos testes não tinham
+  `SUPERUSER` nem `BYPASSRLS`. Os grants necessários para alcançar os
+  triggers append-only foram aplicados somente no banco descartável de QA.
+  O edge entregou os dois caminhos da prévia e manteve `404` nas rotas de
+  desenvolvimento e de contexto autenticado.
+- O login administrativo para operações reais depende de OIDC/MFA
+  (ADR 0024). A jornada real entre estação, relay e SaaS e a emissão
+  autorizada de NFS-e seguem nas issues #25, #59 e #60.

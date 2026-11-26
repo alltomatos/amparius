@@ -30,4 +30,10 @@ Ainda nao ha troca de empresa: o backend fixa `company_id` no token, conforme `d
 ```bash
 node --test web/control-plane/tests/contract.test.mjs
 ```
-EOF
+## Prévia de homologação
+
+A [prévia sintética](https://hml.amparius.com/painel/) usa esta interface.
+Ela carrega o cenário de demonstração antes de `app.js` e mantém as alterações
+e a auditoria somente em memória. Consulte o
+[guia de staging](../../docs/userguide/operacao-staging.md) para preparar
+o pacote estático e verificar as rotas publicadas.

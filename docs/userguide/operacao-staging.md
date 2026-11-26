@@ -91,3 +91,65 @@ O probe S3 sintético pode ser repetido sem credenciais:
 ```powershell
 go test ./internal/platform/readiness -run 'TestS3ChecksHeadBucketAgainstGenericEndpoint|TestS3UnconfiguredFailsClosed' -count=1 -v
 ```
+
+## Homologação na Omniroute
+
+A API do Compose escuta em `127.0.0.1:18080`. A homologação pública usa
+`https://hml.amparius.com` e `https://hml.amparius.com.br`, com certificados
+Let's Encrypt. O Caddy escuta em TCP 443 e usa ACME TLS-ALPN-01. A porta 80
+continua com o nginx dos demos, portanto use URLs com `https://`.
+
+O [Caddyfile](../../deploy/staging/Caddyfile) libera somente `GET` e `HEAD`
+em `/healthz` e `/readyz`. Para testar outros fluxos com dados sintéticos,
+abra o túnel SSH a partir de uma estação autorizada:
+
+```sh
+ssh -N -L 127.0.0.1:18080:127.0.0.1:18080 omniroute
+```
+
+### Instalar o edge
+
+Confirme que os dois registros DNS apontam para a VPS e que TCP 443 está
+disponível. Na raiz do checkout da VPS, execute:
+
+```sh
+image=caddy@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
+install -D -m 644 deploy/staging/Caddyfile /etc/amparius-staging/Caddyfile
+docker run --rm --network none \
+  -v /etc/amparius-staging/Caddyfile:/etc/caddy/Caddyfile:ro \
+  "$image" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+ufw allow 443/tcp comment 'amparius-staging-https'
+docker run -d --name amparius-staging-https --restart unless-stopped --network host \
+  -v /etc/amparius-staging/Caddyfile:/etc/caddy/Caddyfile:ro \
+  -v amparius-staging-caddy-data:/data \
+  -v amparius-staging-caddy-config:/config "$image"
+```
+
+Verifique de uma rede externa, com validação normal de certificado TLS:
+
+```sh
+for host in hml.amparius.com hml.amparius.com.br; do
+  curl -fsS "https://$host/healthz"
+  curl -fsS "https://$host/readyz"
+  curl -sS -o /dev/null -w '%{http_code}\n' "https://$host/_dev/"
+done
+```
+
+O resultado esperado é `200` nos dois probes e `404` em `/_dev/`. No host,
+`docker port staging-api-1 8080/tcp` deve mostrar `127.0.0.1:18080`. Para
+retirar o edge, pare apenas `amparius-staging-https` e remova a regra UFW
+criada para ele se a porta 443 continuar reservada exclusivamente a esse
+serviço. Preserve os volumes do Caddy para reutilizar o estado do ACME.
+
+### Evidência da atualização de 26/11/2026
+
+- A API de `6947bf1` passou em `/healthz` e `/readyz` nos dois hostnames.
+  PostgreSQL, Redis, RabbitMQ e R2 responderam no readiness.
+- Os dois backups PostgreSQL passaram na verificação SHA-256 e foram
+  restaurados em uma instância isolada. As migrações ensaiadas e aplicadas
+  atualizaram a célula de `0018` para `0035` e o control plane de `0002`
+  para `0003`. O papel `amparius_app` tinha RLS ativo nas tabelas consultadas
+  e atributos `NOSUPERUSER` e `NOBYPASSRLS`.
+- O acesso autenticado ao painel depende do OIDC/MFA definido no ADR 0024.
+  A emissão real de NFS-e e a conclusão da jornada ponta a ponta dependem
+  dos gates nas issues #25, #59 e #60.

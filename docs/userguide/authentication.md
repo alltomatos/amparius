@@ -24,3 +24,12 @@ go test ./internal/platform/auth ./internal/platform/http ./internal/modules/ide
 As rotas `/_dev/*` permanecem disponíveis apenas com `APP_ENV=development` e
 `ENABLE_DEV_ONBOARDING=true`. Elas usam cabeçalhos sintéticos para testar RLS e
 não podem ser expostas em produção.
+
+## Estado do bootstrap do control plane
+
+As rotas CP-06 do binário `cmd/api` ainda não possuem um provedor OIDC/MFA
+conectado. Enquanto o provedor, o contrato de claims e o adaptador seguro não
+forem escolhidos, elas permanecem fail-closed e respondem `503
+AUTHENTICATION_UNAVAILABLE`; nenhum token sintético ou cabeçalho de
+desenvolvimento é aceito nessas rotas. O desbloqueio exige a decisão e o gate
+descritos no [ADR 0038](../adr/0038-control-plane-cp06.md).

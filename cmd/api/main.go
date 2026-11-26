@@ -159,7 +159,10 @@ func run() error {
 	server := &http.Server{
 		Addr: cfg.HTTPAddr(),
 		Handler: httpserver.New(logger, httpserver.Options{
-			Readiness:              readinessChecker,
+			Readiness: readinessChecker,
+			// O provedor OIDC/MFA ainda não foi escolhido nem conectado ao
+			// bootstrap. Não usar um autenticador sintético aqui: auth.Require
+			// deve manter as rotas CP-06 em fail-closed (503) até essa decisão.
 			AuthenticatedRoutes:    authenticatedRoutes,
 			DevelopmentMode:        devOnboardingEnabled,
 			DevelopmentOnboarding:  onboardingHandler,

@@ -1,6 +1,7 @@
 # ADR 0038 — Contrato administrativo de entitlement CP-06
 
-Status: aceito para implementação sequencial · 26/11/2026
+Status: aceito para implementação sequencial · 26/11/2026. Backend implementado;
+bootstrap de autenticação permanece bloqueado.
 
 ## Contexto
 
@@ -40,3 +41,28 @@ alterações concorrentes ou repetir efeitos em retries HTTP.
   confirmada pelo serviço público de `identity` antes de tocar o entitlement.
 - A autenticação OIDC/MFA real continua sendo responsabilidade do bootstrap
   descrito no ADR 0024; o RBAC desta fatia usa o principal já autenticado.
+
+## Gate de bootstrap e bloqueio atual
+
+`cmd/api` registra as rotas CP-06 somente quando
+`AMPA_CONTROL_POSTGRES_DSN` está configurado, mas ainda não injeta um
+`auth.Gate`. Isso é intencional e fail-closed: sem um provedor OIDC/MFA real,
+as rotas respondem `503 AUTHENTICATION_UNAVAILABLE` e o handler não é
+executado. O teste `cmd/api/main_test.go` reproduz esse comportamento sem
+usar banco, segredo, token sintético ou bypass de produção.
+
+Não é seguro resolver este bloqueio apenas com configuração de ambiente. Antes
+de alterar o bootstrap, uma decisão de produto precisa escolher o provedor e
+definir o contrato de claims (issuer, audience, subject, tenant, company e
+elevação MFA), além do adaptador que valide assinatura, expiração e chaves.
+Depois disso, o bootstrap deverá construir `auth.Service` com o adaptador OIDC,
+o verificador MFA, `identity.Repository`, `CompanyResolver` e a
+`auth.DefaultRolePolicy`, e injetá-lo em `httpserver.Options.Authenticator`.
+Até esse gate ser atendido, CP-06 não deve ser considerado disponível para
+tráfego autenticado de produção.
+
+Verificação reproduzível:
+
+```text
+go test ./cmd/api ./internal/platform/auth ./internal/platform/http -count=1
+```

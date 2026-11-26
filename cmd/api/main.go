@@ -161,6 +161,7 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 			return nil, func() {}, fmt.Errorf("criar repositório financeiro: %w", err)
 		}
 		financeHandler = finance.NewDevelopmentHTTPHandler(financeRepository)
+		authenticatedRoutes = append(authenticatedRoutes, finance.AuthenticatedRoutes(financeRepository)...)
 		outboxRepository, err := outbox.NewRepository(database)
 		if err != nil {
 			closeAll()
@@ -246,6 +247,13 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 			return nil, func() {}, fmt.Errorf("criar repositório de catálogo: %w", err)
 		}
 		authenticatedRoutes = append(authenticatedRoutes, catalog.AuthenticatedRoutes(catalogRepository)...)
+
+		financeRepository, err := finance.NewRepository(database)
+		if err != nil {
+			closeAll()
+			return nil, func() {}, fmt.Errorf("criar repositório financeiro: %w", err)
+		}
+		authenticatedRoutes = append(authenticatedRoutes, finance.AuthenticatedRoutes(financeRepository)...)
 
 		partyHandler := party.NewProductionHTTPHandler(partyRepository)
 		// A política aprovada por tenant será injetada quando houver um provedor.

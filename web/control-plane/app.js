@@ -175,11 +175,11 @@
 
   function renderEntitlementDetail() {
     const item = state.selectedEntitlement;
-    $("selected-entitlement").textContent = item ? (item.moduleName || item.module) : "Selecione um modulo";
+    $("selected-entitlement").textContent = item ? (item.moduleName || item.module) : "Selecione um módulo";
     const detail = state.detail || item;
     if (!item) {
       $("entitlement-detail").innerHTML = "";
-      showState("entitlement-detail-state", "Selecione um entitlement para ver o detalhe somente leitura.", "empty");
+      showState("entitlement-detail-state", "Selecione uma licença para ver os detalhes.", "empty");
       const auditNode = $("audit-list"); if (auditNode) auditNode.innerHTML = "";
       return;
     }

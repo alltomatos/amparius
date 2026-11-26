@@ -14,7 +14,8 @@
       if (!value) return "sem validade final";
       const d = new Date(value);
       if (Number.isNaN(d.getTime())) return "data invalida";
-      return new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium" }).format(d);
+      const timeZone = /^\d{4}-\d{2}-\d{2}$/.test(value) ? "UTC" : "America/Sao_Paulo";
+      return new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeZone }).format(d);
     },
     errorText(error) {
       return error && error.message ? error.message : "Nao foi possivel concluir a consulta.";

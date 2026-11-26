@@ -15,6 +15,7 @@ test("maskCnpj masks all but last 4", () => {
 
 test("displayDate returns pt-BR medium", () => {
   assert.match(H.displayDate("2026-11-25T12:00:00Z"), /25 de nov/);
+  assert.match(H.displayDate("2026-01-01"), /^1 de jan/);
   assert.equal(H.displayDate(null), "sem validade final");
 });
 

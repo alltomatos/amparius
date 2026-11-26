@@ -1,10 +1,10 @@
 # Control plane frontend
 
-Shell inicial das telas `CP-02` e `CP-05`. A aplicação é clean-room e usa somente os contratos do Amparius.
+Shell inicial das telas `CP-02` e `CP-05`. A aplicacao e clean-room e usa somente os contratos do Amparius.
 
 ## Executar localmente
 
-Sirva esta pasta com um servidor HTTP estático e configure o runtime antes de carregar `app.js`:
+Sirva esta pasta com um servidor HTTP estatico e configure o runtime antes de carregar `app.js`:
 
 ```html
 <script>
@@ -12,15 +12,22 @@ Sirva esta pasta com um servidor HTTP estático e configure o runtime antes de c
 </script>
 ```
 
-O exemplo não persiste o token em `localStorage`, cookies criados pelo frontend ou URL. Em produção, o bootstrap deve receber a sessão pelo mecanismo OIDC/Bearer aprovado no ADR 0024.
+O exemplo nao persiste o token em `localStorage`, cookies criados pelo frontend ou URL. Em producao, o bootstrap deve receber a sessao pelo mecanismo OIDC/Bearer aprovado no ADR 0024.
 
 ## Cobertura
 
 - contexto autenticado e empresa atual;
-- listagem filtrável de empresas com CNPJ mascarado;
+- listagem filtravel de empresas com CNPJ mascarado;
 - entitlements com estado, validade e uso de quota;
-- paginação por cursor;
+- paginacao por cursor;
 - estados loading, empty, error e success;
-- layout responsivo para 360 px e foco visível.
+- layout responsivo para 360 px e foco visivel.
 
-Ainda não há troca de empresa: o backend fixa `company_id` no token, conforme `docs/contracts/control-plane-context-v1.md`.
+Ainda nao ha troca de empresa: o backend fixa `company_id` no token, conforme `docs/contracts/control-plane-context-v1.md`.
+
+## Testes
+
+```bash
+node --test web/control-plane/tests/contract.test.mjs
+```
+EOF

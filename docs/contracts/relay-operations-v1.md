@@ -36,6 +36,23 @@ enxerga operações, sequência ou status de outro.
 }
 ```
 
+### Autoridade do append
+
+O `POST /relay/v1/operations` recebe a intenção de operação e o relay é a
+autoridade do append local. O `seq`, `operation_id` e `content_hash` calculados
+no cliente são metadados consultivos para integridade e rastreabilidade; não
+definem o registro do relay. O endpoint recalcula `seq` por
+`(tenant_id, node_id)`, `content_hash` pelo conteúdo aceito e
+`operation_id` a partir dos valores recalculados.
+
+O campo `idempotency_key` do corpo é validado e usado para deduplicação por
+`(tenant_id, node_id, idempotency_key)`. O cabeçalho HTTP `Idempotency-Key`,
+quando enviado pelo cliente, é uma cópia consultiva da mesma intenção e não
+torna os identificadores locais autoritativos. A resposta `operation` sempre
+expõe os valores atribuídos pelo relay; em replay, ela expõe o registro já
+persistido pelo relay. O cliente não deve assumir que `seq`, `operation_id` ou
+`content_hash` enviados foram preservados.
+
 `entity_id` e `idempotency_key` são opacos, não vazios, com até 128 caracteres
 `[A-Za-z0-9._:-]`. O payload é um objeto JSON de até 64 KiB.
 

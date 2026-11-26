@@ -1412,7 +1412,11 @@ tentativas. Timeout ou indisponibilidade antes do limite mantém a operação
 pendente com `sync_retry:*`; a terceira falha marca `failed` com
 `sync_retry_exhausted:*` e cria uma revisão. Emissão fiscal usa
 `ReviewTaskKind::FiscalFailure`; outros domínios usam `SyncFailure`. O mesmo
-`operation_id`, `idempotency_key` e `seq` são preservados em todo replay.
+registro já persistido pelo relay é reapresentado em todo replay, preservando sua
+identidade para idempotência. Isso não significa que `seq`, `operation_id` ou
+`content_hash` enviados pelo cliente foram preservados no append; o relay é a
+autoridade local e recalcula esses identificadores. O `idempotency_key` do corpo
+é validado para deduplicação, e `Idempotency-Key` é uma cópia consultiva.
 
 `GET /relay/v1/status` expõe o backlog geral, `queue.retrying`, o agregado
 `fiscal` e `review_tasks_open`. O modo `degraded` sinaliza falha ou conflito sem

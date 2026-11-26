@@ -63,11 +63,15 @@ relay local, no contrato RELAY-OPERATIONS v1 (`POST /relay/v1/operations`).
   `x-amparius-token`. O token existe apenas em trânsito, não é logado nem
   persistido; credencial vazia falha antes de qualquer socket.
 - **Corpo:** `kind`, `entity_id`, `idempotency_key`, `payload`, `seq`,
-  `operation_id` e `content_hash`. `Idempotency-Key` também vai em cabeçalho. O
-  relay atual ignora campos extras; o cliente os preserva para auditoria e
-  evolução do contrato. O payload é revalidado (mesmas regras do enfileiramento,
-  sem PII) e hash/identificador são recalculados antes do envio; divergência é
-  erro fatal e nada é transmitido.
+  `operation_id` e `content_hash`. `Idempotency-Key` também vai em cabeçalho.
+  `seq`, `operation_id` e `content_hash` são metadados locais consultivos: o
+  relay é a autoridade do append, recalcula esses valores e devolve os valores
+  atribuídos ao seu próprio registro. O `idempotency_key` do corpo é validado e
+  usado para deduplicação; o cabeçalho é uma cópia consultiva da intenção. O
+  cliente revalida o payload (mesmas regras do enfileiramento, sem PII) e
+  verifica seus próprios hash/identificador antes do envio; divergência é erro
+  fatal e nada é transmitido. O cliente não deve assumir que os identificadores
+  enviados foram preservados pelo relay.
 - **Resultado:** `Accepted` (200/201), `Conflict` (409), `Rejected` (demais 4xx
   ou 2xx ilegível) ou `Transient` (timeout, conexão/leitura, 5xx).
 - **Integração:** `sync_pending` percorre `pending` em ordem crescente de `seq`,
@@ -110,7 +114,8 @@ do `ClientQueue` continua sendo aplicado por `reconcile`.
 - `Accepted` de `master_upsert` sem `authoritative_version` → `Conflict`
   (`master_requires_authoritative_version`); o relay não é a autoridade do mestre
   e a operação não é marcada como sincronizada.
-- `server_cursor` é o `seq` do registro aceito pelo relay.
+- `server_cursor` é o `seq` atribuído ao registro aceito pelo relay; não é uma
+  confirmação de que o `seq` local enviado pelo cliente foi preservado.
 
 ### Ordens de serviço (CL-03)
 

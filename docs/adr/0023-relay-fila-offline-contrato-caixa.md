@@ -39,6 +39,11 @@ sincronização e reconciliação continuam nas fatias RELAY-01C e RELAY-02.
 6. O relay expõe a fila por HTTP v1 autenticado pela credencial em cache: `POST
    /relay/v1/operations`, `GET /relay/v1/operations` e `GET /relay/v1/status`. O tenant vem
    da credencial autenticada, nunca do corpo. O token bruto não é persistido nem logado.
+   O relay é a autoridade do append: `seq`, `operation_id` e `content_hash` enviados pelo
+   cliente são consultivos; o relay valida a intenção e recalcula os identificadores do
+   registro. O `idempotency_key` do corpo é validado para deduplicação; o cabeçalho
+   `Idempotency-Key` é uma cópia consultiva e não torna os identificadores locais
+   autoritativos.
 7. O status é um agregado por tenant e, opcionalmente, por nó: pendentes, sincronizados,
    falhos, conflitos, total, sequência final, instante e idade do pendente mais antigo e
    último erro. `mode` é `offline_queued` quando há pendente e `online` quando não há. A UI

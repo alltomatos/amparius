@@ -18,6 +18,11 @@ rejeição explícita (contrato `RELAY-OPERATIONS v1`).
    credenciais vão nos cabeçalhos `x-amparius-*` do contrato do relay. O corpo
    reenvia `kind`, `entity_id`, `idempotency_key`, `payload`, `seq`,
    `operation_id` e `content_hash`, e a chave também vai em `Idempotency-Key`.
+   Esses três identificadores locais e o cabeçalho de idempotência são
+   consultivos no append: o relay valida a intenção, usa o `idempotency_key` do
+   corpo para deduplicação e recalcula `seq`, `operation_id` e `content_hash`.
+   A resposta do relay é a fonte dos identificadores do registro remoto; o
+   cliente não presume preservação dos valores enviados.
 2. Toda submissão revalida o payload pelas mesmas regras do enfileiramento
    (dinheiro em centavos, sem PII) e recalcula hash e identificador. Divergência é
    erro fatal antes de qualquer socket.

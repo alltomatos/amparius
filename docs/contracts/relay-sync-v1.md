@@ -8,6 +8,22 @@ HTTP do SaaS nesta fatia.
 
 ## Fluxo
 
+### Dois saltos e autoridade de append
+
+O append local cliente → relay e a sincronização relay → SaaS são saltos
+distintos. No `POST /relay/v1/operations`, o relay é a autoridade do append:
+`seq`, `operation_id` e `content_hash` enviados pelo cliente são consultivos e
+checados apenas conforme as validações do contrato; o relay atribui/recalcula
+os valores do registro. O `idempotency_key` do corpo é validado para a
+deduplicação, enquanto o cabeçalho `Idempotency-Key` é uma cópia consultiva da
+intenção. A resposta expõe os identificadores do relay, que o cliente não deve
+tratar como preservação dos valores locais.
+
+Depois do append, o `SyncEngine` reapresenta ao SaaS o registro já persistido
+pelo relay. Nesse segundo salto, replay preserva a identidade do registro do
+relay para idempotência; isso não altera a autoridade do append nem transforma
+os identificadores enviados originalmente pelo cliente em valores autoritativos.
+
 1. O sincronizador lê, por `tenant_id` e `node_id`, somente operações `pending`, em
    ordem crescente de `seq`.
 2. O transporte recebe a operação inteira, incluindo `operation_id`,

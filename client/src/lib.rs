@@ -1106,6 +1106,9 @@ fn reject_personal_data(value: &Value, depth: usize) -> Result<(), ClientError> 
                         | "celular"
                         | "endereco"
                         | "address"
+                        | "full_name"
+                        | "nome_completo"
+                        | "birth_date"
                         | "data_nascimento"
                 ) {
                     return Err(ClientError::PersonalDataInPayload);
@@ -1385,6 +1388,29 @@ mod tests {
             validate_draft(&contract("op-2", -1)),
             Err(ClientError::InvalidPayload("total_cents"))
         );
+    }
+
+    #[test]
+    fn rejects_relay_personal_data_keys_before_network() {
+        for key in ["full_name", "nome_completo", "birth_date"] {
+            let mut payload = json!({"total_cents": 100});
+            payload
+                .as_object_mut()
+                .expect("payload object")
+                .insert(key.to_owned(), json!("personal-data"));
+            let draft = OperationDraft {
+                kind: OperationKind::ContractCreate,
+                entity_id: format!("contract-{key}"),
+                idempotency_key: format!("op-{key}"),
+                payload,
+            };
+
+            assert_eq!(
+                validate_draft(&draft),
+                Err(ClientError::PersonalDataInPayload),
+                "chave PII deve falhar antes de qualquer transporte: {key}"
+            );
+        }
     }
 
     #[test]

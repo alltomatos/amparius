@@ -56,7 +56,10 @@ O `SyncEngine` limita a três as tentativas persistidas por operação por padr�
 Timeout ou indisponibilidade antes do limite mantém `pending` com
 `sync_retry:*`; ao esgotar, marca `failed` com `sync_retry_exhausted:*` e abre
 uma tarefa de revisão. Emissão fiscal usa `FiscalFailure`; demais operações usam
-`SyncFailure`. O replay preserva `operation_id`, `idempotency_key` e `seq`.
+`SyncFailure`. O replay reapresenta a operação já persistida pelo relay,
+preservando sua identidade para idempotência; isso não significa que os campos
+de identificação enviados originalmente pelo cliente foram preservados no
+append.
 
 `GET /relay/v1/status` expõe `queue.retrying`, o agregado `fiscal` e
 `review_tasks_open`. O modo é `degraded` quando há falha ou conflito sem
@@ -75,9 +78,9 @@ Contrato: `../docs/contracts/relay-sync-v1.md`. Decisão:
 
 ## RELAY-01C
 
-`SyncEngine` fornece a fronteira local para reconexão: lê pendentes em ordem, preserva
-`operation_id`/`idempotency_key` quando o transporte cai e persiste o `server_cursor`
-somente após confirmação. Rejeição fiscal fica como `failed` e cria uma tarefa de
+`SyncEngine` fornece a fronteira local para reconexão: lê pendentes em ordem,
+reapresenta a operação persistida pelo relay quando o transporte cai e persiste o
+`server_cursor` somente após confirmação. Rejeição fiscal fica como `failed` e cria uma tarefa de
 revisão deduplicada e tenant-scoped. O transporte de rede ainda não está implementado
 nesta fatia; portanto os testes usam um transporte roteirizado e não comprovam
 conectividade real.
@@ -112,6 +115,13 @@ A fila offline de contrato e caixa é um log append-only por dispositivo. Cada o
 status (`pending`, `synced`, `failed`, `conflict`). Replay com o mesmo conteúdo não duplica;
 a mesma chave com conteúdo diferente falha em vez de sobrescrever. O store JSON passa ao
 schema `2` e migra arquivos `1` na abertura.
+
+No `POST /relay/v1/operations`, o relay é a autoridade do append. `seq`,
+`operation_id` e `content_hash` enviados pelo cliente são consultivos; o relay
+valida a intenção e recalcula os valores do registro. O `idempotency_key` do
+corpo é a chave validada para deduplicação, e `Idempotency-Key` é sua cópia
+consultiva no cabeçalho. A resposta devolve os identificadores do relay, não uma
+promessa de preservar os valores locais enviados.
 
 Rotas autenticadas pela credencial em cache (cabeçalhos `x-amparius-tenant`,
 `x-amparius-subject`, `x-amparius-token`; `x-amparius-node` no `POST`):

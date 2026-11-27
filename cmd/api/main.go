@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -26,6 +27,7 @@ import (
 	"github.com/alltomatos/amparius/internal/platform/db"
 	httpserver "github.com/alltomatos/amparius/internal/platform/http"
 	"github.com/alltomatos/amparius/internal/platform/log"
+	"github.com/alltomatos/amparius/internal/platform/observability"
 	"github.com/alltomatos/amparius/internal/platform/readiness"
 )
 
@@ -50,11 +52,28 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	handler, closeHandler, err := buildHandler(ctx, cfg, logger)
+	metrics := observability.NewMetrics()
+	handler, closeHandler, err := buildHandler(ctx, cfg, logger, metrics)
 	if err != nil {
 		return err
 	}
 	defer closeHandler()
+	if cfg.APIMetricsPort != "" {
+		listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", cfg.APIMetricsPort))
+		if err != nil {
+			return fmt.Errorf("ouvir métricas da API: %w", err)
+		}
+		mux := http.NewServeMux()
+		mux.Handle("GET /metrics", metrics.Handler())
+		metricsServer := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second}
+		defer metricsServer.Close()
+		go func() {
+			defer listener.Close()
+			if err := metricsServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.Error("servidor de métricas da API falhou", "erro", err.Error())
+			}
+		}()
+	}
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr(),
@@ -109,7 +128,7 @@ type handlerOption func(*httpserver.Options)
 // Os handlerOption existem para a homologação injetar uma identidade de teste
 // em ambiente descartável (ver homolog_control_plane_ui_test.go); o binário
 // nunca os passa, então o bootstrap de produção continua fail-closed (503).
-func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger, overrides ...handlerOption) (http.Handler, func(), error) {
+func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger, metrics *observability.Metrics, overrides ...handlerOption) (http.Handler, func(), error) {
 	readinessChecker, closeReadiness, err := newReadiness(ctx, cfg)
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("configurar readiness: %w", err)
@@ -168,7 +187,7 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger, o
 		catalogHandler = catalog.NewDevelopmentHTTPHandler(catalogRepository)
 		authenticatedRoutes = append(authenticatedRoutes, catalog.AuthenticatedRoutes(catalogRepository)...)
 
-		financeRepository, err := finance.NewRepository(database)
+		financeRepository, err := finance.NewRepository(database, finance.WithCashSessionObservability(logger, metrics))
 		if err != nil {
 			closeAll()
 			return nil, func() {}, fmt.Errorf("criar repositório financeiro: %w", err)
@@ -288,7 +307,7 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger, o
 		}
 		authenticatedRoutes = append(authenticatedRoutes, catalog.AuthenticatedRoutes(catalogRepository)...)
 
-		financeRepository, err := finance.NewRepository(database)
+		financeRepository, err := finance.NewRepository(database, finance.WithCashSessionObservability(logger, metrics))
 		if err != nil {
 			closeAll()
 			return nil, func() {}, fmt.Errorf("criar repositório financeiro: %w", err)

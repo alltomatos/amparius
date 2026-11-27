@@ -65,7 +65,7 @@ func TestBuildHandlerSobreviveCelulaIndisponivelSemDevESemControlPlane(t *testin
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	handler, closeHandler, err := buildHandler(ctx, cfg, logger)
+	handler, closeHandler, err := buildHandler(ctx, cfg, logger, nil)
 	if err != nil {
 		t.Fatalf("buildHandler falhou com PostgreSQL da célula inacessível: %v", err)
 	}

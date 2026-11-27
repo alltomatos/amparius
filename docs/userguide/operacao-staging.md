@@ -160,6 +160,41 @@ fluxo v1. Em ambiente privado de desenvolvimento, o modo opt-in atende
 apenas a dados sintéticos. A prévia pública é uma demonstração sintética.
 Consulte o [contrato v1](../contracts/party-legal-entity-v1.md).
 
+<a id="loja-01-04-leituras-autenticadas"></a>
+
+### Loja 01/04 — verificar agenda e títulos pela API
+
+Use dados sintéticos em ambiente privado de teste. Envie
+`Authorization: Bearer <token>` nas duas consultas. A API valida o vínculo
+do usuário com a empresa e o grupo econômico (tenant) da credencial.
+A integração injeta um autenticador de teste. O bootstrap ainda depende de
+OIDC/MFA e, sem autenticador, retorna `503 AUTHENTICATION_UNAVAILABLE`.
+A prévia pública usa dados sintéticos e funciona sem conexão com a API.
+
+1. **Loja 01 — Agenda.** Com `funeral:read` e licença Funerária vigente na
+   empresa, consulte `GET /v1/funeral/agenda?date=2026-11-26&time_zone=America/Fortaleza`.
+   Informe a data civil e o fuso IANA da loja. A janela padrão é um dia civil.
+   Para até 31 dias, informe também `end_date`, com limite exclusivo.
+   Confira os agendamentos da empresa em `items`. Cada item cujo estado
+   persistido é `scheduled` aparece em `pending` como confirmação pendente,
+   identificada por `schedule_id`. Em um dia sem registros, ambas as listas
+   vêm vazias. Licença ausente, revogada ou expirada retorna
+   `403 ENTITLEMENT_MODULE_NOT_LICENSED`. Fonte de licenças indisponível
+   retorna `503 ENTITLEMENT_UNAVAILABLE`.
+   [Contrato da agenda](../contracts/funeral-schedule-http-v1.md#agenda-da-empresa).
+2. **Loja 04 — Títulos.** Com `finance:read`, consulte
+   `GET /v1/finance/titles?direction=receivable&status=open&due_to=2026-11-30&limit=50`.
+   A consulta abrange todo o grupo econômico, inclusive outras empresas
+   do mesmo tenant. Use `direction` e `status` para filtrar pela direção e
+   pelo estado persistido. `due_from` e `due_to` são limites inclusivos de
+   vencimento. Para continuar em ordem de vencimento e ID, mantenha os
+   filtros e envie `next_cursor` como `cursor`. A última página omite
+   `next_cursor`. Sem resultados, `items` vem vazio.
+   [Contrato financeiro](../contracts/finance-titles-payments-v1.md).
+
+A #79 segue em andamento para conectar as telas privadas, os recebimentos,
+o caixa e a conciliação. Consulte a [evidência das leituras](../design/mvp-store-dashboard-read-evidence.md).
+
 ### Roteiro da prévia visual
 
 - No cliente web, abra **Cadastros**, selecione um tipo e clique em

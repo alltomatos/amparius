@@ -112,6 +112,8 @@ func TestBuildHandlerSobreviveCelulaIndisponivelSemDevESemControlPlane(t *testin
 		{http.MethodGet, "/v1/catalog/items"},
 		{http.MethodGet, "/v1/catalog/price-lists"},
 		{http.MethodGet, "/v1/catalog/offers"},
+		{http.MethodGet, "/v1/finance/titles"},
+		{http.MethodGet, "/v1/funeral/agenda?date=2026-11-26&time_zone=UTC"},
 		{http.MethodGet, "/v1/legal-entities"},
 		{http.MethodPost, "/v1/legal-entities"},
 		{http.MethodGet, "/v1/legal-entities/id"},

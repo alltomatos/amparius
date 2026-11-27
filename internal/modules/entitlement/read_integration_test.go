@@ -22,7 +22,9 @@ func TestListForCompanyScopesByTenantAndIncludesCoreModules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	// t.Cleanup roda em LIFO: registrar o Close primeiro garante que o cleanup
+	// dos tenants (registrado depois) ainda tenha o pool aberto.
+	t.Cleanup(database.Close)
 	service, err := entitlement.NewService(database)
 	if err != nil {
 		t.Fatal(err)

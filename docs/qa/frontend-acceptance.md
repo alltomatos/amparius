@@ -1,6 +1,6 @@
 # QA — Aceite do frontend Amparius
 
-Este documento valida as primeiras fatias definidas em `docs/adr/0026-frontend-architecture.md`.
+Este documento valida as primeiras fatias definidas em [ADR 0045](../adr/0045-frontend-architecture.md).
 
 ## Requisitos comuns
 

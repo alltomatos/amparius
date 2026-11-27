@@ -1,7 +1,7 @@
 # Contrato — Painel SaaS: tenants e licenças (`/admin/v1`) v1
 
 - **Fatia:** ADM-02A (issue #80) — **parcial**, ver "Limites".
-- **ADR:** 0040 (escopo de plataforma), 0007 (entitlement), 0026.
+- **ADR:** 0040 (escopo de plataforma), 0007 (entitlement), 0045 (superfícies frontend).
 - **Superfície:** `manager.amparius.com`; nunca `/v1` nem `app.amparius.com`.
 
 ## Autenticação e autorização

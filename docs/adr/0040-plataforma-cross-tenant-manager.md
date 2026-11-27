@@ -10,7 +10,7 @@ Os mockups administrativos (`03-painel-saas-dashboard`, `05`–`10`) mostram um
 console que agrega, em uma única tela, tenants ativos, licenças em uso e a
 vencer, saúde por módulo, cota de IA, provedores/modelos, consumo e auditoria.
 
-O ADR 0026 já fixa `manager.amparius.com` como superfície da verdade para
+O ADR 0045 propõe `manager.amparius.com` como superfície da verdade para
 tenants, empresas, licenças, quotas e auditoria. O que não existe é o contrato
 de leitura que essa superfície precisa:
 

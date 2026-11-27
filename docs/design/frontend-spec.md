@@ -441,7 +441,7 @@ O servidor continua revalidando tenant, RLS, entitlement, contrato e transição
 
 Estes pontos não impedem a escrita da spec. Seguem o default indicado até decisão explícita.
 
-- **NEEDS INPUT:** numerar ADR de frontend se ele um dia for criado. **Default:** manter `docs/adr/0026-frontend-architecture.md` como nome proposto; não criar ADR nesta rodada.
+- A proposta de arquitetura das superfícies está no [ADR 0045](../adr/0045-frontend-architecture.md).
 - **NEEDS INPUT:** adotar `/api/session/active` e `/api/event` do allcode. **Default:** não adotar; G-6 fica fora de escopo até contrato próprio.
 - **NEEDS INPUT:** alinhar `/v1` do Amparius com `/api/v1` do allcode. **Default:** Amparius usa `/v1` e exige Bearer.
 - **NEEDS INPUT:** unidade monetária de quota de IA. **Default:** BRL em centavos/string decimal, com preços por milhão apenas informativos.

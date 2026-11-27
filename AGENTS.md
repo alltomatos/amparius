@@ -6,16 +6,18 @@ Regras para qualquer agente de IA (Codex, Claude, OpenCode, Cursor, etc.) que tr
 
 ERP modular agêntico, multi-tenant, para funerárias, cemitérios e floriculturas. Financeiro/fiscal é a espinha dorsal. O SaaS roda em Go; o relay de borda e o cliente rodam em Rust; dados em PostgreSQL, cache em Redis, mensageria em RabbitMQ.
 
-O repositório ainda está em **fase de documentação**. Quando o código começar, a estrutura prevista é:
+O repositório está em **implementação do MVP**, com componentes em homologação. A estrutura atual inclui:
 
 ```
 cmd/api/            binário HTTP do SaaS
 cmd/worker/         consumidores de fila e jobs
-internal/modules/   contextos (identity, party, catalog, finance, fiscal, funeral, cemetery, floriculture, inventory, documents, ai, sync)
+internal/modules/   contextos (catalog, controlplane, entitlement, finance, fiscal, funeral, identity, outbox, party)
 internal/platform/  banco, fila, cache, auth, observabilidade, erros
 migrations/         SQL versionado, forward-only
 relay/              workspace Rust do relay de borda
-client/             workspace Rust do cliente desktop (fase posterior)
+client/             workspace Rust do cliente desktop, com UI em client/src/ui/
+web/control-plane/  aplicação web administrativa
+web/staging/        interface web de homologação
 docs/               PRD, arquitetura, DER, UML, ADRs, pesquisa
 ```
 

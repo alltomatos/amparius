@@ -6,7 +6,7 @@
 O cliente web de homologação fica em `hml.amparius.com` e a demonstração do
 painel SaaS em `/painel/`. A superfície web é um caminho de validação visual
 do painel administrativo e do fluxo de fila. A estação Rust continua sendo
-o cliente com persistência offline e transporte previstos nos ADRs 0026 e 0034.
+o cliente com persistência offline e transporte previstos nos ADRs 0045 e 0034.
 
 O edge serve somente arquivos estáticos selecionados para a demonstração.
 As alterações acontecem em memória na aba com dados sintéticos e contexto fixo.

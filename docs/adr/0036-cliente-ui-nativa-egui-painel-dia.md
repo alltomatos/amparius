@@ -3,7 +3,7 @@
 - **Status:** aceito em 25/11/2026 — CL-01; estendido em 26/11/2026 — CL-02/CL-03/CL-05
 - **Escopo:** primeira superfície gráfica do cliente de estação Rust (`client/`)
 - **Relaciona-se com:** ADR 0001 (stack), ADR 0002 (operação offline), ADR 0006
-  (instalador e papéis), ADR 0023/0034/0035 (fila e transporte), ADR 0026
+  (instalador e papéis), ADR 0023/0034/0035 (fila e transporte), ADR 0045
   (arquitetura das superfícies) e `docs/design/frontend-spec.md`
 
 ## Contexto
@@ -15,7 +15,7 @@ ser executável, mostrar o estado real da fila e ser verificável nos estados
 online, offline e contingência.
 
 Não havia escolha registrada de toolkit para o cliente. ADR 0001 exige binário
-Rust único e previsível, sem runtime pesado na máquina do cliente; ADR 0026 diz
+Rust único e previsível, sem runtime pesado na máquina do cliente; ADR 0045 diz
 que o cliente operacional terá camada de UI própria no workspace Rust, sem copiar
 componentes, CSS ou estrutura de outro ERP. `frontend-spec.md` exige estado
 explícito (idle/loading/empty/error/success), cor nunca como único sinal,

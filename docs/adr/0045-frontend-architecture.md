@@ -1,7 +1,8 @@
-# ADR 0026 — Arquitetura das superfícies frontend
+# ADR 0045 — Arquitetura das superfícies frontend
 
-- **Status:** proposta para implementação sequencial
+- **Status:** proposta com implementação parcial
 - **Data:** 2026-11-25
+- **Histórico:** renumerado de 0026 para 0045 em 27/11/2026. O ADR 0026 corresponde à reconexão do relay e à revisão fiscal.
 - **Escopo:** control plane web e cliente de operação/offline
 
 ## Contexto
@@ -11,12 +12,12 @@ O Amparius possui duas superfícies com objetivos e restrições diferentes:
 1. o control plane administrativo, acessado por `manager.amparius.com`, fonte da verdade para tenants, empresas, licenças, quotas e auditoria;
 2. o cliente de loja, acessado no ambiente operacional e sujeito a perda de conectividade, com fila local e reconciliação pelo relay.
 
-Ainda não existe um workspace frontend no repositório. A especificação de produto está em `docs/design/frontend-spec.md`.
+O repositório contém o [control plane web](../../web/control-plane/README.md) e a [interface de homologação](../../web/staging/README.md), ambos em HTML, CSS e JavaScript. O cliente Rust tem UI em `client/src/ui/` com egui/eframe, conforme o [ADR 0036](0036-cliente-ui-nativa-egui-painel-dia.md). A arquitetura geral permanece proposta. A especificação de produto está em [frontend-spec.md](../design/frontend-spec.md).
 
-## Decisão
+## Proposta
 
 - O control plane será uma aplicação web separada do cliente operacional, consumindo contratos versionados `/v1` e autenticação OIDC/MFA conforme ADR 0024.
-- O cliente operacional permanecerá no workspace Rust e terá uma camada de UI própria (`client/ui` quando iniciada), sem copiar componentes, CSS ou estrutura de outro ERP/repositório.
+- O cliente operacional permanecerá no workspace Rust e terá uma camada de UI própria (`client/src/ui/`), sem copiar componentes, CSS ou estrutura de outro ERP/repositório.
 - O tenant será derivado do contexto autenticado. `X-Tenant-Id`, se usado para seleção visual, nunca será fonte de autorização.
 - Escritas críticas usarão `Idempotency-Key`; alterações concorrentes usarão `version` e falharão com `STALE_VERSION`.
 - O cliente tratará online, offline, contingência, fila pendente e conflito como estados distintos. Dinheiro e fiscal nunca usarão resolução silenciosa de conflito.

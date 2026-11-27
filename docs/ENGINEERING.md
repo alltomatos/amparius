@@ -1431,6 +1431,11 @@ $env:AMPA_BACKUP_TEST_ADMIN_DSN = 'postgres://<admin>:<secret>@127.0.0.1:5432/am
 O teste cria uma base temporária, grava somente `synthetic-only`, faz dump,
 remove/recria, restaura, verifica e remove a base. `restore` em base existente
 exige `-AllowDestructiveRestore` e um arquivo já verificado.
+O dump mantém as ACLs (sem `--no-acl`): o papel `amparius_app` precisa existir
+no destino, senão o restore falha em vez de entregar um banco sem GRANTs.
+
+Sem `psql/pg_dump` no host, `.\scripts\homolog-backup-restore.ps1` valida o ciclo
+com o esquema real das migrations em container descartável (porta 55433).
 
 ### Rollback
 

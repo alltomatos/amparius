@@ -151,7 +151,7 @@ func createFamilyLinkTx(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, inpu
 		return FamilyLink{}, err
 	}
 
-	if err := lockPartyCreate(ctx, tx, "family_link", tenantID, input.DeceasedID); err != nil {
+	if err := lockPartyCreate(ctx, tx, "family_link", tenantID, input.DeceasedID.String()); err != nil {
 		return FamilyLink{}, err
 	}
 	var exists bool

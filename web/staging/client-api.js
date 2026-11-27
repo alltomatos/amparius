@@ -211,6 +211,109 @@
       return { id: created.id, relation: created.relation || fields.relation };
     }
 
+    function legalEntityFrom(raw) {
+      raw = raw || {};
+      return {
+        id: raw.id,
+        legalName: raw.legalName || "",
+        cnpj: raw.cnpj || "",
+        tradeName: raw.tradeName || "",
+        stateRegistration: raw.stateRegistration || "",
+        municipalRegistration: raw.municipalRegistration || "",
+        status: raw.status || "",
+      };
+    }
+
+    function contactFrom(raw) {
+      return { id: raw.id, partyId: raw.partyId, kind: raw.kind, value: raw.value, primary: !!raw.primary };
+    }
+
+    function addressFrom(raw) {
+      return {
+        id: raw.id, partyId: raw.partyId, street: raw.street, number: raw.number,
+        city: raw.city, state: raw.state, zip: raw.zip, primary: !!raw.primary,
+      };
+    }
+
+    function representativeFrom(raw) {
+      return {
+        id: raw.id, companyId: raw.companyId, personId: raw.personId, role: raw.role,
+        name: raw.displayName || raw.civilName || "",
+      };
+    }
+
+    function requireId(value, label) {
+      const id = String(value || "").trim();
+      if (!id) {
+        const err = new Error(label + " é obrigatório.");
+        err.code = "VALIDATION_ERROR";
+        err.status = 400;
+        throw err;
+      }
+      return encodeURIComponent(id);
+    }
+
+    // Pessoa jurídica (issue #78). O corpo nunca leva tenant, empresa, kind
+    // nem status: o escopo vem do principal autenticado ou do cabeçalho dev.
+    async function createLegalEntity(fields) {
+      fields = fields || {};
+      const body = { legalName: fields.legalName, cnpj: fields.cnpj };
+      if (fields.tradeName) body.tradeName = fields.tradeName;
+      if (fields.stateRegistration) body.stateRegistration = fields.stateRegistration;
+      if (fields.municipalRegistration) body.municipalRegistration = fields.municipalRegistration;
+      const path = mode === "dev" ? "/_dev/legal-entities" : "/v1/legal-entities";
+      return legalEntityFrom(await request(path, { method: "POST", body }));
+    }
+
+    async function searchLegalEntities(q, opts) {
+      opts = opts || {};
+      const term = String(q || "").trim();
+      if (!term || !mode) return [];
+      const path = mode === "dev" ? "/_dev/legal-entities" : "/v1/legal-entities";
+      const payload = await request(path, { query: { q: term, limit: opts.limit || 25 } });
+      return pickItems(payload, ["items"]).map(legalEntityFrom);
+    }
+
+    async function getLegalEntity(id) {
+      const safeId = requireId(id, "Pessoa jurídica");
+      const path = (mode === "dev" ? "/_dev/legal-entities/" : "/v1/legal-entities/") + safeId;
+      const payload = await request(path);
+      const entity = legalEntityFrom(payload);
+      entity.contacts = pickItems(payload, ["contacts"]).map(contactFrom);
+      entity.addresses = pickItems(payload, ["addresses"]).map(addressFrom);
+      entity.representatives = pickItems(payload, ["representatives"]).map(representativeFrom);
+      return entity;
+    }
+
+    async function addContact(partyId, fields) {
+      fields = fields || {};
+      const safeId = requireId(partyId, "Cadastro");
+      const body = { kind: fields.kind, value: fields.value };
+      if (fields.primary) body.primary = true;
+      const path = (mode === "dev" ? "/_dev/parties/" : "/v1/parties/") + safeId + "/contacts";
+      return contactFrom(await request(path, { method: "POST", body }));
+    }
+
+    async function addAddress(partyId, fields) {
+      fields = fields || {};
+      const safeId = requireId(partyId, "Cadastro");
+      const body = {
+        street: fields.street, number: fields.number, city: fields.city,
+        state: fields.state, zip: fields.zip,
+      };
+      if (fields.primary) body.primary = true;
+      const path = (mode === "dev" ? "/_dev/parties/" : "/v1/parties/") + safeId + "/addresses";
+      return addressFrom(await request(path, { method: "POST", body }));
+    }
+
+    async function addRepresentative(legalEntityId, fields) {
+      fields = fields || {};
+      const safeId = requireId(legalEntityId, "Pessoa jurídica");
+      const body = { personId: fields.personId, role: fields.role };
+      const path = (mode === "dev" ? "/_dev/legal-entities/" : "/v1/legal-entities/") + safeId + "/representatives";
+      return representativeFrom(await request(path, { method: "POST", body }));
+    }
+
     async function searchServices(q, opts) {
       opts = opts || {};
       const term = String(q || "").trim();
@@ -250,6 +353,12 @@
       createParty,
       createDeceased,
       createFamilyLink,
+      createLegalEntity,
+      searchLegalEntities,
+      getLegalEntity,
+      addContact,
+      addAddress,
+      addRepresentative,
       searchServices,
       searchPriceLists,
     };

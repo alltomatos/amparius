@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 const require = createRequire(import.meta.url);
 const { createClientAPI } = require("./client-api.js");
 
@@ -185,4 +187,261 @@ test("erro dev com mensagem em string mapeia pelo status HTTP", async () => {
     assert.match(err.message, /vinculado/);
     return true;
   });
+});
+
+const PJ = { id: "c1", kind: "company", legalName: "Floricultura Exemplo Ltda", cnpj: "11222333000181", tradeName: "Exemplo", stateRegistration: null, municipalRegistration: null, status: "active" };
+
+test("createLegalEntity bearer usa /v1/legal-entities sem tenant no corpo", async () => {
+  const fetch = captureFetch([mockResponse(201, PJ)]);
+  const api = createClientAPI({ apiBase: "http://api", accessToken: "tok", fetch });
+  const created = await api.createLegalEntity({ legalName: "Floricultura Exemplo Ltda", cnpj: "11.222.333/0001-81", tradeName: "Exemplo" });
+  assert.equal(fetch.calls[0].url, "http://api/v1/legal-entities");
+  assert.equal(fetch.calls[0].init.method, "POST");
+  assert.equal(fetch.calls[0].init.headers.Authorization, "Bearer tok");
+  assert.deepEqual(JSON.parse(fetch.calls[0].init.body), { legalName: "Floricultura Exemplo Ltda", cnpj: "11.222.333/0001-81", tradeName: "Exemplo" });
+  assert.equal(created.id, "c1");
+  assert.equal(created.cnpj, "11222333000181");
+  assert.equal(created.stateRegistration, "");
+});
+
+test("createLegalEntity dev usa /_dev/legal-entities com header de tenant", async () => {
+  const fetch = captureFetch([mockResponse(201, PJ)]);
+  const api = createClientAPI({ devTenantId: "T1", fetch });
+  await api.createLegalEntity({ legalName: "X", cnpj: "11222333000181" });
+  assert.equal(fetch.calls[0].url, "/_dev/legal-entities");
+  assert.equal(fetch.calls[0].init.headers["X-Amparius-Development-Tenant-ID"], "T1");
+  assert.deepEqual(Object.keys(JSON.parse(fetch.calls[0].init.body)).sort(), ["cnpj", "legalName"]);
+});
+
+test("createLegalEntity propaga 409 de CNPJ duplicado com traceId", async () => {
+  const fetch = captureFetch([mockResponse(409, { code: "LEGAL_ENTITY_ALREADY_EXISTS", message: "CNPJ já cadastrado", traceId: "tr1" })]);
+  const api = createClientAPI({ accessToken: "tok", fetch });
+  await assert.rejects(api.createLegalEntity({ legalName: "X", cnpj: "11222333000181" }), (err) => {
+    assert.equal(err.status, 409);
+    assert.equal(err.code, "LEGAL_ENTITY_ALREADY_EXISTS");
+    assert.equal(err.traceId, "tr1");
+    return true;
+  });
+});
+
+test("searchLegalEntities bearer consulta /v1/legal-entities; vazio não usa rede", async () => {
+  const fetch = captureFetch([mockResponse(200, { items: [PJ] })]);
+  const api = createClientAPI({ apiBase: "http://api", accessToken: "tok", fetch });
+  const result = await api.searchLegalEntities("Exemplo");
+  assert.equal(fetch.calls[0].url, "http://api/v1/legal-entities?q=Exemplo&limit=25");
+  assert.equal(result[0].legalName, "Floricultura Exemplo Ltda");
+  assert.deepEqual(await api.searchLegalEntities("  "), []);
+  assert.equal(fetch.calls.length, 1);
+});
+
+test("uma nova instância dev busca a PJ por nome ou CNPJ usando o tenant", async () => {
+  const fetch = captureFetch([mockResponse(201, PJ), mockResponse(200, { items: [PJ] }), mockResponse(200, { items: [PJ] })]);
+  const config = { devTenantId: "T1", fetch };
+  const created = await createClientAPI(config).createLegalEntity(PJ);
+  const fresh = createClientAPI(config);
+
+  for (const term of [created.legalName, "11.222.333/0001-81"]) {
+    assert.deepEqual(await fresh.searchLegalEntities(term, { limit: 10 }), [created]);
+    const { url, init } = fetch.calls.at(-1);
+    assert.equal(url, "/_dev/legal-entities?" + new URLSearchParams({ q: term, limit: 10 }));
+    assert.equal(init.method, "GET");
+    assert.equal(init.headers["X-Amparius-Development-Tenant-ID"], "T1");
+    assert.equal(init.headers.Authorization, undefined);
+  }
+  assert.deepEqual(await fresh.searchLegalEntities("  "), []);
+  assert.equal(fetch.calls.length, 3);
+});
+
+test("getLegalEntity monta o agregado com contatos, endereços e representantes", async () => {
+  const fetch = captureFetch([mockResponse(200, Object.assign({}, PJ, {
+    contacts: [{ id: "k1", partyId: "c1", kind: "email", value: "contato@exemplo.test", primary: true }],
+    addresses: [{ id: "a1", partyId: "c1", street: "Rua Um", number: "10", city: "Fortaleza", state: "CE", zip: "60000000", primary: true }],
+    representatives: [{ id: "r1", companyId: "c1", personId: "p1", role: "legal_representative", civilName: "Maria Civil", socialName: null, displayName: "Maria Civil" }],
+  }))]);
+  const api = createClientAPI({ accessToken: "tok", fetch });
+  const entity = await api.getLegalEntity("c1");
+  assert.equal(fetch.calls[0].url, "/v1/legal-entities/c1");
+  assert.equal(entity.contacts[0].primary, true);
+  assert.equal(entity.addresses[0].zip, "60000000");
+  assert.deepEqual(entity.representatives[0], { id: "r1", companyId: "c1", personId: "p1", role: "legal_representative", name: "Maria Civil" });
+});
+
+test("getLegalEntity 404 e id vazio", async () => {
+  const fetch = captureFetch([mockResponse(404, { code: "LEGAL_ENTITY_NOT_FOUND", message: "não encontrada" })]);
+  const api = createClientAPI({ accessToken: "tok", fetch });
+  await assert.rejects(api.getLegalEntity("c9"), (err) => err.status === 404 && err.code === "LEGAL_ENTITY_NOT_FOUND");
+  await assert.rejects(api.getLegalEntity(" "), (err) => err.code === "VALIDATION_ERROR");
+  assert.equal(fetch.calls.length, 1);
+});
+
+test("addContact e addAddress usam /v1/parties/{id} e /_dev/parties/{id}", async () => {
+  const fetch = captureFetch([
+    mockResponse(201, { id: "k1", partyId: "c1", kind: "phone", value: "85999990000", primary: false }),
+    mockResponse(201, { id: "a1", partyId: "c1", street: "Rua Um", number: "10", city: "Fortaleza", state: "CE", zip: "60000000", primary: true }),
+  ]);
+  const api = createClientAPI({ accessToken: "tok", fetch });
+  const contact = await api.addContact("c1", { kind: "phone", value: "(85) 99999-0000" });
+  assert.equal(fetch.calls[0].url, "/v1/parties/c1/contacts");
+  assert.deepEqual(JSON.parse(fetch.calls[0].init.body), { kind: "phone", value: "(85) 99999-0000" });
+  assert.equal(contact.primary, false);
+  const address = await api.addAddress("c1", { street: "Rua Um", number: "10", city: "Fortaleza", state: "CE", zip: "60000-000", primary: true });
+  assert.equal(fetch.calls[1].url, "/v1/parties/c1/addresses");
+  assert.equal(JSON.parse(fetch.calls[1].init.body).primary, true);
+  assert.equal(address.state, "CE");
+
+  const devFetch = captureFetch([mockResponse(201, { id: "k2", partyId: "c1", kind: "email", value: "a@b.test", primary: false })]);
+  const dev = createClientAPI({ devTenantId: "T1", fetch: devFetch });
+  await dev.addContact("c1", { kind: "email", value: "a@b.test" });
+  assert.equal(devFetch.calls[0].url, "/_dev/parties/c1/contacts");
+});
+
+test("addRepresentative envia personId e role; 503 de política indisponível vira UNAVAILABLE", async () => {
+  const fetch = captureFetch([
+    mockResponse(201, { id: "r1", companyId: "c1", personId: "p1", role: "administrator", civilName: "Maria", socialName: null, displayName: "Maria" }),
+    mockResponse(503, { code: "PRIVACY_POLICY_UNAVAILABLE", message: "política indisponível", traceId: "t9" }),
+  ]);
+  const api = createClientAPI({ accessToken: "tok", fetch });
+  const rep = await api.addRepresentative("c1", { personId: "p1", role: "administrator" });
+  assert.equal(fetch.calls[0].url, "/v1/legal-entities/c1/representatives");
+  assert.deepEqual(JSON.parse(fetch.calls[0].init.body), { personId: "p1", role: "administrator" });
+  assert.equal(rep.name, "Maria");
+  await assert.rejects(api.addRepresentative("c1", { personId: "p1", role: "contact" }), (err) => err.status === 503 && err.code === "PRIVACY_POLICY_UNAVAILABLE");
+});
+
+test("falha de rede em createLegalEntity vira OFFLINE", async () => {
+  const fetch = captureFetch([new Error("rede")]);
+  const api = createClientAPI({ accessToken: "tok", fetch });
+  await assert.rejects(api.createLegalEntity({ legalName: "X", cnpj: "11222333000181" }), (err) => api.isOfflineError(err));
+});
+
+// Exercita os handlers de client-live com eventos e respostas controlados.
+function mountLiveClient(methods, { attendance = false, location = {} } = {}) {
+  const byId = new Map();
+  function element(tag) {
+    return {
+      children: [],
+      value: "",
+      disabled: false,
+      set id(value) { byId.set(value, this); },
+      get firstElementChild() { return this.children[0]; },
+      setAttribute() {},
+      append(...children) { this.children.push(...children); },
+      appendChild(child) { this.append(child); },
+      replaceChildren(...children) {
+        this.children = children;
+        if (tag === "select") this.value = children[0]?.value || "";
+      },
+      addEventListener(event, handler) { this[event] = handler; },
+    };
+  }
+  const section = element("section");
+  const attendanceSection = attendance ? element("section") : null;
+  for (const id of ["connection", "feedback"]) element("p").id = id;
+  const document = {
+    createElement: element,
+    getElementById: (id) => byId.get(id),
+    querySelector: (selector) => selector === '[data-screen="cadastros"]' ? section : attendanceSection,
+  };
+  runInNewContext(readFileSync(new URL("./client-live.js", import.meta.url), "utf8"), {
+    document, window: { location, AmpariusClientAPI: { configured: true, mode: "dev", isOfflineError: () => false, ...methods } },
+  });
+  return document.getElementById;
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function detail(entity) {
+  return { ...entity, contacts: [], addresses: [], representatives: [] };
+}
+
+test("client-live ignora busca e detalhe antigos e distingue erro de vazio", async () => {
+  const slowSearch = deferred();
+  const slowDetail = deferred();
+  const newer = { ...PJ, id: "pj2", legalName: "Segunda PJ" };
+  const get = mountLiveClient({
+    searchLegalEntities: async (term) => {
+      if (term === "antiga") return slowSearch.promise;
+      if (term === "nova") return [PJ, newer];
+      if (term === "erro") throw new Error("busca indisponível");
+      return [];
+    },
+    getLegalEntity: async (id) => id === PJ.id ? slowDetail.promise : detail(newer),
+  });
+  const search = get("live-le-search");
+  const select = get("live-le-select");
+  search.value = "antiga";
+  const first = search.input();
+  search.value = "nova";
+  const second = search.input();
+  await new Promise(setImmediate);
+  assert.equal(select.value, PJ.id);
+  select.value = newer.id;
+  await select.change();
+  slowSearch.resolve([]);
+  slowDetail.resolve(detail(PJ));
+  await Promise.all([first, second]);
+  assert.equal(select.value, newer.id);
+  assert.match(get("live-le-detail").children[0].textContent, /Segunda PJ/);
+
+  search.value = "erro";
+  await search.input();
+  assert.equal(get("live-le-empty").hidden, true);
+  assert.match(get("feedback").textContent, /busca indisponível/);
+  search.value = "sem correspondência";
+  await search.input();
+  assert.equal(get("live-le-empty").hidden, false);
+  assert.equal(get("feedback").textContent, "");
+});
+
+test("client-live bloqueia clique repetido em PJ e mantém a seleção de representante PF", async () => {
+  const creation = deferred();
+  const representative = deferred();
+  const links = [];
+  let writes = 0;
+  const get = mountLiveClient({
+    createLegalEntity: async () => { writes++; return creation.promise; },
+    getLegalEntity: async () => detail(PJ),
+    searchParties: async () => [{ id: "pf1", name: "Pessoa física sintética" }],
+    addRepresentative: async (id, payload) => { links.push({ id, ...payload }); return representative.promise; },
+  });
+  get("live-le-name").value = PJ.legalName;
+  get("live-le-cnpj").value = PJ.cnpj;
+  const create = get("live-le-create");
+  const pendingCreate = create.click();
+  await create.click();
+  assert.equal(writes, 1);
+  creation.resolve(PJ);
+  await pendingCreate;
+  assert.equal(create.disabled, false);
+
+  await get("live-search").input();
+  const link = get("live-le-rep-add");
+  const pendingLink = link.click();
+  await link.click();
+  assert.deepEqual(links, [{ id: PJ.id, personId: "pf1", role: "legal_representative" }]);
+  representative.resolve();
+  await pendingLink;
+  assert.equal(link.disabled, false);
+});
+
+
+test("client-live leva representante legal da PJ ao atendimento", async () => {
+  const location = {};
+  const get = mountLiveClient({
+    searchLegalEntities: async () => [PJ],
+    getLegalEntity: async () => ({
+      ...detail(PJ),
+      representatives: [{ personId: "pf1", name: "Pessoa Representante", role: "legal_representative" }],
+    }),
+  }, { attendance: true, location });
+  const search = get("live-le-search");
+  search.value = PJ.legalName;
+  await search.input();
+  get("live-le-detail").children.at(-1).children[0].click();
+  assert.equal(get("live-att-person").value, "pf1");
+  assert.equal(location.hash, "atendimento");
 });

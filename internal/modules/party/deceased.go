@@ -108,7 +108,7 @@ func createDeceasedTx(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, input 
 	if err != nil {
 		return Deceased{}, err
 	}
-	if err := lockPartyCreate(ctx, tx, "deceased", tenantID, input.PersonID); err != nil {
+	if err := lockPartyCreate(ctx, tx, "deceased", tenantID, input.PersonID.String()); err != nil {
 		return Deceased{}, err
 	}
 	var exists bool
@@ -140,11 +140,13 @@ func createDeceasedTx(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, input 
 
 // lockPartyCreate serializes writers for a tenant and aggregate through commit.
 // With READ COMMITTED the following statement sees the previous writer's insert.
-func lockPartyCreate(ctx context.Context, tx pgx.Tx, aggregate string, tenantID, recordID uuid.UUID) error {
-	key := "party.create." + aggregate + ":" + tenantID.String() + ":" + recordID.String()
+// key identifies what within the aggregate must be serialized (a record id, a
+// normalized document, a composite reference) — callers decide its shape.
+func lockPartyCreate(ctx context.Context, tx pgx.Tx, aggregate string, tenantID uuid.UUID, key string) error {
+	lockKey := "party.create." + aggregate + ":" + tenantID.String() + ":" + key
 	var isolation string
 	if err := tx.QueryRow(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0)), current_setting('transaction_isolation')",
-		key).Scan(nil, &isolation); err != nil {
+		lockKey).Scan(nil, &isolation); err != nil {
 		return fmt.Errorf("serializar cadastro de party: %w", err)
 	}
 	if isolation != "read committed" {

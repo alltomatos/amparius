@@ -60,6 +60,19 @@ configurado e sem política disponível, os dois POSTs retornam
 Veja o [contrato HTTP](../contracts/party-deceased-family-link-v1.md) e
 [auditoria e privacidade](auditoria-lgpd.md#falecido-e-vínculo-familiar).
 
+<a id="atendimento-cadastro-pj"></a>
+
+## Consultar o cadastro de PJ durante o atendimento
+
+Para consultar a empresa e seu representante, use **Cadastros → Pessoa
+jurídica** no cliente web privado. Após recarregar, pesquise pelo nome ou
+CNPJ, selecione a empresa e confira os contatos, endereços e representantes.
+O representante deve ser uma PF cadastrada no mesmo tenant. Ao consultar
+a PJ, selecione o representante legal para preencher o responsável no
+Atendimento. A confirmação da operação é feita no fluxo de contrato.
+Veja os campos, permissões e mensagens em
+[Cadastro operacional de PJ](operacao-staging.md#cadastro-pj-web-privado).
+
 ## Consulta da oferta de serviço
 
 Em `GET /v1/catalog/offers`, informe os IDs `item_id` e `list_id` e a

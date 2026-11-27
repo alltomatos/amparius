@@ -36,6 +36,12 @@ type Options struct {
 	// DevelopmentFamilyLinks é o handler de POST /_dev/family-links e
 	// GET /_dev/family-links/{id}.
 	DevelopmentFamilyLinks http.Handler
+	// DevelopmentLegalEntities é o handler dev-only de pessoa jurídica,
+	// representante, contatos e endereços (prévia de homologação da issue #78):
+	// /_dev/legal-entities, /_dev/legal-entities/{id},
+	// /_dev/legal-entities/{id}/representatives, /_dev/parties/{id}/contacts e
+	// /_dev/parties/{id}/addresses.
+	DevelopmentLegalEntities http.Handler
 	// DevelopmentCatalog é o handler das rotas dev-only de catálogo:
 	// itens, listas de preços e preços.
 	DevelopmentCatalog http.Handler
@@ -106,6 +112,13 @@ func (s *Server) routes(options Options) {
 	if options.DevelopmentMode && options.DevelopmentFamilyLinks != nil {
 		s.mux.Handle("/_dev/family-links", options.DevelopmentFamilyLinks)
 		s.mux.Handle("/_dev/family-links/{id}", options.DevelopmentFamilyLinks)
+	}
+	if options.DevelopmentMode && options.DevelopmentLegalEntities != nil {
+		s.mux.Handle("/_dev/legal-entities", options.DevelopmentLegalEntities)
+		s.mux.Handle("/_dev/legal-entities/{id}", options.DevelopmentLegalEntities)
+		s.mux.Handle("/_dev/legal-entities/{id}/representatives", options.DevelopmentLegalEntities)
+		s.mux.Handle("/_dev/parties/{id}/contacts", options.DevelopmentLegalEntities)
+		s.mux.Handle("/_dev/parties/{id}/addresses", options.DevelopmentLegalEntities)
 	}
 	if options.DevelopmentMode && options.DevelopmentCatalog != nil {
 		s.mux.Handle("/_dev/catalog/items", options.DevelopmentCatalog)

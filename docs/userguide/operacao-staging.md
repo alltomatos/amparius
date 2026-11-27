@@ -125,6 +125,41 @@ desenvolvimento com banco, abra o túnel a partir de uma estação autorizada:
 ssh -N -L 127.0.0.1:18080:127.0.0.1:18080 omniroute
 ```
 
+<a id="cadastro-pj-web-privado"></a>
+
+### Cadastro operacional de pessoa jurídica no cliente web privado
+
+Em **Cadastros → Pessoa jurídica**, informe **Razão social** e **CNPJ**
+numérico ou alfanumérico. **Nome fantasia** é opcional. Use somente dados
+sintéticos em homologação. Exemplo de teste: Funerária Exemplo,
+`12.ABC.345/01DE-35`.
+
+Depois de recarregar a página, digite a razão social, o nome fantasia ou o
+CNPJ em **Buscar pessoa jurídica** para recuperar o cadastro persistido.
+A lista mostra até 25 resultados por consulta. Ao apagar o termo, a lista
+é limpa. Selecione a empresa para ver os detalhes. Se a busca não encontrar
+a empresa, confira o termo. Para um CNPJ legado mascarado, busque pelo nome.
+
+- **Adicionar contato**. Escolha E-mail, Telefone, WhatsApp ou Outro e
+  informe o valor. **Principal** substitui o principal do mesmo tipo.
+- **Adicionar endereço**. Preencha logradouro, número, cidade, UF e CEP.
+  **Principal** substitui o endereço principal anterior.
+- **Vincular representante**. Selecione uma PF já cadastrada no grupo
+  e um papel: Representante legal, Administrador, Procurador ou Contato.
+  A mesma PF com o mesmo papel só pode ser vinculada uma vez à mesma PJ.
+
+As ações atualizam o detalhe da PJ selecionada após a confirmação. Se
+houver falha de conexão, restabeleça a conexão e consulte o cadastro antes
+de repetir. Em caso de CNPJ duplicado, localize a PJ existente. Se a política
+estiver indisponível, acione o responsável pela privacidade. Contato, endereço
+e representação dependem da política de retenção aprovada pelo DPO e são
+gravados com auditoria na mesma transação.
+
+A operação depende de sessão vinculada à empresa e papel autorizado no
+fluxo v1. Em ambiente privado de desenvolvimento, o modo opt-in atende
+apenas a dados sintéticos. A prévia pública é uma demonstração sintética.
+Consulte o [contrato v1](../contracts/party-legal-entity-v1.md).
+
 ### Roteiro da prévia visual
 
 - No cliente web, abra **Cadastros**, selecione um tipo e clique em

@@ -112,6 +112,14 @@ func TestBuildHandlerSobreviveCelulaIndisponivelSemDevESemControlPlane(t *testin
 		{http.MethodGet, "/v1/catalog/items"},
 		{http.MethodGet, "/v1/catalog/price-lists"},
 		{http.MethodGet, "/v1/catalog/offers"},
+		{http.MethodGet, "/v1/legal-entities"},
+		{http.MethodPost, "/v1/legal-entities"},
+		{http.MethodGet, "/v1/legal-entities/id"},
+		{http.MethodPost, "/v1/legal-entities/id/representatives"},
+		{http.MethodGet, "/v1/parties/id/contacts"},
+		{http.MethodPost, "/v1/parties/id/contacts"},
+		{http.MethodGet, "/v1/parties/id/addresses"},
+		{http.MethodPost, "/v1/parties/id/addresses"},
 	} {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest(route.method, route.path, nil))

@@ -77,7 +77,7 @@ Dois emissores completamente separados, sem chave ou tabela compartilhada:
   `rotated_at`, `revoked_at`, `revoked_reason`. RLS por `tenant_id`.
 - `identity.login_audit`: `id`, `tenant_id`, `user_id`, `result`
   (`success|invalid_credentials|locked|password_expired_policy|mfa_required`),
-  `at`. Sem e-mail, sem IP crú, sem token, sem senha — ver §10.
+  `at`. Sem e-mail, sem IP crú, sem token, sem senha — ver §11.
 - `identity.credential_token`: tabela única para o token de uso único de
   **bootstrap** e de **recuperação de senha** (§12/§13): `id`, `tenant_id`,
   `user_id`, `token_hash`, `purpose` (`bootstrap|recovery`), `expires_at`,

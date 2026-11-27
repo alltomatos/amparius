@@ -173,6 +173,8 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 			return nil, func() {}, fmt.Errorf("criar repositório funerário: %w", err)
 		}
 
+		authenticatedRoutes = append(authenticatedRoutes, funeral.AuthenticatedRoutes(funeralRepository)...)
+
 		var checker funeral.AccessChecker
 		if cfg.ControlPlaneDSN != "" {
 			controlDatabase, controlErr := db.New(ctx, cfg.ControlPlaneDSN)
@@ -254,6 +256,18 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 			return nil, func() {}, fmt.Errorf("criar repositório financeiro: %w", err)
 		}
 		authenticatedRoutes = append(authenticatedRoutes, finance.AuthenticatedRoutes(financeRepository)...)
+
+		outboxRepository, err := outbox.NewRepository(database)
+		if err != nil {
+			closeAll()
+			return nil, func() {}, fmt.Errorf("criar repositório de outbox: %w", err)
+		}
+		funeralRepository, err := funeral.NewRepository(database, outboxRepository)
+		if err != nil {
+			closeAll()
+			return nil, func() {}, fmt.Errorf("criar repositório funerário: %w", err)
+		}
+		authenticatedRoutes = append(authenticatedRoutes, funeral.AuthenticatedRoutes(funeralRepository)...)
 
 		partyHandler := party.NewProductionHTTPHandler(partyRepository)
 		// A política aprovada por tenant será injetada quando houver um provedor.

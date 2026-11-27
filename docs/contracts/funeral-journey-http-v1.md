@@ -1,14 +1,23 @@
 # Contrato HTTP — jornada funerária v1
 
-Status: vigente para FUN-02C (#40) desde 25/11/2026. A rota é dev-only e só é
-montada quando o modo de desenvolvimento está ativo; entitlement do módulo é
-verificado antes da operação.
+Status: vigente para FUN-02C (#40) desde 25/11/2026. A rota dev-only (`/_dev`)
+só é montada quando o modo de desenvolvimento está ativo; entitlement do módulo
+é verificado antes da operação.
+
+Desde 26/11/2026 (issue #76 / E2E-01B5) a jornada também é exposta em rota
+**autenticada**: `POST /v1/funeral/contracts/{contractId}/journey` com a
+permissão `funeral:write`. O escopo de `tenant_id`/`company_id` vem do
+principal autenticado; o payload, a idempotência, a atomicidade, os eventos e
+os códigos de erro são os mesmos das duas superfícies. O envelope de erro de
+produção é `{code, message, details, traceId}`.
 
 ## Criar a jornada
 
-`POST /_dev/funeral/contracts/{contract_id}/journey` exige `Idempotency-Key` de
-até 160 caracteres. O contrato precisa estar `active`. `tenant_id` e
-`company_id` vêm exclusivamente do contexto confiável, nunca do JSON.
+`POST /v1/funeral/contracts/{contractId}/journey` (autenticada) e
+`POST /_dev/funeral/contracts/{contract_id}/journey` (dev-only) exigem
+`Idempotency-Key` de até 160 caracteres. O contrato precisa estar `active`.
+`tenant_id` e `company_id` vêm exclusivamente do contexto confiável, nunca do
+JSON.
 
 ```json
 {

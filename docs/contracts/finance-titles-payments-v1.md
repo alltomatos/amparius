@@ -52,6 +52,24 @@ Cada requisição consulta o estado atual, inclusive quando há alterações ent
 páginas. Vencimento é a data do título. Saldo e situação das parcelas exigem
 consulta própria.
 
+O detalhe `GET /v1/finance/titles/{id}` acrescenta `paid_cents` (soma das
+baixas das parcelas do título) e `balance_cents`
+(`max(0, amount_cents - paid_cents)`; nunca negativo, mesmo com sobrepagamento).
+A lista não carrega esses campos.
+
+## `GET /v1/finance/titles/{id}/installments`
+
+Exige `finance:read`. Retorna `{"items":[...]}` com as parcelas do título
+ordenadas por `number`, cada uma com os campos da parcela (`id`, `title_id`,
+`number`, `amount_cents`, `due_date`, `status`) mais `paid_cents` (soma das
+baixas em `finance.payment`, `0` sem baixa) e `balance_cents` (nunca
+negativo). Título inexistente ou de outro tenant responde
+`404 FINANCE_REFERENCE_NOT_FOUND`; `id` inválido responde
+`400 VALIDATION_ERROR`. Sem migration: usa `finance.installment` e
+`finance.payment` existentes (`LEFT JOIN` agregado por tenant e título, RLS).
+O saldo é derivado das baixas; o `status` persistido da parcela não é
+recalculado por esta leitura.
+
 ## `POST /v1/finance/payments`
 
 Exige `finance:write` e o cabeçalho `Idempotency-Key` (1 a 200 caracteres).

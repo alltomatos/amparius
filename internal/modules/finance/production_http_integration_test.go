@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -257,6 +258,70 @@ func TestFinanceProductionHTTPPostgres(t *testing.T) {
 
 		request(t, handler, http.MethodGet, titles+"/"+title.ID, "owner-b", "", 404, "FINANCE_REFERENCE_NOT_FOUND")
 		request(t, handler, http.MethodGet, titles, "auditor", "", 200, "")
+	})
+
+	t.Run("parcelas expõem pago e saldo do título", func(t *testing.T) {
+		titleBody := request(t, handler, http.MethodPost, titles, "owner-a", `{"direction":"receivable","amount_cents":10000,"due_date":"2026-12-01","status":"open","origin":"sale"}`, 201, "")
+		var title struct{ ID string }
+		_ = json.Unmarshal(titleBody, &title)
+		titleID := uuid.MustParse(title.ID)
+		tenantCtx := db.WithTenant(ctx, ownerA.TenantID)
+		first, err := repo.CreateInstallment(tenantCtx, finance.Installment{TitleID: titleID, Number: 1, AmountCents: 6000, DueDate: time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC), Status: "open"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.CreateInstallment(tenantCtx, finance.Installment{TitleID: titleID, Number: 2, AmountCents: 4000, DueDate: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), Status: "open"}); err != nil {
+			t.Fatal(err)
+		}
+
+		pay := func(key string, amount int64) {
+			body := `{"installment_id":"` + first.ID.String() + `","amount_cents":` + strconv.FormatInt(amount, 10) + `,"method":"pix"}`
+			req := httptest.NewRequest(http.MethodPost, payments, strings.NewReader(body)).WithContext(ctx)
+			req.Header.Set("Authorization", "Bearer owner-a")
+			req.Header.Set("Idempotency-Key", key)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("pagamento parcial: status=%d body=%s", rec.Code, rec.Body)
+			}
+		}
+		pay("bal-1", 2500)
+
+		detail := request(t, handler, http.MethodGet, titles+"/"+title.ID, "owner-a", "", 200, "")
+		var titleDetail struct {
+			PaidCents    int64 `json:"paid_cents"`
+			BalanceCents int64 `json:"balance_cents"`
+		}
+		if err := json.Unmarshal(detail, &titleDetail); err != nil {
+			t.Fatal(err)
+		}
+		if titleDetail.PaidCents != 2500 || titleDetail.BalanceCents != 7500 {
+			t.Fatalf("saldo do título: %+v", titleDetail)
+		}
+
+		list := request(t, handler, http.MethodGet, titles+"/"+title.ID+"/installments", "owner-a", "", 200, "")
+		var installments struct {
+			Items []struct {
+				Number       int   `json:"number"`
+				PaidCents    int64 `json:"paid_cents"`
+				BalanceCents int64 `json:"balance_cents"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(list, &installments); err != nil {
+			t.Fatal(err)
+		}
+		if len(installments.Items) != 2 {
+			t.Fatalf("parcelas: %s", list)
+		}
+		if got := installments.Items[0]; got.Number != 1 || got.PaidCents != 2500 || got.BalanceCents != 3500 {
+			t.Fatalf("primeira parcela: %+v", got)
+		}
+		if got := installments.Items[1]; got.Number != 2 || got.PaidCents != 0 || got.BalanceCents != 4000 {
+			t.Fatalf("segunda parcela: %+v", got)
+		}
+
+		request(t, handler, http.MethodGet, titles+"/"+title.ID+"/installments", "owner-b", "", 404, "FINANCE_REFERENCE_NOT_FOUND")
+		request(t, handler, http.MethodGet, titles+"/"+uuid.NewString()+"/installments", "owner-a", "", 404, "FINANCE_REFERENCE_NOT_FOUND")
 	})
 
 	t.Run("referência ausente e entrada inválida têm resultado explícito", func(t *testing.T) {

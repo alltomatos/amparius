@@ -67,6 +67,49 @@ não estimar.
 - `ADM-02` — tenants/empresas e saúde dos módulos.
 - `ADM-03` — IA: provedores, allowlist/fallback, cota em R$ e consumo.
 
+## Estado de implementação (ADM-02A, issue #80)
+
+Entregue em 2026-11-27, contrato em
+`docs/contracts/platform-admin-licenses-v1.md`:
+
+- Migration control `0004_reporting_platform_views.sql`: schema `reporting` com
+  `platform_license_pool`, `platform_license_assignment`,
+  `platform_entitlement_event` e `platform_tenant_summary`; só ids opacos,
+  contagens e estados; `GRANT SELECT` ao `amparius_control_app`; sem
+  `BYPASSRLS` (as views pertencem ao dono das tabelas, que não está sujeito a
+  RLS porque não há `FORCE`).
+- `auth.RequirePlatform` e `PlatformService`: bearer + MFA + `platform_admin`,
+  política de papéis disjunta da de tenant; gate ausente responde `503`.
+- `PlatformReader` (leitura via `WithSystemTx` somente sobre as views) e
+  `AdminHandler` (`/admin/v1/tenants`, `.../licenses`, `.../entitlement-events`,
+  grant, revoke e quota por tenant explícito).
+- Escrita reaproveita `entitlement.Service` com `db.WithTenant(tenantAlvo)`,
+  `Idempotency-Key` obrigatória, `version` e o ator de plataforma.
+
+Decisões e desvios:
+
+- A origem gravada é `admin` (valor já existente no catálogo de
+  `entitlement_event.origin`), e não `platform`; o escopo de plataforma fica
+  identificado pelo ator e pela rota. Criar um terceiro valor exigiria migração
+  de constraint sem ganho de auditoria.
+- A auditoria de toda resposta (decisão 5) é registro estruturado
+  `platform_audit` (ator, tenant alvo, ação, status, `trace_id`). Para escritas,
+  o evento durável já está em `entitlement_event`/`quota_event`. Persistência
+  durável das **leituras** de plataforma continua pendente.
+- Um tenant só aparece nas views depois de ter cota, licença ou assentos; tenant
+  sem nenhum registro responde `404 TENANT_NOT_FOUND`, mas ainda pode receber
+  quota/grant (que o cria).
+
+Pendências (a #80 fica **parcial** por causa delas):
+
+- Diretório de tenants e empresas (nome, CNPJ mascarado, status) exige uma view
+  de reporting no banco da célula (`identity`); o control plane só conhece ids.
+  Próxima fatia (`ADM-02B`).
+- Adaptador OIDC/MFA de plataforma (emissor, audience `manager`, nonce): sem ele
+  `PlatformAuthenticator` não é montado em `cmd/api` e `/admin/v1` responde
+  `503`. Continua pendência de produção (ADR 0038).
+- Saúde por módulo, vencimento de licenças e IA (`ADM-01`, `ADM-03`).
+
 ## Rejeitado
 
 - Colocar o superadmin em `app.amparius.com`, misturado ao acesso de cliente.

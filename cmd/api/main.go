@@ -124,6 +124,7 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 	var financeHandler http.Handler
 	var funeralHandler http.Handler
 	var authenticatedRoutes []httpserver.AuthenticatedRoute
+	var platformRoutes []httpserver.PlatformRoute
 	// Inject the approved tenant privacy policy when a provider is available.
 	var policyProvider audit.PolicyProvider
 	if devOnboardingEnabled {
@@ -255,6 +256,23 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 				httpserver.AuthenticatedRoute{Pattern: "PUT /v1/companies/{companyId}/entitlements/{module}", Permission: platformauth.PermissionEntitlementWrite, Handler: http.HandlerFunc(controlHandler.GrantEntitlement)},
 				httpserver.AuthenticatedRoute{Pattern: "PATCH /v1/companies/{companyId}/entitlements/{module}", Permission: platformauth.PermissionEntitlementWrite, Handler: http.HandlerFunc(controlHandler.PatchEntitlement)},
 			)
+			platformReader, readerErr := controlplane.NewPlatformReader(controlDatabase)
+			if readerErr != nil {
+				closeAll()
+				return nil, func() {}, fmt.Errorf("criar leitor de plataforma: %w", readerErr)
+			}
+			// ADR 0040: /admin/v1 é uma superfície separada de /v1. Sem o
+			// verificador OIDC/MFA de plataforma (pendente), o servidor não monta
+			// PlatformAuthenticator e as rotas respondem 503 (falha fechada).
+			adminHandler := controlplane.NewAdminHandler(platformReader, entitlementService, logger)
+			platformRoutes = append(platformRoutes,
+				httpserver.PlatformRoute{Pattern: "GET /admin/v1/tenants", Permission: platformauth.PermissionPlatformRead, Handler: adminHandler.Audited("tenants.list", adminHandler.Tenants)},
+				httpserver.PlatformRoute{Pattern: "GET /admin/v1/tenants/{tenantId}/licenses", Permission: platformauth.PermissionPlatformRead, Handler: adminHandler.Audited("licenses.read", adminHandler.Licenses)},
+				httpserver.PlatformRoute{Pattern: "GET /admin/v1/tenants/{tenantId}/entitlement-events", Permission: platformauth.PermissionPlatformRead, Handler: adminHandler.Audited("events.read", adminHandler.Events)},
+				httpserver.PlatformRoute{Pattern: "PUT /admin/v1/tenants/{tenantId}/companies/{companyId}/entitlements/{module}", Permission: platformauth.PermissionPlatformWrite, Handler: adminHandler.Audited("entitlement.grant", adminHandler.Grant)},
+				httpserver.PlatformRoute{Pattern: "POST /admin/v1/tenants/{tenantId}/companies/{companyId}/entitlements/{module}/revoke", Permission: platformauth.PermissionPlatformWrite, Handler: adminHandler.Audited("entitlement.revoke", adminHandler.Revoke)},
+				httpserver.PlatformRoute{Pattern: "PUT /admin/v1/tenants/{tenantId}/modules/{module}/quota", Permission: platformauth.PermissionPlatformWrite, Handler: adminHandler.Audited("quota.set", adminHandler.SetQuota)},
+			)
 		}
 		catalogRepository, err := catalog.NewRepository(database)
 		if err != nil {
@@ -303,6 +321,7 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 		// bootstrap. Não usar um autenticador sintético aqui: auth.Require
 		// deve devolver 503 nas rotas autenticadas até essa configuração.
 		AuthenticatedRoutes:      authenticatedRoutes,
+		PlatformRoutes:           platformRoutes,
 		DevelopmentMode:          devOnboardingEnabled,
 		DevelopmentOnboarding:    onboardingHandler,
 		DevelopmentParties:       partiesHandler,

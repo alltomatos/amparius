@@ -339,13 +339,43 @@ func (r *Repository) GetTitleByID(ctx context.Context, id uuid.UUID) (Title, err
 }
 
 func (r *Repository) ListTitles(ctx context.Context, limit int) ([]Title, error) {
+	return r.listTitles(ctx, TitleListFilter{}, listLimit(limit))
+}
+
+func (r *Repository) ListTitlePage(ctx context.Context, filter TitleListFilter) ([]Title, *TitleListPosition, error) {
+	limit := listLimit(filter.Limit)
+	items, err := r.listTitles(ctx, filter, limit+1)
+	if err != nil || len(items) <= limit {
+		return items, nil, err
+	}
+	last := items[limit-1]
+	return items[:limit], &TitleListPosition{DueDate: last.DueDate, ID: last.ID}, nil
+}
+
+func (r *Repository) listTitles(ctx context.Context, filter TitleListFilter, limit int) ([]Title, error) {
 	tenantID, err := db.TenantFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	result := []Title{}
+	var afterDate *time.Time
+	var afterID *uuid.UUID
+	if filter.After != nil {
+		afterDate, afterID = &filter.After.DueDate, &filter.After.ID
+	}
 	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT id,tenant_id,COALESCE(party_id,'00000000-0000-0000-0000-000000000000'::uuid),direction,amount::text,due_date,status,origin,COALESCE(description,''),COALESCE(idempotency_key,'') FROM finance.title WHERE tenant_id=$1 ORDER BY due_date,id LIMIT $2`, tenantID, listLimit(limit))
+		rows, err := tx.Query(ctx, `
+			SELECT id,tenant_id,COALESCE(party_id,'00000000-0000-0000-0000-000000000000'::uuid),
+			       direction,amount::text,due_date,status,origin,COALESCE(description,''),COALESCE(idempotency_key,'')
+			FROM finance.title
+			WHERE tenant_id=$1
+			  AND ($2='' OR status=$2)
+			  AND ($3='' OR direction=$3)
+			  AND ($4::date IS NULL OR due_date >= $4)
+			  AND ($5::date IS NULL OR due_date <= $5)
+			  AND ($6::date IS NULL OR (due_date,id) > ($6,$7::uuid))
+			ORDER BY due_date,id
+			LIMIT $8`, tenantID, filter.Status, filter.Direction, filter.DueFrom, filter.DueTo, afterDate, afterID, limit)
 		if err != nil {
 			return err
 		}

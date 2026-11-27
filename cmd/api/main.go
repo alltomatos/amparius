@@ -198,6 +198,7 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 				logger.Warn("control plane de entitlement indisponível")
 			}
 		}
+		authenticatedRoutes = append(authenticatedRoutes, funeral.AgendaAuthenticatedRoute(funeralRepository, checker))
 		optionalHandler := funeral.NewDevelopmentHTTPHandlerWithScheduling(checker, funeralRepository, funeralRepository)
 		funeralHandler = httpserver.DevelopmentTenantCompanyContext(optionalHandler, repository)
 	} else {
@@ -219,6 +220,7 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 			closeAll()
 			return nil, func() {}, fmt.Errorf("criar repositório de party: %w", err)
 		}
+		var checker funeral.AccessChecker
 		if cfg.ControlPlaneDSN != "" {
 			repository, err := identity.NewRepository(database)
 			if err != nil {
@@ -231,6 +233,12 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 				return nil, func() {}, fmt.Errorf("conectar PostgreSQL do control plane: %w", controlErr)
 			}
 			closers = append(closers, controlDatabase.Close)
+			controlChecker, checkerErr := entitlement.NewChecker(controlDatabase, entitlement.WithCompanyResolver(repository))
+			if checkerErr != nil {
+				closeAll()
+				return nil, func() {}, fmt.Errorf("criar verificador de entitlement: %w", checkerErr)
+			}
+			checker = controlChecker
 			entitlementService, entitlementErr := entitlement.NewService(controlDatabase, entitlement.WithCompanyResolver(repository))
 			if entitlementErr != nil {
 				closeAll()
@@ -273,6 +281,7 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 			return nil, func() {}, fmt.Errorf("criar repositório funerário: %w", err)
 		}
 		authenticatedRoutes = append(authenticatedRoutes, funeral.AuthenticatedRoutes(funeralRepository)...)
+		authenticatedRoutes = append(authenticatedRoutes, funeral.AgendaAuthenticatedRoute(funeralRepository, checker))
 
 		partyHandler := party.NewProductionHTTPHandler(partyRepository)
 		deceasedHandler := party.NewProductionDeceasedHTTPHandler(partyRepository, policyProvider)

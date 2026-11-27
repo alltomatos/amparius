@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/alltomatos/amparius/internal/platform/auth"
@@ -20,7 +19,7 @@ import (
 type FinanceOperationalService interface {
 	CreateTitle(context.Context, Title) (Title, error)
 	GetTitleByID(context.Context, uuid.UUID) (Title, error)
-	ListTitles(context.Context, int) ([]Title, error)
+	ListTitlePage(context.Context, TitleListFilter) ([]Title, *TitleListPosition, error)
 	CreatePaymentIdempotent(context.Context, string, Payment) (Payment, error)
 }
 
@@ -71,16 +70,12 @@ func (h productionHandler) createTitle(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h productionHandler) listTitles(w http.ResponseWriter, r *http.Request) {
-	limit := 0
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed <= 0 {
-			writeFinanceProductionError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "limit deve ser inteiro positivo")
-			return
-		}
-		limit = parsed
+	filter, err := parseTitleListFilter(r.URL.RawQuery)
+	if err != nil {
+		writeFinanceProductionError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+		return
 	}
-	items, err := h.service.ListTitles(r.Context(), limit)
+	items, next, err := h.service.ListTitlePage(r.Context(), filter)
 	if err != nil {
 		writeFinanceProductionServiceError(w, r, err)
 		return
@@ -89,7 +84,11 @@ func (h productionHandler) listTitles(w http.ResponseWriter, r *http.Request) {
 	for _, item := range items {
 		response = append(response, titleResponse(item))
 	}
-	writeFinanceProductionJSON(w, http.StatusOK, map[string]any{"items": response})
+	payload := map[string]any{"items": response}
+	if next != nil {
+		payload["next_cursor"] = next.encode()
+	}
+	writeFinanceProductionJSON(w, http.StatusOK, payload)
 }
 
 func (h productionHandler) getTitle(w http.ResponseWriter, r *http.Request) {

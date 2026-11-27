@@ -23,8 +23,28 @@ compartilhado (porta 5432); a migration da #82 não foi tocada.
 | Readiness completa (`scripts/homolog-readiness.ps1`): PG, Redis, RabbitMQ reais + S3 **simulado** (adobe/s3mock) | PASS: sem dependências `/readyz` 503; com todas `/readyz` 200 | Real para PG/Redis/RabbitMQ; **simulado** para object storage (não é MinIO/R2) |
 | Relay Rust como processo real (`amparius-relay.exe`, bind 127.0.0.1:18091) | `/healthz` 200; `/relay/v1/status` sem credencial 401 e com cabeçalhos de credencial não emitida 401; rota inexistente 404 | **Real**, só a borda HTTP local. **Não existe integração relay → API Go** (o relay não tem cliente HTTP; o log informa que o PostgreSQL é placeholder). Sync contra a API real **não é homologável** hoje |
 | UI web no navegador (staging `hml.amparius.com`, somente leitura, dados sintéticos) | 10 destinos navegáveis sem erros de script, foco movido ao `h1` a cada rota, `aria-current` correto, skip link funcional, 0 imagens sem `alt`, 0 campos sem rótulo, 0 ids duplicados, contraste AA nos 19 textos visíveis do painel, sem overflow horizontal, regiões `status` para mensagens, `prefers-color-scheme` e breakpoints (760/520 px); cadastro de exemplo e filtro vazio ("Nenhum cadastro encontrado.") funcionam | **Real** no navegador, mas o conteúdo é **simulado** (fila "reiniciada ao recarregar"); sem leitor de tela, sem teste de viewport móvel real e sem Lighthouse/axe completo |
-| Painel do control plane no navegador (`web/control-plane` servido estático, sem API) | Carrega sem erro de script; `lang=pt-BR`; skip link; 4 destinos de navegação; 0 campos sem rótulo, 0 imagens sem `alt`, 0 ids duplicados, 0 âncoras quebradas; sem API os pedidos `/v1/context` e `/v1/companies` retornam 404 e a tela mostra estados de falha ("Contexto indisponivel", "HTTP_404: Falha HTTP 404") em regiões `status`/`polite` e mensagens de seleção nas seções dependentes | **Real** no navegador, mas **sem backend**: conceder/revogar licença não foi exercitado (`/admin/v1` não está montado sem OIDC/MFA); a mensagem de falha expõe o código técnico ao operador |
+| Painel do control plane no navegador (`web/control-plane` servido estático, sem API) | Carrega sem erro de script; `lang=pt-BR`; skip link; 4 destinos de navegação; 0 campos sem rótulo, 0 imagens sem `alt`, 0 ids duplicados, 0 âncoras quebradas; sem API os pedidos `/v1/context` e `/v1/companies` retornam 404 e a tela mostra estados de falha ("Contexto indisponivel", "HTTP_404: Falha HTTP 404") em regiões `status`/`polite` e mensagens de seleção nas seções dependentes | **Real** no navegador, mas **sem backend**: conceder/revogar licença não foi exercitado nesta primeira passada (exercitado na rodada 2, abaixo, com API real e identidade de teste); a mensagem de falha expõe o código técnico ao operador |
 | OIDC/MFA | Não homologado | Adiado; autenticadores nos testes são fakes |
+
+## Control plane: API real com identidade de teste (rodada 2)
+
+Identidade de teste injetada só em `_test.go` (`handlerOption`); o binário de produção continua em 503. PostgreSQL descartável (portas 55432/55435), papéis `NOSUPERUSER NOBYPASSRLS`, dados sintéticos de 2 tenants.
+
+| Fluxo | Resultado | Natureza |
+|---|---|---|
+| API `/v1` e `/admin/v1` com identidade de teste (contexto, empresas, módulos, conceder, revogar, cota com `quotaVersion`, validade, auditoria, 401/403/409, isolamento entre tenants) | PASS (`TestControlPlaneHTTPComIdentidadeDeTeste`) | **Real** (PG + RLS), identidade é **fake** |
+| Sem DSN do control plane → `404`; com DSN e sem autenticador → `503` | PASS (2 testes) | **Real** |
+| UI `web/control-plane` no navegador contra a API real: contexto, lista de empresas (RLS), 14 módulos, conceder → revogar → reconceder → ajustar cota → ajustar validade, detalhe com tipo/cota/uso/versão relidos da API, auditoria com 7+ eventos, sem erro de script | PASS após correções abaixo | **Real** (navegador + API + PG), identidade fake |
+
+Defeitos achados na UI e corrigidos:
+
+- a) Ajustar cota pela UI retornava `409 STALE_VERSION`: a UI enviava a versão da licença, mas a cota tem versão própria (`entitlement.license_pool.version`) que o detalhe não expunha. Correção: `quotaVersion` em `GET .../entitlements/{module}` e uso na UI (contrato cp06 atualizado; teste verifica `quotaVersion`).
+- b) Após PUT/PATCH a UI substituía o detalhe pela resposta da mutação, que não traz tipo, cota nem uso ("Tipo: nao informado", "sem quota configurada"). Correção: relê lista e detalhe da API após cada mutação.
+- c) "Atualizado em" mostrava valor inválido quando `updatedAt` é nulo → "nao informado".
+
+Limites desta rodada: identidade de teste não é OIDC/MFA (não homologados); `/admin/v1` só é exercitado por testes Go (não há UI de plataforma consumindo-o); **relay → API continua sem integração real**, portanto não homologado; sem leitor de tela nem mobile real.
+
+Reprodução: `.\scripts\homolog-control-plane-ui.ps1` (testes + remoção do container) ou com `-Serve` para abrir a UI em `http://127.0.0.1:18095/web/control-plane/index.html` (encerra criando `%TEMP%mparius-homolog-ui.stop`).
 
 ## Falhas encontradas e corrigidas
 
@@ -70,9 +90,7 @@ compartilhado (porta 5432); a migration da #82 não foi tocada.
 
 ## Observações (sem correção nesta rodada)
 
-- Em `APP_ENV=development` sem OIDC, `/v1/*` e `/admin/v1/*` respondem `404`
-  (rotas não montadas); a documentação do #80 fala em `503` — alinhar quando o
-  adaptador OIDC/MFA existir.
+- **404 × 503 resolvido (comportamento intencional, agora documentado e provado por teste).** `404` = rota não montada (sem `AMPA_CONTROL_POSTGRES_DSN` ou em `APP_ENV=development`); `503 AUTHENTICATION_UNAVAILABLE` = rota montada sem autenticador OIDC/MFA (fail-closed); `401` = bearer inválido. A divergência estava só na documentação do #80. Matriz em `docs/ENGINEERING.md` (control plane).
 - O S3 do `readyz` local é um simulador (`adobe/s3mock`); a checagem contra object storage real foi vista apenas no staging. As imagens `minio/*` não estão mais no Docker Hub.
 - `rabbitmq-diagnostics` via `docker exec` durante a subida derruba o container do RabbitMQ; o script espera pelo log `Server startup complete`.
 - UI: o `document.title` não muda por rota (WCAG 2.4.2, baixo impacto); o skip link deixa `#screen-title` na URL (a rota cai no Painel ao recarregar, comportamento aceitável); não há `prefers-reduced-motion` explícito no CSS. Sem correção nesta rodada.

@@ -13,8 +13,10 @@ outra resposta, permanece mascarado.
 
 Retorna o detalhe do catálogo e da licença da empresa. O retorno contém
 `id`, `tenantId`, `companyId`, `module`, `moduleName`, `kind`, `status`,
-`quota`, `quotaConfigured`, `used`, `validFrom`, `validTo`, `version` e
-`updatedAt`. Módulo core pode ter `id = null`; ele continua `active` sem
+`quota`, `quotaConfigured`, `used`, `validFrom`, `validTo`, `version`,
+`quotaVersion` e `updatedAt`. `version` é a versão da licença (assignment);
+`quotaVersion` é a versão da cota do módulo no tenant (0 enquanto não houver
+cota configurada) e é a esperada por `PATCH` de `quota`. Módulo core pode ter `id = null`; ele continua `active` sem
 assignment.
 
 ### Auditoria
@@ -52,8 +54,11 @@ concorrente.
 
 Exige `version`. Para licença, aceita `status` (`active`, `inactive` ou
 `revoked`), `validFrom`, `validTo` e `clearValidTo`. Para quota, aceita
-`quota` inteira não negativa. Quando a quota ainda não foi configurada, o
-detalhe expõe `version = 0`, valor válido somente para a primeira configuração.
+`quota` inteira não negativa. Para `quota`, o `version` enviado é o
+`quotaVersion` do detalhe (a cota tem versão própria, distinta da licença);
+usar `version` da licença responde `409 STALE_VERSION`. Quando a quota ainda
+não foi configurada, `quotaVersion = 0`, valor válido somente para a primeira
+configuração.
 A alteração de quota é a cota do módulo no
 tenant, com a empresa no caminho como escopo autorizado; não existe quota
 independente por filial/CNPJ neste modelo.

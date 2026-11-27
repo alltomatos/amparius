@@ -198,7 +198,7 @@
         <div><dt>Valido ate</dt><dd>${H.displayDate ? H.displayDate(detail?.validTo) : (detail?.validTo || "sem validade final")}</dd></div>
         <div><dt>Quota/uso</dt><dd>${escapeHtml(quotaText)}</dd></div>
         <div><dt>Versao</dt><dd>${escapeHtml(version)}</dd></div>
-        <div><dt>Atualizado em</dt><dd>${H.displayDate ? H.displayDate(detail?.updatedAt) : (detail?.updatedAt || "nao informado")}</dd></div>
+        <div><dt>Atualizado em</dt><dd>${detail?.updatedAt ? (H.displayDate ? H.displayDate(detail.updatedAt) : detail.updatedAt) : "nao informado"}</dd></div>
       </dl>
       <div class="detail-actions">
         <button type="button" data-action="grant" ${core ? "disabled aria-disabled=true" : ""}>Conceder/reativar (PUT)</button>
@@ -257,7 +257,8 @@
         const res = await request(`/v1/companies/${encodeURIComponent(company.id)}/entitlements/${encodeURIComponent(module)}`, {
           method: "PATCH",
           headers: { "Idempotency-Key": key },
-          body: { quota, version },
+          // A cota é do módulo no tenant: a versão esperada é a da cota (quotaVersion); a prévia sem API só conhece version.
+          body: { quota, version: H.parseVersion ? H.parseVersion(detail?.quotaVersion ?? detail?.version) : Number(detail?.quotaVersion ?? detail?.version ?? 0) },
         });
         state.detail = res;
         state.actionState = "Quota ajustada com sucesso.";
@@ -284,6 +285,14 @@
         if (index !== -1) state.entitlements[index] = state.detail;
         state.selectedEntitlement = state.detail;
         renderEntitlements();
+      } else {
+        // A resposta de PUT/PATCH não traz tipo, cota nem uso: relê lista e detalhe da API.
+        await loadEntitlements(company.id);
+        state.selectedEntitlement = state.entitlements.find((item) => item.module === module) || state.selectedEntitlement;
+        renderEntitlements();
+        await loadDetail(company.id, module);
+        showState("entitlement-detail-state", state.actionState, "success");
+        return;
       }
       renderEntitlementDetail();
       await loadAudit(company.id, module);

@@ -95,6 +95,9 @@ func run() error {
 	return nil
 }
 
+// handlerOption ajusta as opções HTTP antes de montar o servidor.
+type handlerOption func(*httpserver.Options)
+
 // buildHandler monta o handler HTTP a partir da configuração carregada, sem
 // abrir nenhum listener de rede — é o mesmo caminho que run() usa para
 // montar o servidor, exposto em separado para ser exercido por teste pelo
@@ -102,7 +105,11 @@ func run() error {
 // SO. O fechamento das dependências abertas aqui (pools de Postgres) é
 // devolvido em closeAll em vez de defer, porque um defer dentro desta função
 // fecharia os pools antes do handler devolvido ser efetivamente usado.
-func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (http.Handler, func(), error) {
+//
+// Os handlerOption existem para a homologação injetar uma identidade de teste
+// em ambiente descartável (ver homolog_control_plane_ui_test.go); o binário
+// nunca os passa, então o bootstrap de produção continua fail-closed (503).
+func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger, overrides ...handlerOption) (http.Handler, func(), error) {
 	readinessChecker, closeReadiness, err := newReadiness(ctx, cfg)
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("configurar readiness: %w", err)
@@ -315,7 +322,7 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 		authenticatedRoutes = append(authenticatedRoutes, party.LegalEntityAuthenticatedRoutes(partyRepository, policyProvider)...)
 	}
 
-	handler := httpserver.New(logger, httpserver.Options{
+	options := httpserver.Options{
 		Readiness: readinessChecker,
 		// O provedor OIDC/MFA ainda não foi escolhido nem conectado ao
 		// bootstrap. Não usar um autenticador sintético aqui: auth.Require
@@ -331,7 +338,11 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 		DevelopmentCatalog:       catalogHandler,
 		DevelopmentFinance:       financeHandler,
 		DevelopmentFuneral:       funeralHandler,
-	}).Handler()
+	}
+	for _, override := range overrides {
+		override(&options)
+	}
+	handler := httpserver.New(logger, options).Handler()
 
 	return handler, closeAll, nil
 }

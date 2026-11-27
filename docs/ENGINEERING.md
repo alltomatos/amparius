@@ -608,7 +608,16 @@ essas views via `db.WithSystemTx`; `controlplane.AdminHandler` serve
 `db.WithTenant(tenantAlvo)`, `Idempotency-Key`, `version` e `origin=admin`.
 As rotas usam `auth.RequirePlatform` (OIDC + MFA + `platform_admin`); em
 `cmd/api` o `PlatformAuthenticator` ainda não é montado, então respondem `503`
-até existir o adaptador OIDC/MFA de plataforma. Contrato em
+até existir o adaptador OIDC/MFA de plataforma. Matriz 404 × 503 (provada por
+`TestControlPlaneSemAutenticadorRespondeMatrizDeStatus` e
+`TestControlPlaneConfiguradoSemAutenticadorFalhaFechado503`): `404` = rota **não
+montada** (sem `AMPA_CONTROL_POSTGRES_DSN`, ou `APP_ENV=development` com onboarding
+de desenvolvimento); `503 AUTHENTICATION_UNAVAILABLE` = rota montada, mas sem
+autenticador (OIDC/MFA); `401` = autenticador presente e bearer inválido. Os dois
+valores são intencionais e fail-closed; só a homologação injeta uma identidade de
+teste, via `handlerOption` em arquivo `_test.go` (`cmd/api/homolog_control_plane_ui_test.go`),
+nunca no binário. UI do control plane contra a API real:
+`.\scripts\homolog-control-plane-ui.ps1 [-Serve]` (container descartável, porta 55435). Contrato em
 `docs/contracts/platform-admin-licenses-v1.md`; decisões e pendências no ADR
 0040. Para a integração, aplique `goose -dir migrations/control ... up` em um
 banco **descartável** com o papel `amparius_control_app` criado antes e rode

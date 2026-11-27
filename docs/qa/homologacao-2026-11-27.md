@@ -10,7 +10,7 @@ compartilhado (porta 5432); a migration da #82 não foi tocada.
 | Camada | Resultado | Natureza |
 |---|---|---|
 | Go: migrations da célula 0001–0039 e do control plane 0001–0004, do zero | PASS | **Real** (PostgreSQL 16 descartável) |
-| Go: `go build`, `go vet`, `go test ./...` com DSNs de integração | 20 pacotes `ok`; 366 testes PASS, 0 FAIL, 0 SKIP | **Real** (PG, papéis `NOSUPERUSER NOBYPASSRLS`, RLS efetiva) para repositórios e HTTP via `httptest` |
+| Go: `go build`, `go vet`, `go test ./...` com DSNs de integração | 20 pacotes `ok`; 367 testes PASS, 0 FAIL, 0 SKIP | **Real** (PG, papéis `NOSUPERUSER NOBYPASSRLS`, RLS efetiva) para repositórios e HTTP via `httptest` |
 | Painel da loja (#79): 10.007 títulos/3.037 agendamentos, p95 pág. de títulos 25,9 ms, agenda 39,6 ms | PASS | **Real** em PG descartável; latência de máquina de desenvolvimento, não SLO |
 | `/readyz` p95 (200 amostras) | 0,698 ms | Local, sem dependências externas |
 | Processo `cmd/api` real (dev) | `/healthz` 200; `/readyz` 503 sem Redis/RabbitMQ/storage (fail-closed esperado); `POST /_dev/onboarding` 200 | **Real** |
@@ -31,7 +31,7 @@ compartilhado (porta 5432); a migration da #82 não foi tocada.
    não versionado — deriva ambiente × migrations. Correção:
    `migrations/0039_fiscal_tax_rule_grants.sql` (`SELECT, INSERT`; sem
    `UPDATE/DELETE`, pois a regra é datada e a correção vira nova linha).
-   Bônus: o staging e qualquer banco novo passam a ter o mesmo comportamento
+   Prova de escopo: `TestTaxRuleAppRoleGrantScopeAndRLS` confirma privilégios exatos (SELECT/INSERT sim; UPDATE/DELETE não), recusa (42501) INSERT de regra global e de regra de outro tenant, e mostra que o tenant B não enxerga a regra do A. Bônus: o staging e qualquer banco novo passam a ter o mesmo comportamento
    dos testes.
 2. **Cleanup que nunca rodava** em
    `TestListForCompanyScopesByTenantAndIncludesCoreModules`: `defer

@@ -1,17 +1,16 @@
 /* Modo operacional da loja (cliente web privado).
  *
  * Quando `window.AMPARIUS_CONFIG` está presente, substitui o fluxo sintético
- * de Cadastros e Atendimento por chamadas reais à API (client-api.js) e
- * expõe os estados de vazio, erro, 401, 403 e offline. Sem configuração, este
- * script não faz nada e a prévia sintética de demonstração permanece.
+ * de Cadastros e Atendimento e habilita as leituras autenticadas de agenda
+ * e títulos. Sem configuração, a prévia de demonstração permanece.
  */
 (() => {
   "use strict";
   const api = window.AmpariusClientAPI;
-  if (!api || !api.configured) return;
+  const config = window.AMPARIUS_CONFIG;
+  if (!api || (!config && !api.configured)) return;
 
-  const state = { parties: [], deceased: [], services: [], legalEntities: [], attendanceRepresentative: null };
-
+  const byId = (id) => document.getElementById(id);
   function el(tag, className, text) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -31,7 +30,14 @@
     connection.textContent = text;
     connection.className = "status " + kind;
   }
-  setConnection(api.mode === "dev" ? "Online (ambiente privado)" : "Online autenticado", "status-online");
+  setConnection(api.mode === "bearer" ? "Modo autenticado" : "Ambiente privado", "status-loading");
+  const context = byId("store-context");
+  if (context) context.textContent = "Loja · Ambiente privado";
+
+  mountOperationalReads();
+  if (!api.configured) return;
+
+  const state = { parties: [], deceased: [], services: [], legalEntities: [], attendanceRepresentative: null };
 
   const feedback = document.getElementById("feedback");
   function setFeedback(text) {
@@ -62,6 +68,258 @@
       return;
     }
     setFeedback("Erro: " + (err.message || "falha inesperada.") + (err.traceId ? " (rastreio " + err.traceId + ")" : ""));
+  }
+
+  function readError(err) {
+    if (api.isOfflineError(err)) return "Sem conexão com a API. A consulta requer rede.";
+    if (err.status === 401) return "Sessão ausente ou expirada. Entre novamente para consultar.";
+    if (err.status === 403 && err.code === "ENTITLEMENT_MODULE_NOT_LICENSED") {
+      return "Agenda bloqueada. A empresa precisa de uma licença Funerária vigente.";
+    }
+    if (err.status === 403) return "Seu acesso atual não tem permissão para esta consulta.";
+    if (err.status === 503) return "Serviço temporariamente indisponível. Tente novamente.";
+    if (err.status === 400) return "A API rejeitou a data, o fuso ou os filtros da consulta.";
+    return "Não foi possível concluir a consulta. Tente novamente.";
+  }
+
+  function readView(panel, status, results, clearRows) {
+    let version = 0;
+    function clear(message = "") {
+      version++;
+      results.hidden = true;
+      results.setAttribute("aria-busy", "false");
+      clearRows();
+      status.textContent = message;
+    }
+    async function load(message, request, render) {
+      clear(message);
+      const current = version;
+      results.setAttribute("aria-busy", "true");
+      const isCurrent = () => current === version && !panel.parentElement.hidden;
+      try {
+        const data = await request();
+        if (isCurrent()) status.textContent = render(data);
+      } catch (err) {
+        if (isCurrent()) clear(readError(err));
+      } finally {
+        if (isCurrent()) results.setAttribute("aria-busy", "false");
+      }
+    }
+    return { clear, load };
+  }
+
+  function isCivilDate(date) {
+    if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date) || date.startsWith("0000")) return false;
+    const instant = new Date(date + "T00:00:00Z");
+    return !Number.isNaN(instant.getTime()) && instant.toISOString().slice(0, 10) === date;
+  }
+
+  function displayDate(date) {
+    return date.split("-").reverse().join("/");
+  }
+
+  function agendaPanel(panel) {
+    const date = config?.agendaDate;
+    const timeZone = config?.agendaTimeZone;
+    const status = byId("private-day-status");
+    const results = byId("private-day-results");
+    const items = byId("private-day-items");
+    const pending = byId("private-day-pending");
+    const pendingEmpty = byId("private-day-pending-empty");
+    const refresh = byId("private-day-refresh");
+    const view = readView(panel, status, results, () => {
+      items.replaceChildren();
+      pending.replaceChildren();
+      pendingEmpty.hidden = true;
+    });
+
+    if (!date || !timeZone) {
+      status.textContent = "Configure a data civil e o fuso IANA da loja para consultar a agenda.";
+      return;
+    }
+    if (!isCivilDate(date)) {
+      status.textContent = "A data civil da agenda é inválida. Use AAAA-MM-DD.";
+      return;
+    }
+    let clock;
+    try {
+      // Identificadores de offset também podem ser aceitos pelo Intl.
+      if (typeof timeZone !== "string" || !/^[A-Za-z][A-Za-z0-9_+/-]*$/.test(timeZone)) {
+        throw new RangeError("Fuso inválido");
+      }
+      clock = new Intl.DateTimeFormat("pt-BR", {
+        timeZone, day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
+        hourCycle: "h23", timeZoneName: "shortOffset",
+      });
+    } catch {
+      status.textContent = "O fuso da agenda é inválido. Informe um fuso IANA da loja.";
+      return;
+    }
+    const windowLabel = byId("private-day-window");
+    windowLabel.textContent = displayDate(date) + " · " + timeZone;
+    windowLabel.hidden = false;
+    refresh.hidden = false;
+    const kinds = new Map([["wake", "Velório"], ["burial", "Sepultamento"]]);
+    const statuses = new Map([
+      ["scheduled", "Agendado"], ["confirmed", "Confirmado"],
+      ["completed", "Concluído"], ["cancelled", "Cancelado"],
+    ]);
+
+    function time(value) {
+      if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T.*Z$/.test(value)) {
+        throw new Error("Horário inválido.");
+      }
+      const instant = new Date(value);
+      const node = el("time", null, clock.format(instant));
+      node.dateTime = value;
+      return node;
+    }
+    function render(data) {
+      const bySchedule = new Map(data.items.map((item) => [item.id, item]));
+      const rows = data.items.map((item) => {
+        const row = el("li");
+        row.append(el("strong", null, kinds.get(item.kind) || "Agendamento"), " · ",
+          statuses.get(item.status) || "Situação desconhecida", el("br"),
+          time(item.starts_at), " a ", time(item.ends_at), el("br"),
+          el("small", "muted", "Ref. " + item.id));
+        return row;
+      });
+      const confirmations = data.pending.map(({ kind, schedule_id: id }) => {
+        const item = bySchedule.get(id);
+        if (kind !== "schedule_confirmation" || !item) throw new Error("Pendência inválida.");
+        const row = el("li");
+        row.append(el("strong", null, kinds.get(item.kind) || "Agendamento"), " · ",
+          time(item.starts_at), el("br"), el("small", "muted", "Ref. " + id));
+        return row;
+      });
+      items.replaceChildren(...rows);
+      pending.replaceChildren(...confirmations);
+      pendingEmpty.hidden = confirmations.length > 0;
+      results.hidden = rows.length === 0;
+      if (!rows.length) return "Nenhum agendamento ou confirmação pendente nesta data.";
+      const scheduledCount = rows.length === 1 ? "1 agendamento" : rows.length + " agendamentos";
+      const pendingCount = confirmations.length === 1 ? "1 confirmação pendente" : confirmations.length + " confirmações pendentes";
+      return scheduledCount + " · " + pendingCount + ".";
+    }
+    const open = () => view.load("Carregando agenda…", () => api.listAgenda({ date, timeZone }), render);
+    refresh.addEventListener("click", open);
+    return { open, close: view.clear };
+  }
+
+  function financePanel(panel) {
+    const form = byId("private-title-filters");
+    const status = byId("private-title-result-status");
+    const results = byId("private-title-results");
+    const rows = byId("private-title-rows");
+    const next = byId("private-title-next");
+    const view = readView(panel, status, results, () => rows.replaceChildren());
+    form.hidden = false;
+    const filterInputs = {
+      status: byId("private-title-status"),
+      direction: byId("private-title-direction"),
+      dueFrom: byId("private-title-due-from"),
+      dueTo: byId("private-title-due-to"),
+    };
+    let applied;
+    let nextCursor;
+    const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+    const statuses = new Map([
+      ["open", "Em aberto"], ["partially_paid", "Parcialmente pago"],
+      ["paid", "Pago"], ["cancelled", "Cancelado"],
+    ]);
+    const directions = new Map([["receivable", "A receber"], ["payable", "A pagar"]]);
+
+    function amount(cents) {
+      const remainder = String(cents % 100n).padStart(2, "0");
+      return brl.formatToParts(cents / 100n)
+        .map(({ type, value }) => type === "fraction" ? remainder : value).join("");
+    }
+
+    function syncNext() {
+      next.disabled = !nextCursor || Object.entries(filterInputs).some(([key, input]) => input.value !== applied[key]);
+    }
+    function load(cursor) {
+      nextCursor = null;
+      syncNext();
+      const query = { ...applied, cursor };
+      return view.load("Carregando títulos…", () => api.listTitles(query), (data) => {
+        const pageRows = data.items.map((item) => {
+          if (!isCivilDate(item.due_date)) throw new Error("Vencimento inválido.");
+          const row = el("tr");
+          const due = el("time", null, displayDate(item.due_date));
+          due.dateTime = item.due_date;
+          const dueCell = el("td");
+          dueCell.appendChild(due);
+          row.append(el("td", "store-title-id", item.id), dueCell,
+            el("td", null, directions.get(item.direction) || "Direção desconhecida"),
+            el("td", "store-amount", amount(item.amount_cents)),
+            el("td", null, statuses.get(item.status) || "Situação desconhecida"));
+          return row;
+        });
+        rows.replaceChildren(...pageRows);
+        results.hidden = pageRows.length === 0;
+        nextCursor = data.nextCursor;
+        next.hidden = !nextCursor;
+        syncNext();
+        if (!pageRows.length) return "Nenhum título encontrado para os filtros.";
+        return pageRows.length === 1 ? "1 título nesta página." : pageRows.length + " títulos nesta página.";
+      });
+    }
+    function open() {
+      next.hidden = true;
+      nextCursor = null;
+      applied = Object.fromEntries(Object.entries(filterInputs).map(([key, input]) => [key, input.value]));
+      const { dueFrom, dueTo } = applied;
+      if ((dueFrom && !isCivilDate(dueFrom)) || (dueTo && !isCivilDate(dueTo)) ||
+          (dueFrom && dueTo && dueFrom > dueTo)) {
+        view.clear("Informe um intervalo de vencimento válido.");
+        return;
+      }
+      return load();
+    }
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      return open();
+    });
+    form.addEventListener("input", syncNext);
+    next.addEventListener("click", () => {
+      if (!next.disabled) return load(nextCursor);
+    });
+    function close() {
+      next.hidden = true;
+      nextCursor = null;
+      view.clear();
+    }
+    return { open, close };
+  }
+
+  function mountOperationalReads() {
+    const day = byId("private-day");
+    const finance = byId("private-finance");
+    if (!day || !finance) return;
+    byId("demo-day").hidden = true;
+    byId("demo-finance").hidden = true;
+    day.hidden = false;
+    finance.hidden = false;
+    if (api.mode !== "bearer") {
+      const message = "Leitura autenticada indisponível. Este ambiente privado está sem sessão Bearer.";
+      byId("private-day-status").textContent = message;
+      byId("private-title-result-status").textContent = message;
+      return;
+    }
+    const agenda = agendaPanel(day);
+    const titles = financePanel(finance);
+    let active;
+    function navigate() {
+      // client-demo.js já atualizou a visibilidade pela navegação da loja.
+      const current = !day.parentElement.hidden ? agenda : !finance.parentElement.hidden ? titles : undefined;
+      if (active === current) return;
+      active?.close();
+      active = current;
+      return active?.open();
+    }
+    window.addEventListener("hashchange", navigate);
+    navigate();
   }
 
   // ---------- Cadastros ----------

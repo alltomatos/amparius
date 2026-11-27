@@ -25,12 +25,15 @@ Atualização da fatia #72 (26/11/2026), sobre a base b741578 da branch
 prévia pública continua sintética e sem essa rota; o bootstrap de produção
 continua sem provedor OIDC/MFA e responde `503`.
 
+Na base `8b62c17`, a [fatia web da #79](mvp-store-dashboard-read-evidence.md#fatia-web-após-a-92)
+foi verificada localmente. A validação com OIDC/MFA reais e API Go segue pendente.
+
 ## Loja
 
 | Referência | Prévia web após esta fatia | Go e Rust | Prioridade e dependência |
 | --- | --- | --- | --- |
 | Menus Loja 01–04 | **Funcional como navegação:** dez destinos com tela e indicador ativo, incluindo Cadastros e Sincronização. | Links e contexto da [prévia](../../web/staging/index.html). | P0 coberto nesta fatia visual. |
-| Loja 01 / CL-01 · Painel do dia | **Simulado.** Agenda e pendência demonstrativa, unidade fixa e estado da fila. KPIs operacionais e resumo mensal ausentes. | **Parcial:** [agenda e pendências de confirmação](../contracts/funeral-schedule-http-v1.md#agenda-da-empresa) por empresa autenticada. Projeção da fila na [UI Rust](../../client/src/ui/day_panel.rs). | P1, conectar o cliente ao contexto e aos estados da leitura autenticada. |
+| Loja 01 / CL-01 · Painel do dia | **Parcial.** O cliente privado com Bearer mostra agenda e confirmações pendentes da empresa para a data e o fuso configurados. A prévia pública usa exemplos. | [Contrato da agenda](../contracts/funeral-schedule-http-v1.md#agenda-da-empresa). Projeção da fila na [UI Rust](../../client/src/ui/day_panel.rs). | P1, indicadores operacionais e resumo mensal dependem de projeções. |
 | PRD RF-003/004 / Loja 02 / CL-02 · Partes | **Simulado.** Cadastro de exemplos PF, PJ, falecido e vínculo e seleção de responsável. | **Parcial.** PF autenticada na #72. O [contrato da #73](../contracts/party-deceased-family-link-v1.md) cobre falecido e vínculo por API. As duas criações exigem política e gravam auditoria atomicamente. O vínculo registra consentimento com UUID externo e rejeita autovínculo. Duplicidades novas retornam 409 e o legado mantém os IDs. Sem migração nova. | P0. No binário atual, as quatro rotas da #73 retornam `503 AUTHENTICATION_UNAVAILABLE`. Com autenticador e sem política, os POSTs retornam `503 PRIVACY_POLICY_UNAVAILABLE`. Provedor real, política DPO, UI integrada da #73 e cache autorizado pendentes. |
 | PRD §4.1 / Loja 02 · Catálogo | **Simulado.** Produto ou serviço de exemplo; só serviços podem ser usados no atendimento. Sem preços ou regra fiscal. | **Parcial:** [catálogo operacional v1](../contracts/catalog-operational-v1.md) cadastra serviço, tabela e preço e resolve oferta vigente sob RBAC e RLS. | P0. Consulta por IDs e data civil explícita. Sem OIDC/MFA, responde 503. Descoberta e seleção no cliente na [#75](https://github.com/alltomatos/amparius/issues/75). Consumo pelo contrato autenticado e replay do ID do preço e dos centavos na [#76](https://github.com/alltomatos/amparius/issues/76). |
 | Loja 02 / CL-02 · Atendimento e Contratos | **Simulado.** Escolha de responsável/serviço e enfileiramento com contrato ativo de exemplo. Jornada de contrato novo, pagamento e assinatura ausentes. | **Parcial:** [Go funeral](../../internal/modules/funeral/http.go) e [jornada](../../internal/modules/funeral/journey.go) cobrem contrato, OS e agenda em dev. Rust enfileira jornada por referência ativa. | P0, partir dos cadastros reais, montar contrato e confirmar OS/agenda. Implementar pagamento e assinatura em fatias distintas. |
@@ -38,7 +41,7 @@ continua sem provedor OIDC/MFA e responde `503`.
 | CL-03 · Ordens e agenda | **Ausente.** Atendimento da prévia só representa o enfileiramento. | **Parcial:** [OS](../../internal/modules/funeral/service_order_http.go), [agenda](../../internal/modules/funeral/schedule_http.go) e UI [Rust](../../client/src/ui/render.rs) de ordens com estado derivado da fila. | P1, após contrato, testar criação, transição e conflito pelo caminho normal. |
 | CL-04/05 · Operação offline e sincronização | **Simulado.** Reconexão e reenvio em memória. | **Parcial ponta a ponta:** cliente tem [fila persistida](../../client/src/lib.rs), [transporte](../../client/src/transport.rs), relay tem [protocolo](../../relay/src/http.rs) e [reconciliação](../../relay/src/reconciliation.rs). | P0 para o fluxo funerário e caixa. Provar estação → relay → SaaS, queda real, replay e revisão, conforme [#59](https://github.com/alltomatos/amparius/issues/59). |
 | Loja 03 · Cemitério | **Ausente.** Menu indica mapa/concessões indisponíveis. | **Ausente como pacote integrado:** referências no [DER](../data/DER.md); sem módulo Go/cliente de mapa e concessão no recorte inspecionado. | P2, pacote opcional, entitlement e modelo operacional de jazigo/concessão. |
-| Loja 04 · Financeiro | **Ausente.** Menu indica dependência de integração. | **Parcial:** [listagem de títulos autenticada](../contracts/finance-titles-payments-v1.md) com filtros e paginação por tenant. [Finance dev](../../internal/modules/finance/http.go) tem contas, parcelas, baixas e caixa. | P0, ligar os títulos à Loja 04, depois conectar baixas, caixa e reconciliação. |
+| Loja 04 · Financeiro | **Parcial.** O cliente privado com Bearer lista títulos do grupo econômico com filtros e paginação. A prévia pública informa a indisponibilidade. | [Contrato financeiro](../contracts/finance-titles-payments-v1.md). [Finance dev](../../internal/modules/finance/http.go) tem contas, parcelas, baixas e caixa. | P0, conectar parcelas, recebimentos, caixa e conciliação em fatias posteriores. |
 | Menu Flores · J4 | **Ausente.** Menu indica indisponibilidade. | **Parcial:** itens e preços no catálogo compartilhado. Pedido, estoque e entrega não aparecem como módulo integrado. | P2, entitlement, catálogo e fluxo de pedido. |
 | Menu Fiscal · J1/J2 | **Ausente na loja.** Emissão indisponível nesta prévia. | **Parcial:** motor e persistência em [Go](../../internal/modules/fiscal/) e revisão no relay. Gates rastreados em [#25](https://github.com/alltomatos/amparius/issues/25). | P0 espinha fiscal, em trilha própria. Regras oficiais datadas e evidência de emissão para liberar operação real. |
 | Menu Relatórios · J3 | **Ausente.** Menu indica dependência de projeções. | **Parcial:** dados financeiros e fiscais persistidos; sem superfície de fechamento/exportação. | P1, após projeções de títulos, caixa e documentos autorizados. |
@@ -80,9 +83,10 @@ continua sem provedor OIDC/MFA e responde `503`.
 4. **Contrato → OS → agenda → caixa.** Consumir IDs reais selecionados,
    validar licença, status e versão no servidor, fazer replay sem duplicação.
    O fluxo online e offline requer provas distintas antes de fechar #59.
-5. **Títulos/caixa e painel real.** Entregar leitura paginada com filtros e
-   estados; depois baixas, caixa, agenda do dia e indicadores calculados por
-   projeção. Fiscal oficial e pacotes opcionais têm trilhas próprias.
+5. **Títulos/caixa e painel real.** A [fatia web da #79](mvp-store-dashboard-read-evidence.md)
+   conecta a agenda do dia e a leitura paginada de títulos com filtros e
+   estados. Baixas, caixa e indicadores calculados por projeção seguem em
+   fatias próprias, assim como fiscal oficial e pacotes opcionais.
 
 ## Evidência e limites
 

@@ -11,10 +11,12 @@ let operation;
 let queuedSelection;
 
 function render() {
-  const connection = document.getElementById("connection");
-  connection.textContent = offline ? "Offline simulado" : "Online simulado";
-  connection.classList.toggle("status-loading", offline);
-  connection.classList.toggle("status-online", !offline);
+  if (!window.AMPARIUS_CONFIG) {
+    const connection = document.getElementById("connection");
+    connection.textContent = offline ? "Offline simulado" : "Online simulado";
+    connection.classList.toggle("status-loading", offline);
+    connection.classList.toggle("status-online", !offline);
+  }
   connect.textContent = offline ? "Simular reconexão" : "Simular queda de rede";
   sync.disabled = offline || !operation;
   if (!operation) return;

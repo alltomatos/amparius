@@ -1,7 +1,7 @@
 # #79 — Leitura operacional da Loja 01/04
 
-Fatia de backend de [E2E-01B8](https://github.com/alltomatos/amparius/issues/79)
-na base `957fb27`. Referências de produto: [matriz dos mockups](mvp-mockup-gap-matrix.md),
+Registro das fatias de backend e web de [E2E-01B8](https://github.com/alltomatos/amparius/issues/79).
+O backend partiu de `957fb27` e foi integrado pela #92 (`8b62c17`). Referências de produto: [matriz dos mockups](mvp-mockup-gap-matrix.md),
 [prévia Loja 01/04](../../web/staging/index.html) e [PRD J3](../prd/PRD.md#j3--fechamento-mensal).
 
 - Loja 01 consome a [agenda autenticada](../contracts/funeral-schedule-http-v1.md#agenda-da-empresa).
@@ -81,17 +81,56 @@ O Líder também registrou que passaram o build, o vet, a suíte Go sem DSNs
 e 51 testes Node.
 
 A execução integrou o caminho HTTP com autenticação de teste. O bootstrap
-com OIDC/MFA real e a integração das telas privadas seguem pendentes.
+com OIDC/MFA real ficou fora da verificação do backend.
 A prévia pública usa dados sintéticos. Veja o [procedimento no guia de
 staging](../userguide/operacao-staging.md#loja-01-04-leituras-autenticadas).
 
+## Fatia web após a #92
+
+Branch `feat/mvp-store-dashboard-web`, base `8b62c17`. Evidência local.
+
+O cliente privado consome os dois contratos com Bearer, conforme o
+[bootstrap da loja](../../web/staging/README.md#configurar-o-modo-operacional).
+O Painel do dia exibe a data civil e o fuso configurados, a agenda da
+empresa e suas confirmações pendentes. A fila da demonstração simula
+sincronização local em memória. O Financeiro mostra títulos do grupo
+econômico, com filtros inclusivos e paginação por cursor. O modo privado
+sem Bearer indica leitura indisponível. A prévia pública é sintética.
+
+```powershell
+node --check web/staging/client-api.js
+node --check web/staging/client-api.test.mjs
+node --check web/staging/client-demo.js
+node --check web/staging/client-live.js
+node --test --test-concurrency=1 web/staging/client-api.test.mjs web/control-plane/tests/contract.test.mjs web/control-plane/tests/staging-demo.test.mjs
+git diff --check
+```
+
+No Node 22.22.3, passaram 62 testes, com zero falhas e zero ignorados.
+O harness usa fetch e DOM simulados. Cobre carregamento, vazio, erros
+de rede e HTTP, licença bloqueada, configuração da agenda, fuso de
+exibição, precisão de int64, filtros, cursor, descarte de respostas antigas
+e demonstração sem rede. A verificação de whitespace passou.
+### Verificação independente do Líder Amparius em 26/11/2026
+
+O Líder registrou que `node --check` passou nos quatro arquivos JS/MJS,
+os 62 testes Node passaram com zero ignorados e `git diff --check` passou.
+
+No navegador, em localhost, com API HTTP de fixtures sintéticas e Bearer
+de teste, o Painel do dia exibiu a agenda da empresa para 26/11/2026 em
+`America/Fortaleza`, com um velório das 09h às 10h (GMT−3) e uma confirmação
+pendente. O Financeiro exibiu R$ 125,50 na primeira página e R$ 239,75 na
+seguinte. O botão **Próxima página** ficou oculto ao final. A mesma página
+sem configuração abriu a demonstração com seus exemplos. O servidor local
+foi encerrado.
+
+OIDC/MFA reais e a comunicação do navegador com a API Go seguem pendentes.
+
 ## Critérios restantes da #79
 
-1. Conectar Loja 01/04 ao contexto autenticado real, com OIDC/MFA no
-   bootstrap, fuso da loja definido pela configuração de produto, estados de
-   carregamento, vazio, erro e módulo bloqueado, paginação e indicação do escopo
-   financeiro do grupo. Exibir as pendências operacionais online e o estado da
-   fila local de acordo com o CL-01.
+1. Validar a Loja 01/04 em navegador com OIDC/MFA reais e configuração de
+   produto para a data e o fuso da empresa. Integrar o estado real da fila
+   local de acordo com o CL-01.
 2. Ligar recebimentos, parcelas e saldo real à Loja 04. Completar abertura,
    movimentação e fechamento do caixa com idempotência e conciliar baixas,
    caixa e extrato bancário, registrando divergências.

@@ -4,6 +4,7 @@
 
 param(
   [switch]$ExpectReady,
+  [string]$PostgresDsn = "postgres://amparius:amparius@127.0.0.1:5432/amparius?sslmode=disable",
   [string]$RedisAddress = "127.0.0.1:6399",
   [string]$RabbitMQUrl = "amqp://127.0.0.1:5673/",
   [string]$ObjectStorageEndpoint = "",
@@ -30,7 +31,7 @@ try {
   go build -o $exe .\cmd\api
   $env:APP_ENV = "test"
   $env:HTTP_PORT = "$port"
-  $env:POSTGRES_DSN = "postgres://amparius:amparius@127.0.0.1:5432/amparius?sslmode=disable"
+  $env:POSTGRES_DSN = $PostgresDsn
   $env:REDIS_ADDR = $RedisAddress
   $env:RABBITMQ_URL = $RabbitMQUrl
   $env:OBJECT_STORAGE_ENDPOINT = $ObjectStorageEndpoint

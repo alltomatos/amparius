@@ -19,6 +19,8 @@ compartilhado (porta 5432); a migration da #82 não foi tocada.
 | Cliente Rust: `cargo test` | 53 PASS | Testes in-process |
 | Web (staging + control plane): `node --test` | 62 PASS | **Simulado** (fakes de `fetch`, sem navegador) |
 | NFS-e: motor de tributos, XSD/DPS, adapter | PASS | **Simulado/golden**: adapter fake, sem transmissão; sem `tax_rule` oficial |
+| Backup/restore (`scripts/homolog-backup-restore.ps1`): `pg_dump -Fc` da célula migrada (0039) + `pg_restore` em outro banco | PASS: versão goose, 66 tabelas, 54 com RLS, 57 policies, 75 triggers, 219 índices, 112 grants do app (hash idêntico) e linhas idênticas; RLS efetiva no restaurado (dono vê 1, tenant alheio 0) | **Real** (PG descartável, dados sintéticos) |
+| Readiness completa (`scripts/homolog-readiness.ps1`): PG, Redis, RabbitMQ reais + S3 **simulado** (adobe/s3mock) | PASS: sem dependências `/readyz` 503; com todas `/readyz` 200 | Real para PG/Redis/RabbitMQ; **simulado** para object storage (não é MinIO/R2) |
 | OIDC/MFA | Não homologado | Adiado; autenticadores nos testes são fakes |
 
 ## Falhas encontradas e corrigidas
@@ -45,22 +47,24 @@ compartilhado (porta 5432); a migration da #82 não foi tocada.
    descartável (porta 55432), concede esses grants **só nele**, cria os bancos
    da #79 e roda `go test ./...`.
 
+4. **`scripts/backup-restore.ps1` descartava os GRANTs** (defeito real). O dump e o restore usavam `--no-acl`; medido em PG descartável, o app tinha 112 grants na origem e **0** no banco restaurado, ou seja, um restore deixaria a aplicação sem acesso a nenhuma tabela. Corrigido removendo `--no-acl` do `backup` e do `restore` (o papel `amparius_app` precisa existir no destino; senão o `pg_restore` falha de forma explícita). O modo `test` (tabela sintética) não depende de ACL e ficou como estava. Os scripts `backup-restore.ps1` e `smoke-readiness.ps1` precisam de ferramentas `psql/pg_dump/pg_restore` no host, que a máquina de desenvolvimento não tem; por isso a homologação usa `homolog-backup-restore.ps1`, que roda o cliente PostgreSQL dentro do container.
+5. **`scripts/smoke-readiness.ps1` fixava o banco compartilhado (5432)**. Ganhou o parâmetro `-PostgresDsn` (padrão inalterado) para rodar contra o banco descartável.
+
 ## Observações (sem correção nesta rodada)
 
 - Em `APP_ENV=development` sem OIDC, `/v1/*` e `/admin/v1/*` respondem `404`
   (rotas não montadas); a documentação do #80 fala em `503` — alinhar quando o
   adaptador OIDC/MFA existir.
-- `scripts/smoke-readiness.ps1` e `scripts/backup-restore.ps1` apontam para o
-  PostgreSQL compartilhado (5432); não foram executados nesta rodada.
-- Redis/RabbitMQ locais estavam parados; o `readyz` completo foi verificado
-  apenas no staging.
-- Não validados: UI no navegador (visual, teclado, WCAG), restore de backup,
-  relay contra a API Go real, emissão e consulta reais na Sefin Nacional.
+- O S3 do `readyz` local é um simulador (`adobe/s3mock`); a checagem contra object storage real foi vista apenas no staging. As imagens `minio/*` não estão mais no Docker Hub.
+- `rabbitmq-diagnostics` via `docker exec` durante a subida derruba o container do RabbitMQ; o script espera pelo log `Server startup complete`.
+- Não validados: UI no navegador (visual, teclado, WCAG), relay contra a API Go real, emissão e consulta reais na Sefin Nacional.
 
 ## Reprodução
 
 ```powershell
 .\scripts\homolog-integration.ps1          # container descartável, remove ao fim
+.\scripts\homolog-backup-restore.ps1       # backup/restore real em container descartável
+.\scripts\homolog-readiness.ps1           # PG/Redis/RabbitMQ reais + S3 simulado
 cargo test --manifest-path relay\Cargo.toml
 cargo test --manifest-path client\Cargo.toml
 node --test web/control-plane/tests/contract.test.mjs web/control-plane/tests/staging-demo.test.mjs web/staging/client-api.test.mjs

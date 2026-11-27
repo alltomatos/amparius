@@ -60,7 +60,6 @@ function Dump-Database([string]$SourceDsn, [string]$TargetFile) {
   Invoke-Native "pg_dump" @(
     "--format=custom",
     "--no-owner",
-    "--no-acl",
     "--file=$TargetFile",
     "--dbname=$SourceDsn"
   )
@@ -97,7 +96,6 @@ switch ($Action) {
       "--clean",
       "--if-exists",
       "--no-owner",
-      "--no-acl",
       "--dbname=$Dsn",
       $BackupFile
     )

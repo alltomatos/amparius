@@ -41,6 +41,16 @@ type Installment struct {
 	DueDate               time.Time
 	Status                string
 }
+type InstallmentBalance struct {
+	Installment
+	PaidCents    int64
+	BalanceCents int64
+}
+type TitleBalance struct {
+	AmountCents  int64
+	PaidCents    int64
+	BalanceCents int64
+}
 type Payment struct {
 	ID, TenantID, InstallmentID, BankAccountID uuid.UUID
 	AmountCents                                int64
@@ -471,6 +481,100 @@ func (r *Repository) ListInstallments(ctx context.Context, titleID uuid.UUID, li
 	if err != nil {
 		return nil, fmt.Errorf("listar parcelas: %w", err)
 	}
+	return result, nil
+}
+
+func settlementBalance(amount, paid int64) int64 {
+	if paid < 0 {
+		paid = 0
+	}
+	if paid >= amount {
+		return 0
+	}
+	return amount - paid
+}
+
+func (r *Repository) ListInstallmentBalances(ctx context.Context, titleID uuid.UUID, limit int) ([]InstallmentBalance, error) {
+	tenantID, err := db.TenantFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := []InstallmentBalance{}
+	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT i.id,i.tenant_id,i.title_id,i.number,i.amount::text,i.due_date,i.status,
+			       COALESCE(p.paid,'0')::text
+			FROM finance.installment i
+			LEFT JOIN (
+				SELECT pay.installment_id, SUM(pay.amount) AS paid
+				FROM finance.payment pay
+				JOIN finance.installment pi ON pi.id=pay.installment_id AND pi.tenant_id=pay.tenant_id
+				WHERE pay.tenant_id=$1 AND ($2='00000000-0000-0000-0000-000000000000'::uuid OR pi.title_id=$2)
+				GROUP BY pay.installment_id
+			) p ON p.installment_id=i.id
+			WHERE i.tenant_id=$1 AND ($2='00000000-0000-0000-0000-000000000000'::uuid OR i.title_id=$2)
+			ORDER BY i.number,i.id
+			LIMIT $3`, tenantID, titleID, listLimit(limit))
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var item InstallmentBalance
+			var amount, paid string
+			if err := rows.Scan(&item.ID, &item.TenantID, &item.TitleID, &item.Number, &amount, &item.DueDate, &item.Status, &paid); err != nil {
+				return err
+			}
+			item.AmountCents, err = numericToCents(amount)
+			if err != nil {
+				return err
+			}
+			item.PaidCents, err = numericToCents(paid)
+			if err != nil {
+				return err
+			}
+			item.BalanceCents = settlementBalance(item.AmountCents, item.PaidCents)
+			result = append(result, item)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listar saldo das parcelas: %w", err)
+	}
+	return result, nil
+}
+
+func (r *Repository) GetTitleBalance(ctx context.Context, titleID uuid.UUID) (TitleBalance, error) {
+	tenantID, err := db.TenantFromContext(ctx)
+	if err != nil {
+		return TitleBalance{}, err
+	}
+	var amount, paid string
+	err = r.database.WithTenantTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT t.amount::text, COALESCE(SUM(p.amount),0)::text
+			FROM finance.title t
+			LEFT JOIN finance.installment i ON i.tenant_id=t.tenant_id AND i.title_id=t.id
+			LEFT JOIN finance.payment p ON p.tenant_id=t.tenant_id AND p.installment_id=i.id
+			WHERE t.id=$1 AND t.tenant_id=$2
+			GROUP BY t.id,t.amount`, titleID, tenantID).Scan(&amount, &paid)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return TitleBalance{}, ErrNotFound
+	}
+	if err != nil {
+		return TitleBalance{}, fmt.Errorf("buscar saldo do título: %w", err)
+	}
+	result := TitleBalance{}
+	result.AmountCents, err = numericToCents(amount)
+	if err != nil {
+		return TitleBalance{}, fmt.Errorf("converter título: %w", err)
+	}
+	result.PaidCents, err = numericToCents(paid)
+	if err != nil {
+		return TitleBalance{}, fmt.Errorf("converter pagamentos do título: %w", err)
+	}
+	result.BalanceCents = settlementBalance(result.AmountCents, result.PaidCents)
 	return result, nil
 }
 

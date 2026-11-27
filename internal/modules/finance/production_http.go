@@ -19,7 +19,9 @@ import (
 type FinanceOperationalService interface {
 	CreateTitle(context.Context, Title) (Title, error)
 	GetTitleByID(context.Context, uuid.UUID) (Title, error)
+	GetTitleBalance(context.Context, uuid.UUID) (TitleBalance, error)
 	ListTitlePage(context.Context, TitleListFilter) ([]Title, *TitleListPosition, error)
+	ListInstallmentBalances(context.Context, uuid.UUID, int) ([]InstallmentBalance, error)
 	CreatePaymentIdempotent(context.Context, string, Payment) (Payment, error)
 }
 
@@ -35,6 +37,7 @@ func AuthenticatedRoutes(service FinanceOperationalService) []httpserver.Authent
 		{Pattern: "POST /v1/finance/titles", Permission: auth.PermissionFinanceWrite, Handler: h.available(h.createTitle)},
 		{Pattern: "GET /v1/finance/titles", Permission: auth.PermissionFinanceRead, Handler: h.available(h.listTitles)},
 		{Pattern: "GET /v1/finance/titles/{id}", Permission: auth.PermissionFinanceRead, Handler: h.available(h.getTitle)},
+		{Pattern: "GET /v1/finance/titles/{id}/installments", Permission: auth.PermissionFinanceRead, Handler: h.available(h.listInstallments)},
 		{Pattern: "POST /v1/finance/payments", Permission: auth.PermissionFinanceWrite, Handler: h.available(h.createPayment)},
 	}
 }
@@ -102,7 +105,44 @@ func (h productionHandler) getTitle(w http.ResponseWriter, r *http.Request) {
 		writeFinanceProductionServiceError(w, r, err)
 		return
 	}
-	writeFinanceProductionJSON(w, http.StatusOK, titleResponse(item))
+	balance, err := h.service.GetTitleBalance(r.Context(), id)
+	if err != nil {
+		writeFinanceProductionServiceError(w, r, err)
+		return
+	}
+	response := titleResponse(item)
+	response["paid_cents"] = balance.PaidCents
+	response["balance_cents"] = balance.BalanceCents
+	writeFinanceProductionJSON(w, http.StatusOK, response)
+}
+
+func (h productionHandler) listInstallments(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(strings.TrimSpace(r.PathValue("id")))
+	if err != nil || id == uuid.Nil {
+		writeFinanceProductionError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "id de título inválido")
+		return
+	}
+	if _, err := h.service.GetTitleBalance(r.Context(), id); err != nil {
+		writeFinanceProductionServiceError(w, r, err)
+		return
+	}
+	items, err := h.service.ListInstallmentBalances(r.Context(), id, 0)
+	if err != nil {
+		writeFinanceProductionServiceError(w, r, err)
+		return
+	}
+	response := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		response = append(response, installmentBalanceResponse(item))
+	}
+	writeFinanceProductionJSON(w, http.StatusOK, map[string]any{"items": response})
+}
+
+func installmentBalanceResponse(item InstallmentBalance) map[string]any {
+	response := installmentResponse(item.Installment)
+	response["paid_cents"] = item.PaidCents
+	response["balance_cents"] = item.BalanceCents
+	return response
 }
 
 func (h productionHandler) createPayment(w http.ResponseWriter, r *http.Request) {

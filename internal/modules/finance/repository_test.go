@@ -5,6 +5,21 @@ import (
 	"testing"
 )
 
+func TestSettlementBalance(t *testing.T) {
+	tests := map[string]struct{ amount, paid, want int64 }{
+		"sem pagamento":      {10000, 0, 10000},
+		"pagamento parcial":  {10000, 4000, 6000},
+		"quitado":            {10000, 10000, 0},
+		"sobrepagamento":     {10000, 12000, 0},
+		"pagamento negativo": {10000, -500, 10000},
+	}
+	for name, test := range tests {
+		if got := settlementBalance(test.amount, test.paid); got != test.want {
+			t.Errorf("%s: settlementBalance(%d, %d) = %d; want %d", name, test.amount, test.paid, got, test.want)
+		}
+	}
+}
+
 func TestMoneyConversion(t *testing.T) {
 	tests := map[string]struct {
 		cents     int64

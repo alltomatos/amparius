@@ -596,6 +596,26 @@ relay. A integração PostgreSQL desta fatia permanece `SKIP` sem
 `AMPA_CONTROL_POSTGRES_DSN`; a migration 0003 ainda precisa ser aplicada no
 banco de integração antes de declarar o ciclo real verde.
 
+#### Painel SaaS: tenants e licenças em `/admin/v1` (ADM-02A, #80)
+
+A migration forward-only `migrations/control/0004_reporting_platform_views.sql`
+cria o schema `reporting` com quatro views somente leitura
+(`platform_license_pool`, `platform_license_assignment`,
+`platform_entitlement_event`, `platform_tenant_summary`), com `GRANT SELECT` ao
+`amparius_control_app` e sem `BYPASSRLS`. `controlplane.PlatformReader` lê só
+essas views via `db.WithSystemTx`; `controlplane.AdminHandler` serve
+`/admin/v1/*` e delega escritas ao `entitlement.Service` com
+`db.WithTenant(tenantAlvo)`, `Idempotency-Key`, `version` e `origin=admin`.
+As rotas usam `auth.RequirePlatform` (OIDC + MFA + `platform_admin`); em
+`cmd/api` o `PlatformAuthenticator` ainda não é montado, então respondem `503`
+até existir o adaptador OIDC/MFA de plataforma. Contrato em
+`docs/contracts/platform-admin-licenses-v1.md`; decisões e pendências no ADR
+0040. Para a integração, aplique `goose -dir migrations/control ... up` em um
+banco **descartável** com o papel `amparius_control_app` criado antes e rode
+`go test ./internal/modules/controlplane -run 'Admin|Platform'` com
+`AMPA_CONTROL_POSTGRES_DSN`. **Pendente:** diretório de tenants/empresas (view
+na célula), OIDC/MFA de plataforma, auditoria durável de leituras.
+
 ### FUN-01B: parcelamento e eventos do contrato funerário
 
 `funeral.contract_installment` guarda o snapshot append-only do plano de

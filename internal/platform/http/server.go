@@ -25,6 +25,11 @@ type Options struct {
 	// AuthenticatedRoutes são handlers de produção já prontos para receber o
 	// contexto confiável tenant/company composto pelo middleware.
 	AuthenticatedRoutes []AuthenticatedRoute
+	// PlatformAuthenticator protege `/admin/v1/*` (ADR 0040) com OIDC + MFA +
+	// `platform_admin`. Sem ele, as rotas de plataforma respondem 503.
+	PlatformAuthenticator auth.PlatformGate
+	// PlatformRoutes são as rotas `/admin/v1/*`, separadas das rotas de tenant.
+	PlatformRoutes []PlatformRoute
 	// DevelopmentMode habilita rotas explicitamente marcadas como dev-only.
 	DevelopmentMode bool
 	// DevelopmentOnboarding é o handler de POST /_dev/onboarding.
@@ -54,6 +59,13 @@ type Options struct {
 
 // AuthenticatedRoute associa uma rota a uma permissão RBAC.
 type AuthenticatedRoute struct {
+	Pattern    string
+	Permission auth.Permission
+	Handler    http.Handler
+}
+
+// PlatformRoute associa uma rota `/admin/v1/*` a uma permissão de plataforma.
+type PlatformRoute struct {
 	Pattern    string
 	Permission auth.Permission
 	Handler    http.Handler
@@ -97,6 +109,12 @@ func (s *Server) routes(options Options) {
 			continue
 		}
 		s.mux.Handle(route.Pattern, auth.Require(options.Authenticator, route.Permission, s.logger)(route.Handler))
+	}
+	for _, route := range options.PlatformRoutes {
+		if route.Pattern == "" || route.Handler == nil {
+			continue
+		}
+		s.mux.Handle(route.Pattern, auth.RequirePlatform(options.PlatformAuthenticator, route.Permission, s.logger)(route.Handler))
 	}
 	if options.DevelopmentMode && options.DevelopmentOnboarding != nil {
 		s.mux.Handle("/_dev/onboarding", options.DevelopmentOnboarding)

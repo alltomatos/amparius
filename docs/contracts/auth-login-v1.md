@@ -27,10 +27,14 @@ essencial. `Cache-Control: no-store` em toda resposta de `/v1/auth/*` e
 Corpo:
 
 ```json
-{"email":"dono@exemplo.com","password":"...","companyId":"uuid"}
+{"email":"dono@exemplo.com","password":"...","companyId":"uuid","tenantHint":"slug-opcional"}
 ```
 
-`companyId` é obrigatório: não existe sessão "sem empresa". Resposta `200`:
+`companyId` é obrigatório: não existe sessão "sem empresa". `tenantHint` é
+**opcional** e usado só por fluxos que já sabem o tenant (ex.: link de
+convite/onboarding) — a maioria das chamadas não envia. Sem `tenantHint`, o
+servidor resolve o tenant pelo e-mail (ver "Resolução de tenant" abaixo antes
+da tabela de erros). Resposta `200`:
 
 ```json
 {
@@ -43,21 +47,43 @@ Corpo:
 }
 ```
 
+### Resolução de tenant (sem `tenantHint`)
+
+`app.amparius.com` é domínio único: o corpo não traz `tenantId`, então o
+servidor precisa descobrir o tenant pelo e-mail antes de poder usar o
+caminho normal protegido por RLS. Mecanismo (desenho completo em
+`docs/adr/0048-auth-emissor-proprio-login.md` §5): uma função
+`SECURITY DEFINER` mínima e auditada,
+`identity.resolve_login_candidates(email)`, devolve só
+`tenant_id, user_id, password_hash, password_algo, status, failed_attempts,
+locked_until` para o e-mail informado — nunca `email`/`name`, e sem conceder
+`BYPASSRLS` a `amparius_app`.
+
+- 0 candidatos: verificação `argon2id` contra um hash de isca (nunca real)
+  para igualar o custo de CPU, depois `401 INVALID_CREDENTIALS`.
+- 1 candidato: fluxo normal — senha correta define o tenant da sessão.
+- N candidatos (mesmo e-mail em tenants diferentes): senha verificada contra
+  cada candidato até achar exatamente um que bata; nenhum detalhe sobre
+  quantos tenants existem é exposto ao cliente em nenhum dos casos.
+
+Rate-limit por `IP + e-mail` normalizado (Redis) cobre o caso de e-mail
+inexistente, que não tem `failed_attempts` em banco.
+
 Erros:
 
 | HTTP | code | Quando |
 |---|---|---|
-| 401 | `INVALID_CREDENTIALS` | e-mail inexistente ou senha incorreta (mesma resposta para os dois — nunca revelar qual) |
-| 403 | `ACCOUNT_LOCKED` | `locked_until` no futuro |
-| 403 | `ACCOUNT_PENDING_AUTH` | usuário existe mas não concluiu bootstrap (§ ADR 0048 §11) |
+| 401 | `INVALID_CREDENTIALS` | e-mail inexistente, senha incorreta ou resolução de tenant ambígua sem candidato único (mesma resposta em todos os casos — nunca revelar qual) |
+| 403 | `ACCOUNT_LOCKED` | `locked_until` no futuro (só depois de um tenant já resolvido) |
+| 403 | `ACCOUNT_PENDING_AUTH` | usuário existe mas não concluiu bootstrap (ADR 0048 §12) |
 | 403 | `COMPANY_NOT_ALLOWED` | `companyId` não vinculado ao usuário (`identity.user_company`) |
 | 400 | `VALIDATION_ERROR` | corpo malformado/campo ausente |
 | 503 | `AUTHENTICATION_UNAVAILABLE` | emissor/cofre de chave indisponível |
 
-Toda tentativa com usuário resolvido (e-mail existente) grava
+Toda tentativa com exatamente um tenant resolvido grava
 `identity.login_audit` com `user_id` e `result`; tentativa com e-mail
-desconhecido não grava (não há tenant a escopar) e só alimenta o rate-limit
-por IP.
+desconhecido ou resolução ambígua sem candidato único não grava (não há um
+único tenant a escopar) e só alimenta o rate-limit por IP+e-mail.
 
 ### `POST /v1/auth/refresh`
 
@@ -106,7 +132,7 @@ próprio tenant sem senha.
 ### `POST /v1/auth/bootstrap/complete`
 
 Corpo: `{"token":"...","password":"..."}`. `token` é o valor cru devolvido
-uma única vez na resposta de onboarding ou de convite (ADR 0048 §11) — o
+uma única vez na resposta de onboarding ou de convite (ADR 0048 §12) — o
 servidor só guarda o hash. Define `password_hash`, muda `status` de
 `pending_auth` para `active`, consome o token (`consumed_at`) e devolve o
 mesmo corpo de `/v1/auth/login` (login automático), exigindo `companyId`
@@ -123,7 +149,7 @@ Autenticado, exige `identity:write` e `Idempotency-Key`. Corpo:
 Cria o `identity.app_user` em `pending_auth` com os papéis e empresas dados e
 devolve o token de bootstrap cru **uma única vez** na resposta
 (`{"bootstrapToken":"..."}`) para o chamador copiar/enviar manualmente — não
-há envio de e-mail nesta fatia (ADR 0048 §11, Lacuna 2).
+há envio de e-mail nesta fatia (ADR 0048 §12, Lacuna 2).
 
 ### `POST /v1/auth/recovery/request`
 
@@ -144,7 +170,11 @@ mudar `status` (o usuário já era `active`). Mesmos erros de token.
 
 Corpo: `{"email":"...","password":"...","totpCode":"123456"}`. `totpCode` é
 obrigatório em toda chamada — não existe "primeiro login sem MFA" para
-plataforma (ADR 0048 §8). Resposta `200`:
+plataforma (ADR 0048 §9, obrigação já existente desde o ADR 0040, não uma
+decisão nova). **Esta rota não é publicada enquanto o TOTP não estiver
+implementado**: até lá, continua respondendo `503
+AUTHENTICATION_UNAVAILABLE`, como hoje — nunca um adaptador que force
+`MFA == true` sem verificação real. Resposta `200`:
 
 ```json
 {
@@ -200,6 +230,10 @@ bloquear login legítimo quando o Redis está fora do ar.
 
 ## Testes de contrato mínimos (AUTH-01B)
 
+- Resolução de tenant (PostgreSQL descartável, ADR 0048 §5): mesmo e-mail em
+  dois tenants, `identity.resolve_login_candidates` devolve exatamente 2
+  linhas sem `email`/`name`; `amparius_app` sem `BYPASSRLS`; login com senha
+  certa autentica no tenant certo sem expor quantos tenants existiam.
 - Login válido/inválido, bloqueio após N tentativas, zeragem no sucesso.
 - Refresh: rotação simples, troca de empresa válida/inválida, reuso detectado
   revogando a família, replay com `Idempotency-Key` idêntico não duplica

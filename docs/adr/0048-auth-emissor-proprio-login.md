@@ -18,10 +18,22 @@ não tem como se autenticar.
 
 Pedido de Ronaldo em 27/11/2026: painel SaaS (control plane/manager), cliente
 web e cliente desktop Rust exigem login, com RLS e permissões. OIDC externo e
-MFA seguem **adiados por decisão do usuário** — não há orçamento/prioridade
-para integrar um IdP agora. A costura (`OIDCVerifier`, `MFAVerifier`,
-`PlatformVerifier`) permanece: ela foi desenhada para ser agnóstica de
-provedor, então um emissor próprio pode implementá-la sem reabrir o ADR 0024.
+MFA seguem **adiados por decisão do usuário, mas somente para o login comum
+de tenant** (clientes web/desktop e painel SaaS do cliente) — não há
+orçamento/prioridade para integrar um IdP agora nessa camada. MFA de
+`platform_admin` **não está incluído nesse adiamento** (ver §9): já é
+obrigatório por ADR 0040 e pelo código vigente, antes mesmo deste ADR existir.
+A costura (`OIDCVerifier`, `MFAVerifier`, `PlatformVerifier`) permanece: ela
+foi desenhada para ser agnóstica de provedor, então um emissor próprio pode
+implementá-la sem reabrir o ADR 0024.
+
+Revisão de 27/11/2026 (parecer do Analista de Sistemas sobre a branch
+`docs/auth-01a-login`, commit `e4d8635`): acrescenta a seção 5 (resolução de
+tenant no login, lacuna bloqueante identificada no parecer) e explicita em §9
+que o MFA de plataforma é inegociável. Sem essas duas correções o desenho não
+era implementável como estava — `app.amparius.com` é domínio único e o
+handler de login não tinha como descobrir o tenant antes de ler
+`identity.app_user` sob RLS.
 
 Este ADR é **somente desenho**: nenhum código de produção é alterado aqui.
 AUTH-01B implementa.
@@ -65,9 +77,9 @@ Dois emissores completamente separados, sem chave ou tabela compartilhada:
   `rotated_at`, `revoked_at`, `revoked_reason`. RLS por `tenant_id`.
 - `identity.login_audit`: `id`, `tenant_id`, `user_id`, `result`
   (`success|invalid_credentials|locked|password_expired_policy|mfa_required`),
-  `at`. Sem e-mail, sem IP crú, sem token, sem senha — ver §9.
+  `at`. Sem e-mail, sem IP crú, sem token, sem senha — ver §10.
 - `identity.credential_token`: tabela única para o token de uso único de
-  **bootstrap** e de **recuperação de senha** (§11/§12): `id`, `tenant_id`,
+  **bootstrap** e de **recuperação de senha** (§12/§13): `id`, `tenant_id`,
   `user_id`, `token_hash`, `purpose` (`bootstrap|recovery`), `expires_at`,
   `consumed_at`.
 
@@ -121,14 +133,103 @@ operacional, não arquitetural.
   corrente e da anterior durante a janela de sobreposição, nunca uma chave
   desconhecida.
 
-### 5. Endpoints (tenant)
+### 5. Resolução de tenant no login
+
+O login de tenant (`POST /v1/auth/login`) recebe `{email, password,
+companyId}` sem `tenantId`: `app.amparius.com` é domínio único e o usuário
+não sabe (nem deve saber) o identificador do próprio tenant. Isso colide com
+a regra de `AGENTS.md` de que nenhum código roda sem `app.tenant_id` no
+contexto — e com o schema atual, que só garante `UNIQUE (tenant_id, email)`
+(`migrations/0009_identity_onboarding.sql:19-20`), nunca `UNIQUE(email)`
+global. O handler precisa descobrir o tenant **antes** de poder usar o
+caminho normal protegido por RLS.
+
+**Mecanismo:** uma função `SECURITY DEFINER` dedicada e mínima,
+`identity.resolve_login_candidates(p_email text)`, no mesmo padrão já usado
+por `identity.create_onboarding` (mesma migration 0009): dono é o papel de
+migração, que ignora RLS por ser dono das tabelas (RLS não é forçada sobre o
+dono por padrão) — não é necessário `BYPASSRLS` na role da aplicação, e esta
+**continua sem esse atributo**. A função devolve só o mínimo necessário para
+autenticar, nunca `email`, `name` ou qualquer outra coluna:
+
+```sql
+CREATE FUNCTION identity.resolve_login_candidates(p_email text)
+RETURNS TABLE (
+    tenant_id uuid, user_id uuid, password_hash text, password_algo text,
+    status text, failed_attempts int, locked_until timestamptz
+)
+LANGUAGE sql SECURITY DEFINER SET search_path = identity, public
+AS $$
+    SELECT tenant_id, id, password_hash, password_algo, status,
+           failed_attempts, locked_until
+      FROM identity.app_user
+     WHERE email = lower(btrim(p_email));
+$$;
+
+REVOKE ALL ON FUNCTION identity.resolve_login_candidates(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION identity.resolve_login_candidates(text) TO amparius_app;
+```
+
+`amparius_app` não ganha `GRANT SELECT` ampliado em `identity.app_user` por
+e-mail — continua lendo a tabela só sob RLS, como hoje. Nenhum papel da
+aplicação ganha `BYPASSRLS`.
+
+**Fluxo:**
+
+1. 0 linhas (e-mail não existe em nenhum tenant): o handler ainda executa uma
+   verificação `argon2id` contra um hash fixo de "isca" (constante de
+   configuração, nunca um hash real) para manter o custo de CPU parecido com
+   o caso de senha errada, e responde `401 INVALID_CREDENTIALS`.
+2. 1 linha: fluxo normal — verifica a senha contra esse hash; se correta,
+   `SET app.tenant_id` para esse tenant e segue pelo caminho já existente
+   (bloqueio, vínculo com `companyId` via `identity.user_company`, emissão de
+   token). Caso comum (>99% dos logins).
+3. N > 1 linhas (mesmo e-mail em tenants diferentes — permitido pelo schema,
+   já que a unicidade é por tenant): o handler verifica a senha contra cada
+   hash candidato, em ordem, até achar exatamente um que bata; autentica
+   nesse tenant sem nunca responder ao cliente quais ou quantos tenants
+   existem para aquele e-mail. Zero ou mais de um candidato batendo (senha
+   igual reaproveitada em contas distintas) responde o mesmo
+   `401 INVALID_CREDENTIALS` genérico.
+
+**Anti-enumeração:** a resposta e o código HTTP são idênticos para e-mail
+inexistente, senha errada e qualquer condição de resolução — `ACCOUNT_LOCKED`/
+`ACCOUNT_PENDING_AUTH` só aparecem **depois** que exatamente um tenant foi
+resolvido por senha correta, nunca antes. O tempo de resposta não é
+matematicamente constante (o caso N>1 roda mais de uma verificação
+`argon2id`), mas N>1 é raro e pequeno na prática, então não é um oráculo
+confiável de enumeração — risco residual registrado, não eliminado por
+desenho.
+
+**Rate-limit:** além do `failed_attempts` por usuário (que só existe depois
+que um tenant foi resolvido), um rate-limit por `IP + e-mail` normalizado
+(Redis, sliding window, mesma defesa em profundidade do §10) cobre o caso de
+e-mail inexistente, que não tem contador em banco.
+
+**Impacto no contrato:** `POST /v1/auth/login` ganha `tenantHint` **opcional**
+(slug/código curto do tenant), usado só quando o chamador já sabe o tenant
+(ex.: link de convite/onboarding que fixa o tenant explicitamente, §12) para
+pular a resolução por e-mail; ausente na maioria das chamadas. Convite
+(`/v1/auth/invite`) e bootstrap já fixam `tenant_id` pelo contexto autenticado
+de quem convida — só o login "frio" precisa de resolução por e-mail.
+
+**Critério de aceite de teste (PostgreSQL descartável, AUTH-01B/C):** com
+dois tenants e o mesmo e-mail em ambos, (a) `identity.resolve_login_candidates`
+devolve exatamente 2 linhas; (b) o papel `amparius_app` não tem `BYPASSRLS`
+(`SELECT rolbypassrls FROM pg_roles WHERE rolname = 'amparius_app'` é falso) e
+um `SELECT` direto em `identity.app_user` sem `app.tenant_id` configurado
+continua devolvendo 0 linhas; (c) a função nunca expõe `email` ou `name`; (d)
+login com a senha certa autentica no tenant certo sem o cliente nunca ver
+quantos tenants existiam para aquele e-mail.
+
+### 6. Endpoints (tenant)
 
 `POST /v1/auth/login`, `POST /v1/auth/refresh`, `POST /v1/auth/logout`,
 `POST /v1/auth/revoke` (revoga todas as sessões do usuário — uso
 administrativo/self-service em caso de suspeita de comprometimento). Contrato
 completo em `docs/contracts/auth-login-v1.md`.
 
-### 6. Sessão, rotação e revogação
+### 7. Sessão, rotação e revogação
 
 Rotação de refresh token com **detecção de reuso** (igual ao padrão
 recomendado pela OWASP para refresh rotativo, já citado no pedido de
@@ -144,7 +245,7 @@ TTL curto (10 min); revogação "imediata" de access token (ex.: desligamento de
 funcionário) depende de um blocklist com TTL ≤ TTL do access token e é
 **decisão aberta** (§ Lacunas, item 4).
 
-### 7. Escopo tenant×empresa
+### 8. Escopo tenant×empresa
 
 Login exige `companyId` explícito no corpo (não existe "sessão sem empresa"):
 validado contra `identity.user_company` antes de emitir o primeiro token,
@@ -155,7 +256,7 @@ empresa **não exige novo login**: `POST /v1/auth/refresh` aceita
 o mesmo refresh token (mesma família). Isso cobre "escopo tenant×empresa"
 sem introduzir um terceiro tipo de token.
 
-### 8. Separação do painel de plataforma
+### 9. Separação do painel de plataforma
 
 `POST /admin/v1/auth/login` e `/admin/v1/auth/refresh` vivem só no domínio
 `manager.amparius.com`/control plane, com chave de assinatura própria
@@ -174,7 +275,20 @@ falha para todos os tenants. Semente TOTP fica envelope-encriptada com chave
 do cofre/KMS (nunca em texto puro no banco), idealmente delegada ao engine
 TOTP do Vault corporativo quando disponível — ver Lacuna 1 para confirmação.
 
-### 9. Bloqueio por tentativas e rate-limit
+**Não é divergência, é obrigação já existente:** o TOTP obrigatório para
+`platform_admin` não é uma decisão nova deste ADR — já é exigido pelo ADR
+0040 (decisão 1) e pelo código vigente (`internal/platform/auth/platform.go`:
+`PlatformService.Authenticate` rejeita `identity.MFA == false` e
+`RequirePlatform` falha fechado). O adiamento de MFA pedido por Ronaldo vale
+só para o login comum de tenant, clientes web/desktop e o painel SaaS do
+cliente — nunca para `platform_admin`. Consequência prática para AUTH-01B:
+**se o TOTP (emissão, verificação, matrícula de semente) não entrar junto com
+o emissor próprio, `/admin/v1/auth/login` não é publicado** — continua
+respondendo `503`, exatamente como hoje. Não há adaptador que force
+`MFA == true` sem TOTP real nem relaxamento de `RequirePlatform` para
+contornar a ausência de MFA nesta fatia.
+
+### 10. Bloqueio por tentativas e rate-limit
 
 `failed_attempts`/`locked_until` em `identity.app_user` (e equivalente em
 `platform.admin_user`) são a fonte de verdade e **nunca falham aberto**: se o
@@ -186,7 +300,7 @@ minutos; sucesso zera o contador. Rate-limit complementar por IP/e-mail em
 Redis (sliding window) é defesa adicional contra força bruta distribuída, não
 substitui o contador em banco.
 
-### 10. Auditoria sem PII
+### 11. Auditoria sem PII
 
 `login_audit`/`admin_login_audit` gravam `user_id` (UUID opaco), nunca e-mail,
 senha, token ou IP crú — consistente com o ADR 0024 (nada de subject/e-mail
@@ -195,7 +309,7 @@ e-mail **desconhecido** não gera linha em `login_audit` (tabela é RLS por
 tenant e tenant é desconhecido nesse caso); ela só alimenta o rate-limit por
 IP no Redis, para não abrir um caminho de enumeração de contas via auditoria.
 
-### 11. Bootstrap do primeiro usuário (pending_auth → active)
+### 12. Bootstrap do primeiro usuário (pending_auth → active)
 
 Sem provedor de e-mail integrado ainda, o convite **não depende de envio de
 e-mail nesta fatia**: `identity.create_onboarding` (ou um wrapper síncrono)
@@ -210,7 +324,7 @@ depois do onboarding (owner já autenticado) é o mesmo mecanismo via
 `POST /v1/auth/invite`, mas a entrega do link ao convidado é manual
 (copiar/colar) até existir envio de e-mail — ver Lacuna 2.
 
-### 12. Recuperação de senha — desenho, entrega adiada
+### 13. Recuperação de senha — desenho, entrega adiada
 
 Mesma primitiva de token de uso único (`purpose='recovery'`).
 `POST /v1/auth/recovery/request` com `{email}` sempre responde `202`
@@ -224,7 +338,7 @@ configuração** (responde `503 RECOVERY_UNAVAILABLE`) até AUTH-01B ligar um
 canal de entrega. Isso evita publicar um fluxo de recuperação sem forma de o
 usuário realmente receber o token.
 
-### 13. Migração dos handlers `/_dev/*`
+### 14. Migração dos handlers `/_dev/*`
 
 `internal/platform/http/server.go` já isola rotas dev-only por
 `DevelopmentMode` (`cfg.Env == "development" && cfg.EnableDevOnboarding`, ver
@@ -247,7 +361,7 @@ verificador JWT interno) em vez de deixar `Authenticator`/`PlatformAuthenticator
 como `nil`. As rotas `/_dev/*` continuam existindo só para o ciclo de
 desenvolvimento local, sem tráfego de homologação/produção.
 
-### 14. Cache offline de permissões no desktop
+### 15. Cache offline de permissões no desktop
 
 O cliente desktop Rust (AUTH-01D) reaproveita o **padrão** do ADR 0022 (envelope
 assinado Ed25519, versão monotônica, TTL, fail-closed na expiração), mas com
@@ -299,7 +413,8 @@ não são reabertas aqui.
   com hash em banco permite revogação real (`revoked_at`) sem infraestrutura
   extra.
 - **Adiar MFA também para `platform_admin`**: descartado por desenho (decisão
-  3, §8); o custo de implementar TOTP próprio é baixo comparado ao raio de
+  3, §9) e por já ser obrigação do ADR 0040/código vigente, não uma escolha
+  nova; o custo de implementar TOTP próprio é baixo comparado ao raio de
   impacto cross-tenant de uma conta de plataforma comprometida.
 - **Sessão fixa em uma empresa (exigir novo login para trocar empresa)**:
   descartado porque o usuário com múltiplas empresas (ADR 0007 §6) trocaria de
@@ -325,7 +440,8 @@ não são reabertas aqui.
    usuário; token revogado falha em `refresh` subsequente.
 6. `/admin/v1/auth/login` exige TOTP válido além de senha; token de tenant
    nunca é aceito por `auth.PlatformService` e vice-versa (chaves/`iss`
-   disjuntos), provado por teste de contrato.
+   disjuntos), provado por teste de contrato. Se o TOTP não estiver
+   implementado, a rota permanece `503` — nunca é publicada sem MFA real (§9).
 7. `identity.login_audit`/`admin_login_audit` nunca contêm e-mail, senha ou
    token em nenhuma linha, inclusive em falha — provado por teste que varre
    as colunas persistidas.
@@ -333,11 +449,15 @@ não são reabertas aqui.
    (token devolvido na própria resposta de onboarding); `recovery/request`
    responde `503 RECOVERY_UNAVAILABLE` enquanto não houver canal de entrega
    configurado, nunca finge sucesso sem meio de entrega.
-9. Todos os handlers listados em §13 respondem pela rota de produção
+9. Todos os handlers listados em §14 respondem pela rota de produção
    autenticada com a permissão correta (401/403 nos casos negativos) e os
    testes que hoje provam `503 AUTHENTICATION_UNAVAILABLE` por
    `Authenticator == nil` passam a provar autenticação real.
-10. `git diff --check` limpo nesta entrega e nenhuma migration aplicada é
+10. `identity.resolve_login_candidates` nunca devolve `email`/`name`; com o
+    mesmo e-mail em dois tenants, o login autentica no tenant correto pela
+    senha sem expor ao cliente quantos tenants existiam; `amparius_app`
+    continua sem `BYPASSRLS` — provado em PostgreSQL descartável (§5).
+11. `git diff --check` limpo nesta entrega e nenhuma migration aplicada é
     editada (forward-only, AGENTS.md §2.8).
 
 ## Fatias (B/C/D)
@@ -345,15 +465,19 @@ não são reabertas aqui.
 ### AUTH-01B — backend (emissor, credencial, sessão)
 
 Entrega: migrations `identity.*`/`platform.*` (colunas e tabelas do §2),
-emissor JWT próprio implementando `auth.OIDCVerifier`/`auth.PlatformVerifier`,
-`auth.MFAPolicy` (§ Consequências), endpoints de `docs/contracts/auth-login-v1.md`,
-migração dos handlers `/_dev/*` (§13), bootstrap sem e-mail (§11),
-`recovery/request` como `503` controlado (§12).
+função `identity.resolve_login_candidates` (§5), emissor JWT próprio
+implementando `auth.OIDCVerifier`/`auth.PlatformVerifier`, `auth.MFAPolicy`
+(§ Consequências), endpoints de `docs/contracts/auth-login-v1.md`, migração
+dos handlers `/_dev/*` (§14), bootstrap sem e-mail (§12), `recovery/request`
+como `503` controlado (§13). TOTP (emissão, verificação, matrícula de
+semente) é entrega obrigatória desta fatia para `platform_admin` — sem ele,
+`/admin/v1/auth/login` não é publicado (§9).
 
-Critérios de aceite testáveis: itens 1–5, 8 (bootstrap), 9 e 10 da lista
-acima; `go test ./internal/platform/auth ./internal/modules/identity
-./cmd/api -count=1` cobrindo login válido/inválido, bloqueio, rotação, reuso,
-troca de empresa e os 401/403/503 dos handlers migrados.
+Critérios de aceite testáveis: itens 1–5, 8 (bootstrap), 9, 10 (resolução de
+tenant) e 11 da lista acima; `go test ./internal/platform/auth
+./internal/modules/identity ./cmd/api -count=1` cobrindo login válido/
+inválido, bloqueio, rotação, reuso, troca de empresa e os 401/403/503 dos
+handlers migrados.
 
 ### AUTH-01C — permissões (matriz papel×permissão + prova de RLS)
 
@@ -364,19 +488,22 @@ efêmera local) confirmando que um usuário do tenant A nunca lê/escreve linha
 do tenant B em `identity.app_user`, `identity.refresh_token`,
 `identity.login_audit` e `identity.credential_token`, com o papel da
 aplicação sem `SUPERUSER`/`BYPASSRLS` (mesmo padrão do teste de integração já
-existente em `internal/modules/entitlement/integration_test.go`).
+existente em `internal/modules/entitlement/integration_test.go`). A mesma
+instância descartável prova o item 10 (§5): `identity.resolve_login_candidates`
+não expõe PII e `amparius_app` não tem `BYPASSRLS`.
 
-Critérios de aceite testáveis: item 6; para cada papel × permissão, um teste
-positivo e um negativo (ex.: `operator` nunca alcança `entitlement:write`);
-para RLS, um teste de dois tenants simultâneos provando 0 linhas visíveis
-cruzadas, documentado com o comando reproduzível (DSN descartável) no PR.
+Critérios de aceite testáveis: itens 6 e 10; para cada papel × permissão, um
+teste positivo e um negativo (ex.: `operator` nunca alcança
+`entitlement:write`); para RLS, um teste de dois tenants simultâneos provando
+0 linhas visíveis cruzadas, documentado com o comando reproduzível (DSN
+descartável) no PR.
 
 ### AUTH-01D — clientes (telas web/painel e desktop)
 
 Entrega: tela de login e estados (credencial inválida, conta bloqueada,
 sessão expirada, troca de empresa) no painel SaaS (`/admin/v1`, com TOTP) e
 no cliente web (`/v1`); no cliente desktop Rust, login online e cache offline
-de permissões assinado com TTL e fail-closed (§14).
+de permissões assinado com TTL e fail-closed (§15).
 
 Critérios de aceite testáveis: cada estado de erro do contrato
 (`docs/contracts/auth-login-v1.md`) tem uma tela/mensagem correspondente,
@@ -387,36 +514,63 @@ expiração (relógio controlado, sem depender de esperar o TTL real).
 ## Lacunas e decisões abertas (dependem de Ronaldo)
 
 1. **MFA de plataforma via Vault TOTP engine vs. biblioteca própria.** Este
-   ADR assume TOTP auto-hospedado obrigatório para `platform_admin` (§8,
+   ADR assume TOTP auto-hospedado obrigatório para `platform_admin` (§9,
    decisão). Falta confirmar se o cofre/KMS corporativo já tem um secrets
    engine de TOTP disponível (ex.: Vault `totp`) para delegar geração/
    verificação sem o Amparius guardar a semente, ou se AUTH-01B precisa
    implementar e envelope-encriptar a semente com uma chave do próprio cofre.
+   **Default proposto (Analista), aguarda aprovação do Ronaldo:** semente
+   TOTP própria envelope-encriptada no mesmo cofre já usado para os segredos
+   de certificado fiscal; delegar a um secrets engine de Vault fica para
+   depois, se/quando existir.
 2. **Canal de entrega de convite/recuperação.** Sem provedor de e-mail
    integrado, convite pós-onboarding é um link copiável entregue manualmente
-   e `recovery/request` fica `503` nesta fatia (§11/§12). Confirmar se isso é
+   e `recovery/request` fica `503` nesta fatia (§12/§13). Confirmar se isso é
    aceitável até o primeiro piloto ou se e-mail transacional (e qual
-   provedor) é pré-requisito antes de clientes reais.
+   provedor) é pré-requisito antes de clientes reais. **Default proposto
+   (Analista), aguarda aprovação do Ronaldo:** convite/recuperação manual
+   (link copiável) aceito no piloto; `recovery/request` permanece `503` até
+   existir canal de entrega real.
 3. **TTLs e limites propostos.** Access token 10 min, refresh 30 dias,
-   bloqueio em 5 tentativas/15 min (§4/§9) são defaults propostos, não
+   bloqueio em 5 tentativas/15 min (§4/§10) são defaults propostos, não
    testados com o uso real de operador de loja (ex.: caixa o dia todo sem
    reautenticar). Confirmar se esses valores servem ou precisam de ajuste
-   antes de ir para produção.
+   antes de ir para produção. **Default proposto (Analista), aguarda
+   aprovação do Ronaldo:** manter os valores como estão; revisar com
+   telemetria real de operador depois do piloto, não antes.
 4. **Revogação imediata de access token.** Hoje a defesa é o TTL curto; não
-   há blocklist (§6). Confirmar se um caso como desligamento de funcionário
+   há blocklist (§7). Confirmar se um caso como desligamento de funcionário
    com acesso a caixa/fiscal exige revogação efetiva em segundos (o que
    adiciona Redis como dependência obrigatória, não só de rate-limit) ou se
-   10 minutos de tolerância é aceitável no MVP.
+   10 minutos de tolerância é aceitável no MVP. **Default proposto
+   (Analista), aguarda aprovação do Ronaldo:** não exigir Redis obrigatório
+   agora; aceitar até 10 minutos de tolerância e registrar como risco
+   conhecido e aceito no piloto.
 5. **Guarda da chave de assinatura Ed25519.** Confirmar o mecanismo real de
    cofre/KMS disponível hoje (nome do serviço, como o processo `cmd/api`
    recupera o material de assinatura em runtime) — o ADR assume uma
    referência opaca (`key_id`), mas AUTH-01B precisa de um alvo concreto para
-   implementar.
+   implementar. **Default proposto (Analista), aguarda aprovação do
+   Ronaldo:** mesmo cofre já usado para os segredos de certificado fiscal; se
+   não existir um cofre central hoje, isso é pré-requisito de infraestrutura
+   antes de AUTH-01B, não uma decisão deste ADR.
 6. **Chave do snapshot offline do desktop.** Confirmar se o desktop reusa a
    infraestrutura de chave do relay (ADR 0022, hoje pensada para o pacote de
    enforcement/entitlement) ou se recebe um `key_id` próprio do principal de
-   usuário (proposta deste ADR, §14) — afeta quem no control plane assina o
-   quê e com qual rotação.
+   usuário (proposta deste ADR, §15) — afeta quem no control plane assina o
+   quê e com qual rotação. **Default proposto (Analista), aguarda aprovação
+   do Ronaldo:** `key_id` próprio do principal de usuário, nunca a chave do
+   relay.
+7. **Resolução de tenant no login (lacuna bloqueante do parecer do
+   Analista).** O mecanismo concreto está desenhado em §5:
+   `identity.resolve_login_candidates`, função `SECURITY DEFINER` mínima e
+   auditada, sem `BYPASSRLS` em `amparius_app`. Falta confirmar se o campo
+   opcional `tenantHint` no contrato é suficiente para os fluxos de
+   convite/onboarding com tenant fixo, ou se o piloto precisa de um
+   seletor de tenant explícito na UI desde já. **Default proposto
+   (Analista), aguarda aprovação do Ronaldo:** seguir o mecanismo de §5 como
+   está (função dedicada, nunca papel geral com `BYPASSRLS`); `tenantHint`
+   só entra em uso quando um fluxo concreto (convite) precisar.
 
 ## Verificação
 

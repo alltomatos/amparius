@@ -132,7 +132,7 @@ func newHomologFixture(t testing.TB) *homologFixture {
 		ReadinessTimeout: 500 * time.Millisecond,
 	}
 	principal := auth.Principal{Issuer: "homolog", Subject: "homolog-owner", UserID: owner.OwnerUserID, TenantID: owner.TenantID, CompanyID: owner.CompanyID, MFAAuthenticated: true}
-	handler, closeAll, err := buildHandler(ctx, cfg, slog.New(slog.NewJSONHandler(io.Discard, nil)),
+	handler, closeAll, err := buildHandler(ctx, cfg, slog.New(slog.NewJSONHandler(io.Discard, nil)), nil,
 		func(options *httpserver.Options) { options.Authenticator = homologGate{principal: principal} })
 	if err != nil {
 		t.Fatal(err)
@@ -330,7 +330,7 @@ func TestControlPlaneSemAutenticadorRespondeMatrizDeStatus(t *testing.T) {
 
 	// Sem control plane configurado: as rotas não existem (404), e isso é o
 	// contrato (ADR 0038: "registra somente quando AMPA_CONTROL_POSTGRES_DSN").
-	handler, closeHandler, err := buildHandler(ctx, cfg, logger)
+	handler, closeHandler, err := buildHandler(ctx, cfg, logger, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +363,7 @@ func TestControlPlaneConfiguradoSemAutenticadorFalhaFechado503(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	handler, closeHandler, err := buildHandler(ctx, cfg, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	handler, closeHandler, err := buildHandler(ctx, cfg, slog.New(slog.NewJSONHandler(io.Discard, nil)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

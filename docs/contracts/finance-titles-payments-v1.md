@@ -76,12 +76,19 @@ Exige `finance:write` e o cabeçalho `Idempotency-Key` (1 a 200 caracteres).
 Registra uma baixa (pagamento) sobre uma parcela existente.
 
 ```json
-{"installment_id":"<uuid>","amount_cents":5000,"method":"pix","reference":"replay"}
+{"installment_id":"<uuid>","amount_cents":5000,"method":"pix","reference":"replay","cash_session_id":"<uuid>"}
 ```
 
 `installment_id`, `amount_cents` (positivo) e `method` são obrigatórios;
-`paid_at` e `reference` são opcionais. `method` aceita `cash`, `pix`,
+`paid_at`, `reference` e `cash_session_id` são opcionais. `method` aceita `cash`, `pix`,
 `bank_transfer`, `card` ou `boleto`.
+
+Quando informado, `cash_session_id` vincula a baixa a uma sessão de caixa
+aberta do mesmo tenant. Uma baixa vinculada em dinheiro compõe o esperado
+no caixa. Os demais métodos aparecem no detalhamento da conciliação.
+O replay de uma baixa vinculada já registrada continua disponível após
+o fechamento. Alterar o vínculo em uma chave já usada gera conflito.
+[Contrato de sessões de caixa](finance-cash-sessions-v1.md).
 
 O gatilho `finance.validate_payment_balance` rejeita quando a soma dos
 pagamentos da parcela excede o valor dela (`409 FINANCE_CONFLICT`), com o lock
@@ -92,7 +99,7 @@ lançamento; a chave de idempotência é persistida em
 
 Resposta `201 Created` com o pagamento (`id`, `installment_id`,
 `bank_account_id`, `amount_cents`, `paid_at`, `method`, `reference`,
-`idempotency_key`).
+`idempotency_key`, `cash_session_id`). O vínculo é `null` quando ausente.
 
 ## Erros
 
@@ -106,6 +113,8 @@ Envelope `{code, message, details, traceId}`.
 | `VALIDATION_ERROR` | 400 | corpo, campo ou filtro inválido, `Idempotency-Key` ausente/inválida |
 | `FINANCE_REFERENCE_NOT_FOUND` | 404 | título, parcela ou referência inexistente/outro tenant |
 | `FINANCE_CONFLICT` | 409 | domínio rejeitado, sobrepagamento ou duplicidade |
+| `CASH_SESSION_ALREADY_CLOSED` | 409 | nova baixa vinculada a caixa fechado |
+| `IDEMPOTENCY_CONFLICT` | 409 | chave de baixa reutilizada com outro vínculo ou corpo incompatível com uma baixa vinculada |
 | `FINANCE_UNAVAILABLE` | 503 | repositório indisponível |
 
 Nenhuma mensagem de erro inclui PII.

@@ -1515,3 +1515,19 @@ cargo test --manifest-path relay/Cargo.toml
 cargo clippy --manifest-path relay/Cargo.toml --all-targets --all-features -- -D warnings
 git diff --check
 ```
+
+## FIN-02A — Sessões de caixa online (#99)
+
+[Guia do operador de caixa](userguide/caixa-sessoes-e-conciliacao.md).
+A migração `0040` vincula baixas a sessões por tenant e grava a conciliação
+do fechamento. O papel `amparius_app` atualiza apenas as colunas de
+fechamento. Abertura, movimentos e fechamento exigem idempotência. O log
+HTTP e o trace usam a instrumentação existente da API.
+
+O [contrato de caixa](contracts/finance-cash-sessions-v1.md) descreve as
+rotas, os erros e a medição de latência. Execute em PostgreSQL descartável
+com as migrações e os DSNs de teste configurados.
+
+```powershell
+go test ./internal/modules/finance -run '^TestCashSessionHTTP' -v -count=1
+```

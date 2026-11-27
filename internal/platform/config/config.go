@@ -37,6 +37,7 @@ const (
 type Config struct {
 	Env                 string
 	HTTPPort            string
+	APIMetricsPort      string
 	LogLevel            string
 	ShutdownTimeout     time.Duration
 	ReadinessTimeout    time.Duration
@@ -94,6 +95,7 @@ func LoadFrom(lookup LookupFunc) (Config, error) {
 	cfg := Config{
 		Env:                 text(lookup, "APP_ENV", defaultEnv),
 		HTTPPort:            text(lookup, "HTTP_PORT", defaultHTTPPort),
+		APIMetricsPort:      text(lookup, "API_METRICS_PORT", ""),
 		LogLevel:            text(lookup, "LOG_LEVEL", defaultLogLevel),
 		ShutdownTimeout:     shutdownTimeout,
 		ReadinessTimeout:    readinessTimeout,
@@ -128,6 +130,12 @@ func (c Config) validate() error {
 	port, err := strconv.Atoi(c.HTTPPort)
 	if err != nil || port < 1 || port > 65535 {
 		return fmt.Errorf("%w: HTTP_PORT deve ser uma porta entre 1 e 65535, recebido %q", ErrInvalidConfig, c.HTTPPort)
+	}
+	if c.APIMetricsPort != "" {
+		port, err := strconv.Atoi(c.APIMetricsPort)
+		if err != nil || port < 1 || port > 65535 {
+			return fmt.Errorf("%w: API_METRICS_PORT deve ser uma porta entre 1 e 65535", ErrInvalidConfig)
+		}
 	}
 	if c.PostgresDSN == "" {
 		return fmt.Errorf("%w: POSTGRES_DSN não pode ser vazio", ErrInvalidConfig)

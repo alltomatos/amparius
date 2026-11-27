@@ -31,7 +31,10 @@ type Entitlement struct {
 	ValidTo         *time.Time
 	UpdatedAt       *time.Time
 	Version         int64
-	sortOrder       int
+	// QuotaVersion é a versão da cota do módulo no tenant (license_pool), usada
+	// como If-Match de SetModuleQuota; difere de Version (versão da licença).
+	QuotaVersion int64
+	sortOrder    int
 }
 
 type EntitlementPage struct {
@@ -93,7 +96,8 @@ func (s *Service) ListForCompany(ctx context.Context, companyID uuid.UUID, at ti
 		            AND used.valid_from <= $3::date
 		            AND (used.valid_to IS NULL OR used.valid_to >= $3::date)
 		       ), 0),
-		       a.id, a.valid_from, a.valid_to, COALESCE(a.version, 0), a.updated_at
+		       a.id, a.valid_from, a.valid_to, COALESCE(a.version, 0), a.updated_at,
+		       COALESCE(lp.version, 0)
 		  FROM entitlement.module m
 		  LEFT JOIN entitlement.license_pool lp
 		    ON lp.tenant_id = $1 AND lp.module_code = m.code
@@ -123,7 +127,7 @@ func (s *Service) ListForCompany(ctx context.Context, companyID uuid.UUID, at ti
 			if err := rows.Scan(
 				&item.ModuleCode, &item.ModuleName, &item.Kind, &sortOrder,
 				&item.Status, &item.Quota, &item.QuotaConfigured, &item.Used,
-				&item.ID, &item.ValidFrom, &item.ValidTo, &item.Version, &item.UpdatedAt,
+				&item.ID, &item.ValidFrom, &item.ValidTo, &item.Version, &item.UpdatedAt, &item.QuotaVersion,
 			); err != nil {
 				return err
 			}

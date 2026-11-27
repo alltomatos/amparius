@@ -591,7 +591,7 @@ func entitlementResponse(item entitlement.Entitlement) map[string]any {
 		"id": id, "tenantId": item.TenantID.String(), "companyId": item.CompanyID.String(),
 		"module": item.ModuleCode, "moduleName": item.ModuleName, "kind": item.Kind, "status": item.Status,
 		"quota": item.Quota, "quotaConfigured": item.QuotaConfigured, "used": item.Used,
-		"version":   item.Version,
+		"version": item.Version, "quotaVersion": item.QuotaVersion,
 		"validFrom": dateResponse(item.ValidFrom), "validTo": dateResponse(item.ValidTo),
 		"updatedAt": timeResponse(item.UpdatedAt),
 	}

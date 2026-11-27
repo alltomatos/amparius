@@ -4,7 +4,7 @@ Status: **proposto** em 27/11/2026, fatia de desenho (Q2). Cobre a exigência
 de AGENTS.md §5 ("Teste de caos do relay: queda de rede no meio da emissão,
 reconexão, reconciliação") para a perna relay→`cmd/api` descrita em
 `docs/contracts/relay-saas-sync-http-v1.md`. Depende da implementação do
-cliente HTTP (ADR 0045) e do receptor Go (lacuna listada no contrato); este
+cliente HTTP (ADR 0046) e do receptor Go (lacuna listada no contrato); este
 plano pode ser executado **parcialmente hoje** com os testes já existentes em
 memória (`relay/src/sync.rs`, `relay/src/protocol.rs`) e **totalmente** só
 depois da issue de implementação.
@@ -107,7 +107,7 @@ responder (não dá tempo de saber se aplicou ou não do lado do SaaS).
 cargo test --manifest-path relay/Cargo.toml fiscal_rejection_is_failed_once_and_creates_tenant_scoped_review_task
 ```
 **Pendência:** o cenário real de "servidor caiu bem no meio, antes do ACK" só
-é totalmente verificável com o cliente HTTP real (ADR 0045) e um servidor de
+é totalmente verificável com o cliente HTTP real (ADR 0046) e um servidor de
 teste que aceita a conexão TCP, recebe os bytes e fecha sem responder — isso
 entra na issue de implementação, não neste slice de desenho.
 

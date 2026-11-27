@@ -2,7 +2,7 @@
 
 Status: **texto pronto, não aberto como issue** (conforme pedido do Líder
 Amparius). Para o Engenheiro Rust Sync Fiscal executar depois, em sequência.
-Base: ADR 0026, ADR 0045, contratos `relay-sync-v1`,
+Base: ADR 0026, ADR 0046, contratos `relay-sync-v1`,
 `relay-saas-sync-http-v1`, plano de caos `relay-saas-chaos-plan.md`.
 
 Nenhuma destas issues deve tocar `skills/nfse-documentacao-tecnica/**`,
@@ -14,7 +14,7 @@ registrada no contrato e precisa de issue própria, fora deste pacote Rust.
 ## Issue 1 — RELAY-02D: cliente HTTP `reqwest`/`rustls` para `SyncTransport`
 
 **Escopo:** adicionar `reqwest` com `rustls-tls` a `relay/Cargo.toml` (ADR
-0045) e implementar um adaptador `HttpSyncTransport` que satisfaz o trait
+0046) e implementar um adaptador `HttpSyncTransport` que satisfaz o trait
 `SyncTransport` (`relay/src/sync.rs`), cobrindo `submit_versioned` para enviar
 um `SyncEnvelope` via `POST /v1/sync/operations` conforme
 `docs/contracts/relay-saas-sync-http-v1.md`. Não inclui o receptor Go (fora de
@@ -106,12 +106,67 @@ prevê mudança de schema).
 
 ---
 
+## Issue 3 — RELAY-02F: receptor Go `/v1/sync/*` e assinador de snapshot no control plane
+
+**Escopo:** criar o módulo Go simétrico ao lado Rust, cobrindo as duas rotas
+que faltam em `cmd/api` conforme a tabela de lacunas de
+`docs/contracts/relay-saas-sync-http-v1.md`:
+1. `POST /v1/sync/operations` — novo módulo `internal/modules/sync` (schema
+   próprio, sem JOIN cross-schema, AGENTS.md §4) reimplementando em Go a
+   lógica já provada em Rust por `relay/src/protocol.rs::SyncReceiver`:
+   ordenação por `(tenant_id, origin_node, seq)`, dedup por
+   `idempotency_key`, detecção de `out_of_order`/`conflict`/`stale_version`,
+   e amarração de tenant via RLS (nunca tenant vindo do corpo, só do Bearer —
+   mesmo padrão de `auth-http-v1`/`control-plane-context-v1`).
+2. `GET /v1/sync/snapshot` — assinador Ed25519 no control plane que produz um
+   `SignedSnapshot` byte-idêntico ao esperado por
+   `relay/src/snapshot.rs::SignedSnapshot::verify`: mesma ordem de campos do
+   `UnsignedSnapshot` (`schema_version`, `key_id`, `tenant_id`, `version`,
+   `issued_at`, `valid_until`, `payload`) serializada em JSON canônico antes
+   da assinatura, para o lado Rust aceitar sem reimplementar a verificação.
+
+**Fora de escopo explícito:**
+- Não implementa nem altera o cliente HTTP do relay (Issues 1 e 2, já
+  cobertas no lado Rust).
+- Não implementa papel de serviço/rotação de token do relay (limitação já
+  registrada no contrato); usa o mesmo mecanismo de autenticador de teste de
+  homologação enquanto ADR 0024 (OIDC/MFA) permanece adiado.
+- Não altera `skills/nfse-documentacao-tecnica/**` nem migrations fora do
+  necessário para criar o schema próprio do novo módulo `sync`.
+
+**Critérios de aceite:**
+1. Golden test prova que o JSON canônico gerado pelo assinador Go, assinado
+   e verificado por `relay/src/snapshot.rs::SignedSnapshot::verify` (via
+   fixture cruzada ou teste de integração), é aceito sem erro —
+   byte-identidade com o que o Rust espera, não só "formato parecido".
+2. `POST /v1/sync/operations` responde `applied`/`master_applied`/
+   `duplicate`/`out_of_order`/`stale_version`/`tenant_mismatch`/
+   `fiscal_rejected`/`rejected` exatamente como a tabela de push de
+   `relay-saas-sync-http-v1.md`, com teste por tabela (uma linha por caso).
+3. `GET /v1/sync/snapshot` nunca estende `valid_until` por falha de rede ou
+   indisponibilidade de origem — se não houver dado fresco, retorna o
+   snapshot assinado válido mais recente ou erro explícito, nunca inventa
+   validade nova sem recalcular a partir da fonte de verdade.
+4. Tenant mismatch e token sem escopo de `relay_service_account` (lacuna
+   registrada no contrato) retornam erro fail-closed, nunca "melhor
+   esforço".
+5. `go test ./internal/modules/sync/...` e o teste de integração cruzada com
+   `cargo test --manifest-path relay/Cargo.toml` (verificação de assinatura)
+   passam, com saída colada no PR (AGENTS.md §9.7).
+
+**Dependências:** depende de `docs/contracts/relay-saas-sync-http-v1.md`
+(este slice) e da estrutura de módulo já usada por
+`internal/modules/{identity,party,catalog,finance,fiscal,entitlement,outbox,controlplane}`
+como referência de padrão; não depende da Issue 1/2 estarem implementadas
+para começar (pode ser testada com um cliente de teste Go/`reqwest` de
+fixture), mas a validação ponta-a-ponta em homologação só fecha com as três
+prontas.
+
 ## Observação para quem triar
 
-Nenhuma das duas issues cria o lado Go (`internal/modules/sync`, assinatura
-do snapshot no control plane). Essa é uma lacuna distinta, de outro papel
-(Go/control plane), e deve ser aberta separadamente referenciando a mesma
-`docs/contracts/relay-saas-sync-http-v1.md` para as duas pontas ficarem
-coerentes. Sem o lado Go, as Issues 1 e 2 só podem ser validadas contra
-servidor de teste local — o que já é suficiente para o critério de aceite
-listado, mas não prova o ciclo real em homologação.
+A Issue 3 (RELAY-02F) cobre o lado Go que faltava; é de outro papel
+(Go/control plane) e deve ser atribuída separadamente, mas já tem texto
+pronto aqui para não depender de nova rodada de desenho. Sem ela, as Issues
+1 e 2 só podem ser validadas contra servidor de teste local — suficiente
+para os critérios de aceite listados, mas não prova o ciclo real em
+homologação.

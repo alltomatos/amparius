@@ -1,4 +1,4 @@
-# ADR 0045 — Cliente HTTP do relay para o SaaS (reqwest + rustls)
+# ADR 0046 — Cliente HTTP do relay para o SaaS (reqwest + rustls)
 
 Status: proposto em 27/11/2026 — slice de desenho (sem código), base para RELAY-02D/E.
 

@@ -3,7 +3,7 @@
 Status: **proposto** em 27/11/2026, fatia Q2 (desenho/contrato). Não implementado;
 `relay/Cargo.toml` não tem cliente HTTP e `cmd/api` não expõe nenhuma rota de
 ingestão de sincronização (ver "Lacunas de API"). Base: ADR 0026, ADR 0035,
-ADR 0045, contratos `relay-sync-v1`, `relay-operations-v1`, `auth-http-v1`,
+ADR 0046, contratos `relay-sync-v1`, `relay-operations-v1`, `auth-http-v1`,
 `control-plane-context-v1`, `control-plane-entitlement-cp06-v1`.
 
 ## Fato verificado que motiva este contrato
@@ -191,7 +191,7 @@ Ao esgotar tentativas, a operação já ia para `failed` + `ReviewTask`
 (`relay-sync-v1` §"Retry limitado e falha terminal") — este contrato não muda
 essa regra, só define quem dispara a tentativa real pela rede.
 
-`push` e `pull` têm orçamentos de timeout independentes (ADR 0045): `pull` do
+`push` e `pull` têm orçamentos de timeout independentes (ADR 0046): `pull` do
 snapshot pode esperar mais porque não bloqueia a fila; `push` de operação deve
 ter timeout curto para não travar `sync_once` em uma única operação lenta.
 
@@ -206,7 +206,7 @@ ter timeout curto para não travar `sync_once` em uma única operação lenta.
 - `master_upsert` só sincroniza com `authoritative_version` do servidor,
   nunca com versão local;
 - o relay nunca envia o Bearer para um host diferente do configurado
-  (sem redirect, ADR 0045).
+  (sem redirect, ADR 0046).
 
 ## Verificação (quando a issue de implementação rodar)
 

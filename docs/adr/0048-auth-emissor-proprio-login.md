@@ -1,6 +1,6 @@
 # ADR 0048 — Emissor próprio de credencial: login, sessão, revogação e escopo tenant×empresa
 
-Status: proposto · 27/11/2026 · AUTH-01A (issue #103) · referencia ADRs 0007,
+Status: aceito · 27/11/2026 · AUTH-01A (issue #103) · referencia ADRs 0007,
 0022, 0024, 0030, 0038, 0040, 0047
 
 ## Contexto
@@ -511,7 +511,12 @@ verificável por teste de interface ou snapshot; o desktop nega operação
 offline após o TTL do snapshot expirar, com teste automatizado reproduzindo a
 expiração (relógio controlado, sem depender de esperar o TTL real).
 
-## Lacunas e decisões abertas (dependem de Ronaldo)
+## Lacunas e decisões (resolvidas por Ronaldo em 27/11/2026)
+
+> **Decisão de Ronaldo, 27/11/2026:** aprovou todos os defaults propostos abaixo
+> (resposta "ok"). Onde o texto diz "aguarda aprovação do Ronaldo", leia-se
+> "aprovado". Item 6 (cofre/KMS) continua pré-requisito de infraestrutura
+> antes de a AUTH-01B gravar segredos reais.
 
 1. **MFA de plataforma via Vault TOTP engine vs. biblioteca própria.** Este
    ADR assume TOTP auto-hospedado obrigatório para `platform_admin` (§9,

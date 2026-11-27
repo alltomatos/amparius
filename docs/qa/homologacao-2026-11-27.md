@@ -21,6 +21,8 @@ compartilhado (porta 5432); a migration da #82 não foi tocada.
 | NFS-e: motor de tributos, XSD/DPS, adapter | PASS | **Simulado/golden**: adapter fake, sem transmissão; sem `tax_rule` oficial |
 | Backup/restore (`scripts/homolog-backup-restore.ps1`): `pg_dump -Fc` da célula migrada (0039) + `pg_restore` em outro banco | PASS: versão goose, 66 tabelas, 54 com RLS, 57 policies, 75 triggers, 219 índices, 112 grants do app (hash idêntico) e linhas idênticas; RLS efetiva no restaurado (dono vê 1, tenant alheio 0) | **Real** (PG descartável, dados sintéticos) |
 | Readiness completa (`scripts/homolog-readiness.ps1`): PG, Redis, RabbitMQ reais + S3 **simulado** (adobe/s3mock) | PASS: sem dependências `/readyz` 503; com todas `/readyz` 200 | Real para PG/Redis/RabbitMQ; **simulado** para object storage (não é MinIO/R2) |
+| Relay Rust como processo real (`amparius-relay.exe`, bind 127.0.0.1:18091) | `/healthz` 200; `/relay/v1/status` sem credencial 401 e com cabeçalhos de credencial não emitida 401; rota inexistente 404 | **Real**, só a borda HTTP local. **Não existe integração relay → API Go** (o relay não tem cliente HTTP; o log informa que o PostgreSQL é placeholder). Sync contra a API real **não é homologável** hoje |
+| UI web no navegador (staging `hml.amparius.com`, somente leitura, dados sintéticos) | 10 destinos navegáveis sem erros de script, foco movido ao `h1` a cada rota, `aria-current` correto, skip link funcional, 0 imagens sem `alt`, 0 campos sem rótulo, 0 ids duplicados, contraste AA nos 19 textos visíveis do painel, sem overflow horizontal, regiões `status` para mensagens, `prefers-color-scheme` e breakpoints (760/520 px); cadastro de exemplo e filtro vazio ("Nenhum cadastro encontrado.") funcionam | **Real** no navegador, mas o conteúdo é **simulado** (fila "reiniciada ao recarregar"); sem leitor de tela, sem teste de viewport móvel real e sem Lighthouse/axe completo |
 | OIDC/MFA | Não homologado | Adiado; autenticadores nos testes são fakes |
 
 ## Falhas encontradas e corrigidas
@@ -50,6 +52,21 @@ compartilhado (porta 5432); a migration da #82 não foi tocada.
 4. **`scripts/backup-restore.ps1` descartava os GRANTs** (defeito real). O dump e o restore usavam `--no-acl`; medido em PG descartável, o app tinha 112 grants na origem e **0** no banco restaurado, ou seja, um restore deixaria a aplicação sem acesso a nenhuma tabela. Corrigido removendo `--no-acl` do `backup` e do `restore` (o papel `amparius_app` precisa existir no destino; senão o `pg_restore` falha de forma explícita). O modo `test` (tabela sintética) não depende de ACL e ficou como estava. Os scripts `backup-restore.ps1` e `smoke-readiness.ps1` precisam de ferramentas `psql/pg_dump/pg_restore` no host, que a máquina de desenvolvimento não tem; por isso a homologação usa `homolog-backup-restore.ps1`, que roda o cliente PostgreSQL dentro do container.
 5. **`scripts/smoke-readiness.ps1` fixava o banco compartilhado (5432)**. Ganhou o parâmetro `-PostgresDsn` (padrão inalterado) para rodar contra o banco descartável.
 
+## Critérios de aceite das issues #79 e #80 (conferência)
+
+**Ambas permanecem abertas**: o merge das fatias não cumpre todos os critérios.
+
+| Issue | Critério | Situação | Evidência |
+|---|---|---|---|
+| #79 | Agenda e pendências derivadas do contexto validado | Atendido (agenda); pendências = "Nenhuma operação registrada" na prévia | `TestStoreDashboardHTTPPostgres`, `TestAgendaCivilWindow` (PG real) |
+| #79 | Títulos com filtros e paginação; estados de vazio e erro | Atendido | `TestFinanceProductionHTTPPostgres`; UI "Nenhum cadastro encontrado."/indisponível |
+| #79 | Testes de autorização e latência documentados | Atendido | p95 25,9 ms (títulos) e 39,6 ms (agenda) nesta rodada, 10.007/3.037 registros |
+| #79 | Caixa e recebimentos com reconciliação | **Pendente** | matriz de mockups: "Baixas, caixa e indicadores calculados por projeção seguem em fatias próprias" |
+| #79 | Acompanhar fechamento e exportação (PRD J3) | **Pendente** | "Menu Relatórios · J3: Ausente" |
+| #80 | Listar contexto e empresas autorizadas | **Parcial** | leitura por tenant e licenças existe; diretório de tenants/empresas depende de `ADM-02B` |
+| #80 | Consultar cotas/licenças; conceder e revogar com versão; eventos; recusa fora do escopo | Atendido com identidade de teste | `TestAdminPlatformCrossTenantReadsAndWritesIntegration`, `TestPlatformViewsAreReadOnlyForAppRole`, `admin_http_test.go` (409 `STALE_VERSION`, 401/403) |
+| #80 | Validar isolamento antes de conectar a superfície pública | Atendido em teste; **superfície não conectada** (`/admin/v1` não montado sem OIDC/MFA, adiado) | rotas respondem 404 em dev |
+
 ## Observações (sem correção nesta rodada)
 
 - Em `APP_ENV=development` sem OIDC, `/v1/*` e `/admin/v1/*` respondem `404`
@@ -57,7 +74,8 @@ compartilhado (porta 5432); a migration da #82 não foi tocada.
   adaptador OIDC/MFA existir.
 - O S3 do `readyz` local é um simulador (`adobe/s3mock`); a checagem contra object storage real foi vista apenas no staging. As imagens `minio/*` não estão mais no Docker Hub.
 - `rabbitmq-diagnostics` via `docker exec` durante a subida derruba o container do RabbitMQ; o script espera pelo log `Server startup complete`.
-- Não validados: UI no navegador (visual, teclado, WCAG), relay contra a API Go real, emissão e consulta reais na Sefin Nacional.
+- UI: o `document.title` não muda por rota (WCAG 2.4.2, baixo impacto); o skip link deixa `#screen-title` na URL (a rota cai no Painel ao recarregar, comportamento aceitável); não há `prefers-reduced-motion` explícito no CSS. Sem correção nesta rodada.
+- Não validados: leitor de tela e dispositivos móveis reais, relay contra a API Go real (inexistente), emissão e consulta reais na Sefin Nacional.
 
 ## Reprodução
 

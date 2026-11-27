@@ -192,8 +192,19 @@ A prévia pública usa dados sintéticos e funciona sem conexão com a API.
    `next_cursor`. Sem resultados, `items` vem vazio.
    [Contrato financeiro](../contracts/finance-titles-payments-v1.md).
 
-A #79 segue em andamento para conectar as telas privadas, os recebimentos,
-o caixa e a conciliação. Consulte a [evidência das leituras](../design/mvp-store-dashboard-read-evidence.md).
+No cliente web privado, inclua a sessão Bearer, a data civil e o fuso IANA
+no [bootstrap da loja](../../web/staging/README.md#configurar-o-modo-operacional).
+Abra **Painel do dia** para ver a agenda e as confirmações pendentes da
+empresa. Os horários aparecem no fuso indicado e **Atualizar agenda**
+consulta novamente o mesmo dia. A fila de **Sincronização** é uma simulação
+local. Abra **Financeiro**, aplique os filtros de situação, direção e
+vencimento inclusivo e use **Próxima página** para continuar com os mesmos
+filtros. A última página oculta o botão. A lista mostra os valores
+nominais dos títulos do grupo econômico.
+
+As duas telas apresentam a indisponibilidade da leitura quando o modo
+privado não tem sessão Bearer. A #79 segue aberta para parcelas,
+recebimentos, caixa, conciliação e validação com autenticação real. Consulte a [evidência das leituras](../design/mvp-store-dashboard-read-evidence.md).
 
 ### Roteiro da prévia visual
 

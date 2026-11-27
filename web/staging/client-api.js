@@ -84,8 +84,10 @@
     function buildHeaders(extra) {
       const headers = Object.assign({ Accept: "application/json" }, extra || {});
       if (accessToken) headers.Authorization = "Bearer " + accessToken;
-      if (devTenantId) headers[DEV_TENANT_HEADER] = devTenantId;
-      if (devCompanyId) headers[DEV_COMPANY_HEADER] = devCompanyId;
+      if (mode === "dev") {
+        headers[DEV_TENANT_HEADER] = devTenantId;
+        if (devCompanyId) headers[DEV_COMPANY_HEADER] = devCompanyId;
+      }
       return headers;
     }
 
@@ -106,6 +108,10 @@
       const method = options.method || "GET";
       const headers = buildHeaders();
       const init = { method, headers };
+      if (options.privateRead) {
+        init.cache = "no-store";
+        init.redirect = "error";
+      }
       if (options.body !== undefined && options.body !== null) {
         headers["Content-Type"] = "application/json";
         init.body = JSON.stringify(options.body);
@@ -122,7 +128,7 @@
       }
       let payload = {};
       try {
-        payload = await response.json();
+        payload = options.readJSON && response.ok ? await options.readJSON(response) : await response.json();
       } catch (_) {
         payload = {};
       }
@@ -343,6 +349,46 @@
       }));
     }
 
+    function privateRead(path, query, readJSON) {
+      if (mode !== "bearer") throw normalizeError(null, 401);
+      return request(path, { query, readJSON, privateRead: true });
+    }
+
+    function invalidReadResponse() {
+      return new Error("Resposta de leitura inválida.");
+    }
+
+    async function listAgenda({ date, timeZone }) {
+      const payload = await privateRead("/v1/funeral/agenda", { date, time_zone: timeZone });
+      if (!payload?.window || payload.window.date !== date || payload.window.time_zone !== timeZone ||
+          !Array.isArray(payload.items) || !Array.isArray(payload.pending)) {
+        throw invalidReadResponse();
+      }
+      return payload;
+    }
+
+    async function readTitleJSON(response) {
+      // A API envia int64 como números JSON. Preserve os dígitos antes de
+      // formatar centavos e rejeite números inexatos em navegadores antigos.
+      return JSON.parse(await response.text(), (key, value, context) => {
+        if (key !== "amount_cents" || typeof value !== "number") return value;
+        if (/^\d+$/.test(context?.source || "")) return BigInt(context.source);
+        return Number.isSafeInteger(value) ? BigInt(value) : value;
+      });
+    }
+
+    async function listTitles({ status, direction, dueFrom, dueTo, cursor } = {}) {
+      const payload = await privateRead("/v1/finance/titles", {
+        status, direction, due_from: dueFrom, due_to: dueTo, cursor, limit: 50,
+      }, readTitleJSON);
+      if (!Array.isArray(payload?.items) ||
+          payload.items.some((item) => typeof item?.amount_cents !== "bigint" || item.amount_cents < 0n) ||
+          (payload.next_cursor !== undefined && typeof payload.next_cursor !== "string")) {
+        throw invalidReadResponse();
+      }
+      return { items: payload.items, nextCursor: payload.next_cursor || null };
+    }
+
     return {
       configured,
       mode,
@@ -361,6 +407,8 @@
       addRepresentative,
       searchServices,
       searchPriceLists,
+      listAgenda,
+      listTitles,
     };
   }
 

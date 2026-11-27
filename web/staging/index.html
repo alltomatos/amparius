@@ -32,34 +32,56 @@
       <header class="topbar">
         <div>
           <h1 id="screen-title" tabindex="-1">Painel do dia</h1>
-          <p class="muted">Unidade Demonstração · Dados sintéticos</p>
+          <p class="muted" id="store-context">Unidade Demonstração · Dados sintéticos</p>
         </div>
         <p class="status status-loading" id="connection" role="status">Offline simulado</p>
       </header>
 
       <div data-screen="painel">
-        <section class="context-card" aria-labelledby="scenario-title">
-          <div>
-            <h2 id="scenario-title">Estado da estação</h2>
-            <p class="muted">Dados sintéticos. A fila da demonstração é reiniciada ao recarregar.</p>
+        <div id="demo-day">
+          <section class="context-card" aria-labelledby="scenario-title">
+            <div>
+              <h2 id="scenario-title">Estado da estação</h2>
+              <p class="muted">Dados sintéticos. A fila da demonstração é reiniciada ao recarregar.</p>
+            </div>
+          </section>
+
+          <div class="demo-columns">
+            <section class="state-panel demo-section" aria-labelledby="agenda-title">
+              <h2 id="agenda-title">Agenda de hoje</h2>
+              <ul class="demo-agenda">
+                <li><time datetime="09:00">09:00</time> Revisar atendimento de exemplo <span class="muted">Programado</span></li>
+                <li><time datetime="14:00">14:00</time> Conferir fila da estação <span class="muted">Programado</span></li>
+              </ul>
+            </section>
+            <aside class="state-panel demo-section" aria-labelledby="attention-title">
+              <h2 id="attention-title">Precisa de atenção</h2>
+              <p id="pending" role="status">Nenhuma operação registrada.</p>
+              <h3>Assistente contextual</h3>
+              <p>Indisponível na demonstração. Consulte o atendimento e a fila para ver o próximo passo.</p>
+            </aside>
+          </div>
+        </div>
+
+        <section id="private-day" class="state-panel demo-section" aria-labelledby="private-day-title" hidden>
+          <h2 id="private-day-title">Agenda da empresa</h2>
+          <p class="muted" id="private-day-window" hidden></p>
+          <div class="detail-actions">
+            <button type="button" id="private-day-refresh" hidden>Atualizar agenda</button>
+          </div>
+          <p id="private-day-status" role="status" aria-atomic="true"></p>
+          <div id="private-day-results" class="demo-columns" hidden>
+            <section aria-labelledby="private-day-items-title">
+              <h3 id="private-day-items-title">Agendamentos</h3>
+              <ul id="private-day-items" class="store-list"></ul>
+            </section>
+            <section aria-labelledby="private-day-pending-title">
+              <h3 id="private-day-pending-title">Pendências de confirmação</h3>
+              <p id="private-day-pending-empty" hidden>Nenhuma confirmação pendente.</p>
+              <ul id="private-day-pending" class="store-list"></ul>
+            </section>
           </div>
         </section>
-
-        <div class="demo-columns">
-          <section class="state-panel demo-section" aria-labelledby="agenda-title">
-            <h2 id="agenda-title">Agenda de hoje</h2>
-            <ul class="demo-agenda">
-              <li><time datetime="09:00">09:00</time> Revisar atendimento de exemplo <span class="muted">Programado</span></li>
-              <li><time datetime="14:00">14:00</time> Conferir fila da estação <span class="muted">Programado</span></li>
-            </ul>
-          </section>
-          <aside class="state-panel demo-section" aria-labelledby="attention-title">
-            <h2 id="attention-title">Precisa de atenção</h2>
-            <p id="pending" role="status">Nenhuma operação registrada.</p>
-            <h3>Assistente contextual</h3>
-            <p>Indisponível na demonstração. Consulte o atendimento e a fila para ver o próximo passo.</p>
-          </aside>
-        </div>
       </div>
 
       <section class="state-panel demo-section" data-screen="atendimento" aria-labelledby="attendance-title" hidden>
@@ -157,8 +179,61 @@
       </section>
 
       <section class="state-panel demo-section" data-screen="financeiro" hidden>
-        <h2>Contas a receber e caixa</h2>
-        <p>A consulta de títulos, as baixas e o caixa aguardam integração autorizada com a API financeira.</p>
+        <div id="demo-finance">
+          <h2>Contas a receber e caixa</h2>
+          <p>A consulta de títulos, as baixas e o caixa aguardam integração autorizada com a API financeira.</p>
+        </div>
+        <div id="private-finance" hidden>
+          <h2>Títulos financeiros</h2>
+          <p class="muted">Escopo do grupo econômico. Inclui as empresas vinculadas ao mesmo tenant.</p>
+          <form id="private-title-filters" hidden>
+            <div class="store-fields">
+              <label>Situação
+                <select id="private-title-status">
+                  <option value="">Todas</option>
+                  <option value="open">Em aberto</option>
+                  <option value="partially_paid">Parcialmente pago</option>
+                  <option value="paid">Pago</option>
+                  <option value="cancelled">Cancelado</option>
+                </select>
+              </label>
+              <label>Direção
+                <select id="private-title-direction">
+                  <option value="">Todas</option>
+                  <option value="receivable">A receber</option>
+                  <option value="payable">A pagar</option>
+                </select>
+              </label>
+              <label>Vencimento a partir de (inclusive)
+                <input type="date" id="private-title-due-from">
+              </label>
+              <label>Vencimento até (inclusive)
+                <input type="date" id="private-title-due-to">
+              </label>
+            </div>
+            <div class="detail-actions">
+              <button type="submit">Aplicar filtros</button>
+            </div>
+          </form>
+          <p id="private-title-result-status" role="status" aria-atomic="true"></p>
+          <div id="private-title-results" class="store-table" role="region" aria-label="Títulos por vencimento" tabindex="0" hidden>
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Título</th>
+                  <th scope="col">Vencimento</th>
+                  <th scope="col">Direção</th>
+                  <th scope="col">Valor</th>
+                  <th scope="col">Situação</th>
+                </tr>
+              </thead>
+              <tbody id="private-title-rows"></tbody>
+            </table>
+          </div>
+          <div class="detail-actions">
+            <button type="button" id="private-title-next" hidden>Próxima página</button>
+          </div>
+        </div>
       </section>
 
       <section class="state-panel demo-section" data-screen="fiscal" hidden>
@@ -178,7 +253,7 @@
           <button type="button" id="connect">Simular reconexão</button>
           <button type="button" id="sync" disabled>Simular sincronização</button>
         </div>
-        <p>Nenhuma conexão com o relay é usada nesta demonstração.</p>
+        <p>A fila de demonstração é simulada. Sincronização real com o relay não está disponível nesta tela.</p>
         <p><a href="#atendimento">Abrir atendimento</a></p>
       </section>
       <p id="feedback" class="demo-feedback" role="status" aria-atomic="true"></p>

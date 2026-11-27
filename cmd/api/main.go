@@ -119,10 +119,13 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 	var partiesHandler http.Handler
 	var deceasedHandler http.Handler
 	var familyLinksHandler http.Handler
+	var legalEntitiesHandler http.Handler
 	var catalogHandler http.Handler
 	var financeHandler http.Handler
 	var funeralHandler http.Handler
 	var authenticatedRoutes []httpserver.AuthenticatedRoute
+	// Inject the approved tenant privacy policy when a provider is available.
+	var policyProvider audit.PolicyProvider
 	if devOnboardingEnabled {
 		database, err := db.New(ctx, cfg.PostgresDSN)
 		if err != nil {
@@ -146,6 +149,8 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 		partiesHandler = party.NewDevelopmentHTTPHandler(partyRepository)
 		deceasedHandler = party.NewDevelopmentDeceasedHTTPHandler(partyRepository)
 		familyLinksHandler = party.NewDevelopmentFamilyLinkHTTPHandler(partyRepository)
+		legalEntitiesHandler = party.NewDevelopmentLegalEntityHTTPHandler(partyRepository)
+		authenticatedRoutes = append(authenticatedRoutes, party.LegalEntityAuthenticatedRoutes(partyRepository, policyProvider)...)
 
 		catalogRepository, err := catalog.NewRepository(database)
 		if err != nil {
@@ -270,8 +275,6 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 		authenticatedRoutes = append(authenticatedRoutes, funeral.AuthenticatedRoutes(funeralRepository)...)
 
 		partyHandler := party.NewProductionHTTPHandler(partyRepository)
-		// A política aprovada por tenant será injetada quando houver um provedor.
-		var policyProvider audit.PolicyProvider
 		deceasedHandler := party.NewProductionDeceasedHTTPHandler(partyRepository, policyProvider)
 		familyLinkHandler := party.NewProductionFamilyLinkHTTPHandler(partyRepository, policyProvider)
 		authenticatedRoutes = append(authenticatedRoutes,
@@ -282,6 +285,7 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 			httpserver.AuthenticatedRoute{Pattern: "POST /v1/deceased/{deceasedId}/family-links", Permission: platformauth.PermissionPartyWrite, Handler: http.HandlerFunc(familyLinkHandler.Create)},
 			httpserver.AuthenticatedRoute{Pattern: "GET /v1/family-links/{id}", Permission: platformauth.PermissionPartyRead, Handler: http.HandlerFunc(familyLinkHandler.Get)},
 		)
+		authenticatedRoutes = append(authenticatedRoutes, party.LegalEntityAuthenticatedRoutes(partyRepository, policyProvider)...)
 	}
 
 	handler := httpserver.New(logger, httpserver.Options{
@@ -289,15 +293,16 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger) (
 		// O provedor OIDC/MFA ainda não foi escolhido nem conectado ao
 		// bootstrap. Não usar um autenticador sintético aqui: auth.Require
 		// deve devolver 503 nas rotas autenticadas até essa configuração.
-		AuthenticatedRoutes:    authenticatedRoutes,
-		DevelopmentMode:        devOnboardingEnabled,
-		DevelopmentOnboarding:  onboardingHandler,
-		DevelopmentParties:     partiesHandler,
-		DevelopmentDeceased:    deceasedHandler,
-		DevelopmentFamilyLinks: familyLinksHandler,
-		DevelopmentCatalog:     catalogHandler,
-		DevelopmentFinance:     financeHandler,
-		DevelopmentFuneral:     funeralHandler,
+		AuthenticatedRoutes:      authenticatedRoutes,
+		DevelopmentMode:          devOnboardingEnabled,
+		DevelopmentOnboarding:    onboardingHandler,
+		DevelopmentParties:       partiesHandler,
+		DevelopmentDeceased:      deceasedHandler,
+		DevelopmentFamilyLinks:   familyLinksHandler,
+		DevelopmentLegalEntities: legalEntitiesHandler,
+		DevelopmentCatalog:       catalogHandler,
+		DevelopmentFinance:       financeHandler,
+		DevelopmentFuneral:       funeralHandler,
 	}).Handler()
 
 	return handler, closeAll, nil

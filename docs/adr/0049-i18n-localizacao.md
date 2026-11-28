@@ -10,7 +10,7 @@ multilíngue na interface (web, painel SaaS/manager e cliente desktop Rust),
 nos textos de erro e nas comunicações (e-mail, documentos não fiscais).
 
 Isso **não** afeta o núcleo fiscal: NFS-e, NF-e, DANFE, DPS e os XMLs oficiais
-continuam em português do Brasil, por obrigação legal (ver AGENTS.md §1 e §6,
+continuam em português do Brasil, por obrigação legal (ver AGENTS.md §2.1 e §6,
 ADR 0010, ADR 0031). i18n é uma camada de interface e mensageria, nunca do
 documento fiscal.
 
@@ -124,7 +124,7 @@ não derivam do locale.
   correspondente em PT-PT/ES) ou recebem nota explicativa traduzida ao lado
   do termo técnico intacto — a decisão fica na Lacuna 1.
 - Nenhum valor fiscal (alíquota, prazo, CST) é "estimado" para exibir em
-  outro idioma; a fronteira de AGENTS.md §1 vale também aqui.
+  outro idioma; a fronteira de AGENTS.md §2.1 vale também aqui.
 
 ### 6. Conteúdo cadastrado pelo usuário
 
@@ -149,13 +149,13 @@ não derivam do locale.
 
 - Catálogos de tradução (JSON ICU) são **empacotados no cliente** (desktop e
   relay), nunca buscados em runtime; isso preserva "a operação não para"
-  (AGENTS.md §4) mesmo sem rede.
+  (AGENTS.md §2.4) mesmo sem rede.
 - Catálogo carrega uma **versão** própria (`catalog_version`, semver),
   independente da versão do binário, para permitir atualizar textos sem
   recompilar; o relay valida compatibilidade de versão do catálogo no
   startup e usa o catálogo embutido mais recente disponível localmente se o
   servidor estiver inacessível.
-- O **snapshot assinado** do relay (ADR 0022, ADR 0046) nunca carrega texto
+- O **snapshot assinado** do relay (ADR 0022; ADR 0046, número a confirmar no merge) nunca carrega texto
   traduzido: carrega dado estruturado (códigos, ids, valores); a tradução
   acontece inteiramente no cliente, a partir do catálogo local. Isso evita
   que o snapshot cresça com N cópias de string por locale e mantém a
@@ -223,7 +223,7 @@ não derivam do locale.
   traduzir, e teria custo/risco de IA sem necessidade comprovada nesta
   fase.
 - **Buscar catálogo de tradução em runtime (CDN/API)**: descartado para o
-  relay/desktop por violar AGENTS.md §4 (operação não para sem rede);
+  relay/desktop por violar AGENTS.md §2.4 (operação não para sem rede);
   também descartado para o backend Go por adicionar I/O e falha evitável a
   um caminho crítico.
 

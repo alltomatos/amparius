@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/alltomatos/amparius/internal/platform/auth"
+	"github.com/alltomatos/amparius/internal/platform/observability"
 	"github.com/alltomatos/amparius/internal/platform/readiness"
 )
 
@@ -116,6 +117,15 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) routes(options Options) {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
+	// Fallback de /v1/auth/*: sem o emissor próprio de tenant configurado (ou
+	// com ele parcialmente indisponível, ver buildTenantAuthentication em
+	// cmd/api), nenhuma PublicRoute/SelfServiceRoute específica é registrada
+	// e esta rota menos específica responde 503 em vez do 404 padrão do mux —
+	// nunca um "rota inexistente" quando o motivo real é autenticação fora do
+	// ar (correção #3 do parecer do Analista sobre AUTH-01B). Uma rota exata
+	// com método (ex.: "POST /v1/auth/login") sempre tem precedência sobre
+	// esta quando registrada.
+	s.mux.HandleFunc("/v1/auth/", s.handleAuthUnavailable)
 	for _, route := range options.AuthenticatedRoutes {
 		if route.Pattern == "" || route.Handler == nil {
 			continue
@@ -205,6 +215,17 @@ func (s *Server) routes(options Options) {
 		s.mux.Handle("/_dev/funeral/schedules/{id}/cancel", options.DevelopmentFuneral)
 		s.mux.Handle("/_dev/funeral/contracts/{id}/schedules", options.DevelopmentFuneral)
 	}
+}
+
+// handleAuthUnavailable é o fallback de /v1/auth/* quando nenhuma rota mais
+// específica foi registrada (ver routes()).
+func (s *Server) handleAuthUnavailable(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+		"code":    "AUTHENTICATION_UNAVAILABLE",
+		"message": "autenticação indisponível",
+		"details": map[string]any{},
+		"traceId": observability.TraceIDFromContext(r.Context()),
+	})
 }
 
 // handleHealthz é o liveness probe: processo vivo responde 200.

@@ -17,13 +17,18 @@ import (
 
 const maxAuthBodyBytes = 4 << 10
 
-type loginHandler struct{ service *LoginService }
+type loginHandler struct {
+	service *LoginService
+	trusted *TrustedProxies
+}
 
 // PublicLoginRoutes monta as rotas de /v1/auth que não exigem autenticação
 // (o corpo é quem carrega a credencial). O handler valida tudo: nenhuma rota
-// aqui aceita tenant/escopo vindo de header.
-func PublicLoginRoutes(service *LoginService) []httpserver.PublicRoute {
-	h := loginHandler{service: service}
+// aqui aceita tenant/escopo vindo de header. trusted restringe quando o IP
+// usado no rate-limit de login (clientIPFrom) pode vir de X-Forwarded-For em
+// vez de RemoteAddr; nil/vazio ignora sempre o cabeçalho.
+func PublicLoginRoutes(service *LoginService, trusted *TrustedProxies) []httpserver.PublicRoute {
+	h := loginHandler{service: service, trusted: trusted}
 	return []httpserver.PublicRoute{
 		{Pattern: "POST /v1/auth/login", Handler: h.available(h.login)},
 		{Pattern: "POST /v1/auth/refresh", Handler: h.available(h.refresh)},
@@ -81,7 +86,7 @@ func (h loginHandler) login(w http.ResponseWriter, r *http.Request) {
 		writeAuthProductionError(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "corpo inválido")
 		return
 	}
-	result, err := h.service.Login(r.Context(), payload.Email, payload.Password, companyID, clientIPFrom(r))
+	result, err := h.service.Login(r.Context(), payload.Email, payload.Password, companyID, clientIPFrom(r, h.trusted))
 	if err != nil {
 		writeAuthServiceError(w, r, err)
 		return
@@ -319,15 +324,26 @@ func decodeAuthBody[T any](w http.ResponseWriter, r *http.Request) (T, error) {
 	return result, nil
 }
 
-func clientIPFrom(r *http.Request) string {
-	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
-		if first, _, ok := strings.Cut(forwarded, ","); ok {
-			return strings.TrimSpace(first)
+// clientIPFrom devolve o IP usado só para o rate-limit em memória do login
+// (identity.rateLimiter), nunca para decisão de negócio. Por padrão
+// (trusted nil/vazio) ignora X-Forwarded-For e usa sempre RemoteAddr: o
+// cabeçalho é informado pelo próprio chamador HTTP, e sem uma allowlist de
+// proxies confiáveis um cliente poderia forjar qualquer IP para escapar do
+// limite por IP+e-mail (correção #2 do parecer do Analista sobre AUTH-01B).
+// Só quando o peer imediato está na allowlist o primeiro valor do cabeçalho
+// (o salto mais próximo do cliente) é usado.
+func clientIPFrom(r *http.Request, trusted *TrustedProxies) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if trusted.trusts(net.ParseIP(host)) {
+		if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+			if first, _, ok := strings.Cut(forwarded, ","); ok {
+				return strings.TrimSpace(first)
+			}
+			return forwarded
 		}
-		return forwarded
 	}
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return host
-	}
-	return r.RemoteAddr
+	return host
 }

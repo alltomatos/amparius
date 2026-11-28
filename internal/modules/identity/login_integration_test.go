@@ -577,6 +577,40 @@ func TestAUTH01BLoginAuditNeverPersistsPII(t *testing.T) {
 	}
 }
 
+// TestAUTH01BLoginPendingAuthIsReachableViaLogin cobre a correção #1 do
+// parecer do Analista sobre AUTH-01B: um candidato único ainda em
+// pending_auth (bootstrap não concluído, sem password_hash) deve devolver
+// ErrAccountPendingAuth através do próprio Login(), em vez de cair sempre no
+// hash decoy e devolver ErrInvalidCredentials — o que tornava o critério de
+// aceite 1 do ADR 0048 inalcançável na prática.
+func TestAUTH01BLoginPendingAuthIsReachableViaLogin(t *testing.T) {
+	f := newLoginFixture(t)
+	owner := f.onboard(t, "auth01b-pending-auth-"+uuid.NewString())
+
+	_, err := f.service.Login(f.ctx, "owner.dev@amparius.invalid", "qualquer-senha", owner.CompanyID, "198.51.100.50")
+	if !errors.Is(err, identity.ErrAccountPendingAuth) {
+		t.Fatalf("candidato pending_auth deveria devolver ErrAccountPendingAuth, obtido %v", err)
+	}
+
+	ctxTenant := db.WithTenant(f.ctx, owner.TenantID)
+	var result string
+	if err := f.database.WithTenantTx(ctxTenant, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT result FROM identity.login_audit WHERE user_id = $1 ORDER BY at DESC LIMIT 1`, owner.OwnerUserID).Scan(&result)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if result != string(identity.LoginAuditPendingAuth) {
+		t.Fatalf("auditoria do login pending_auth = %q, esperado %q", result, identity.LoginAuditPendingAuth)
+	}
+
+	// Depois de concluir o bootstrap, o mesmo e-mail autentica normalmente —
+	// o desvio de pending_auth não deixa a conta presa.
+	session := f.activate(t, owner, "Pending-Auth-Fix-888!")
+	if session.UserID != owner.OwnerUserID || session.CompanyID != owner.CompanyID {
+		t.Fatalf("sessão de bootstrap após o desvio pending_auth inesperada: %+v", session)
+	}
+}
+
 // TestAUTH01BLoginLatencyP95 mede a latência de POST /v1/auth/login (caminho
 // de sucesso, um único candidato) contra o Postgres descartável, para a
 // evidência de performance exigida em docs/qa/auth-01b-evidencias.md. Cada

@@ -105,6 +105,21 @@ func (s *LoginService) Login(ctx context.Context, email, password string, compan
 		return SessionResult{}, ErrInvalidCredentials
 	}
 
+	// Único candidato com bootstrap pendente: identity.complete_credential
+	// grava password_hash e status 'active' na mesma transação (migration
+	// 0041), então um candidato pending_auth tem sempre hash vazio e o laço de
+	// senha abaixo nunca teria um match real contra ele — sem este desvio
+	// antes do laço, a conta cai sempre no caminho de credenciais inválidas e
+	// ACCOUNT_PENDING_AUTH (critério de aceite 1 do ADR 0048) nunca é
+	// alcançável. Só se aplica com exatamente um candidato: com N>1 a condição
+	// de ambiguidade entre tenants do ADR 0048 §5 continua intacta, já que um
+	// candidato pending_auth nunca pode ser o resolvido por senha correta.
+	if len(candidates) == 1 && candidates[0].Status == "pending_auth" {
+		ctxTenant := db.WithTenant(ctx, candidates[0].TenantID)
+		_ = s.repo.WriteLoginAudit(ctxTenant, candidates[0].UserID, LoginAuditPendingAuth)
+		return SessionResult{}, ErrAccountPendingAuth
+	}
+
 	matchIdx := -1
 	var rehash *PasswordRehash
 	for i, candidate := range candidates {

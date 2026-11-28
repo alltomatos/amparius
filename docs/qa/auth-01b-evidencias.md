@@ -196,6 +196,141 @@ força bruta); não inclui rede/TLS de um ambiente real, nem o rate-limiter
 em memória (que é O(1) por chamada). O teste falha se o p95 superar 500 ms
 nesse ambiente de teste.
 
+## Correções do parecer do Analista (AUTH-01B aprovado com 3 demandas)
+
+PR #106 (mesma branch `feat/auth-01b-backend`, base `92eb0da`). As 3 demandas
+abaixo foram corrigidas sem reabrir escopo; nenhuma migração nova foi
+necessária (código Go apenas).
+
+1. **`ACCOUNT_PENDING_AUTH` inalcançável via `Login()`** —
+   `identity.complete_credential` (migração 0041) grava `password_hash` e
+   `status = 'active'` na mesma transação, então um candidato ainda
+   `pending_auth` tem sempre `password_hash` vazio. O laço de verificação de
+   senha em `Login()` nunca tinha um match real contra esse candidato e caía
+   sempre no hash-decoy, devolvendo `ErrInvalidCredentials` em vez de
+   `ErrAccountPendingAuth` — o critério de aceite 1 do ADR 0048 nunca era
+   alcançável na prática. Corrigido em
+   `internal/modules/identity/login_service.go`: quando há exatamente um
+   candidato (`len(candidates) == 1`) e ele está `pending_auth`, `Login()`
+   devolve `403 ACCOUNT_PENDING_AUTH` (via `ErrAccountPendingAuth`) antes do
+   laço de senha, gravando a auditoria `pending_auth`. Com `N>1` candidatos a
+   ambiguidade entre tenants do ADR 0048 §5 continua intacta — um candidato
+   `pending_auth` nunca pode ser o resolvido por senha correta nesse caminho,
+   então não há regressão na proteção multi-tenant.
+   **Enumeração**: devolver um código distinto para `pending_auth` revela que
+   a conta existe mas não concluiu o bootstrap. Isso **já é um risco residual
+   aceito e documentado** pelo desenho original, não uma nova decisão desta
+   correção: `docs/contracts/auth-login-v1.md` (linha 78) já descreve
+   `ACCOUNT_PENDING_AUTH` como "usuário existe mas não concluiu bootstrap
+   (ADR 0048 §12)", e `docs/adr/0048-auth-emissor-proprio-login.md` (linhas
+   195-202) registra esse enumeração como "risco residual registrado, não
+   eliminado por desenho"; o critério de aceite 1 do ADR (linhas 424-430)
+   exige explicitamente que contas `pending_auth` "sejam recusadas com código
+   distinto". Esta correção apenas restaura o comportamento já especificado
+   — não amplia a superfície de enumeração além do que o ADR/contrato já
+   aceitam. Teste de integração novo:
+   `TestAUTH01BLoginPendingAuthIsReachableViaLogin`
+   (`internal/modules/identity/login_integration_test.go`), cobrindo o
+   caminho via `Login()` e a auditoria `pending_auth`, mais a confirmação de
+   que o mesmo e-mail autentica normalmente após `CompleteBootstrap`.
+
+2. **`clientIPFrom` confiava em `X-Forwarded-For` sem allowlist** — o
+   cabeçalho é informado pelo próprio chamador HTTP; sem uma lista de
+   proxies confiáveis, qualquer cliente podia forjar o IP usado no
+   rate-limit de login (20/15min por IP+e-mail) só enviando o cabeçalho, e
+   assim escapar do limite. Corrigido com o novo tipo `TrustedProxies`
+   (`internal/modules/identity/trusted_proxies.go`): só confia no primeiro
+   salto de `X-Forwarded-For` quando o peer TCP imediato (`RemoteAddr`) está
+   em uma allowlist de CIDRs; vazio/nil (padrão) ignora o cabeçalho sempre e
+   usa `RemoteAddr`. Nova configuração opcional `AUTH_TRUSTED_PROXY_CIDRS`
+   (lista separada por vírgulas, validada com `net.ParseCIDR` em
+   `config.validate()` — CIDR inválido falha o boot, nunca falha em tempo de
+   requisição) em `internal/platform/config/config.go`; sem a variável, o
+   comportamento é idêntico ao anterior à correção (ignora o cabeçalho).
+   **Limitação documentada**: esta fatia não tem nenhum proxy reverso real
+   configurado em produção — `AUTH_TRUSTED_PROXY_CIDRS` fica vazio por
+   padrão até que exista um load balancer/proxy TLS-terminator documentado
+   na frente da API; até então, o rate-limit de login sempre usa o IP do
+   peer TCP direto, o que é seguro mas pode agrupar vários usuários atrás de
+   um único NAT/proxy não configurado sob o mesmo IP. Testes unitários
+   novos: `TestClientIPFromIgnoresForwardedHeaderWithoutTrustedProxy`,
+   `TestClientIPFromIgnoresForwardedHeaderFromUntrustedPeer`,
+   `TestClientIPFromTrustsForwardedHeaderFromAllowlistedProxy`,
+   `TestClientIPFromFallsBackToRemoteAddrWithoutHeader`,
+   `TestNewTrustedProxiesRejectsInvalidCIDR`
+   (`internal/modules/identity/trusted_proxies_test.go`, `package identity`
+   para acessar `clientIPFrom`/`TrustedProxies` não exportados).
+
+3. **Boot parcial quando a chave de assinatura existe mas RBAC/autenticador
+   falham** — em `buildTenantAuthentication` (`cmd/api/main.go`), com a
+   chave de assinatura presente mas `platformauth.DefaultRolePolicy()` ou
+   `platformauth.NewService(...)` falhando, o código anterior devolvia
+   `loginService` não-nil mesmo sem `authenticator`: login/refresh/bootstrap
+   continuavam funcionando enquanto logout/revoke/invite ficavam 503 por
+   `Authenticator` nil — um estado parcial inconsistente. Corrigido para
+   devolver `nil, nil` nos dois ramos de falha, logando um alerta claro (sem
+   segredo) antes de cada retorno. Como consequência, nenhuma
+   `PublicRoute`/`AuthenticatedRoute` de `/v1/auth/*` é registrada nesse
+   estado; adicionado um fallback `s.mux.HandleFunc("/v1/auth/",
+   s.handleAuthUnavailable)` em `internal/platform/http/server.go`
+   (`AUTHENTICATION_UNAVAILABLE`, 503) para que todo `/v1/auth/*`
+   inteiramente indisponível responda 503 — nunca parcialmente de pé — em
+   qualquer um dos dois casos (sem chave de assinatura alguma, ou com chave
+   presente e RBAC/autenticador quebrado). Rotas exatas com método (ex.:
+   `POST /v1/auth/login`) continuam tendo precedência sobre o fallback
+   quando registradas e funcionando (regra de especificidade do
+   `net/http.ServeMux` do Go 1.22+). Cobertura: gate geral de
+   build/vet/test; sem teste dedicado adicional, já que simular falha de
+   `platformauth.NewService` exigiria injetar uma falha interna da
+   biblioteca de auth fora do escopo desta correção.
+
+### `go test ./... -count=1 -p 1` com as 3 correções (container reconstruído do zero)
+
+```
+ok  	github.com/alltomatos/amparius/cmd/api	10.826s
+ok  	github.com/alltomatos/amparius/cmd/worker	1.369s
+ok  	github.com/alltomatos/amparius/internal/modules/catalog	2.878s
+ok  	github.com/alltomatos/amparius/internal/modules/controlplane	0.622s
+ok  	github.com/alltomatos/amparius/internal/modules/entitlement	3.053s
+ok  	github.com/alltomatos/amparius/internal/modules/finance	2.778s
+ok  	github.com/alltomatos/amparius/internal/modules/fiscal	4.217s
+ok  	github.com/alltomatos/amparius/internal/modules/fiscal/nfse	2.688s
+ok  	github.com/alltomatos/amparius/internal/modules/funeral	5.950s
+ok  	github.com/alltomatos/amparius/internal/modules/identity	12.385s
+ok  	github.com/alltomatos/amparius/internal/modules/outbox	5.006s
+ok  	github.com/alltomatos/amparius/internal/modules/party	12.825s
+ok  	github.com/alltomatos/amparius/internal/platform/audit	0.570s
+ok  	github.com/alltomatos/amparius/internal/platform/auth	1.947s
+ok  	github.com/alltomatos/amparius/internal/platform/config	0.980s
+ok  	github.com/alltomatos/amparius/internal/platform/erros	0.961s
+ok  	github.com/alltomatos/amparius/internal/platform/http	2.928s
+ok  	github.com/alltomatos/amparius/internal/platform/log	1.051s
+ok  	github.com/alltomatos/amparius/internal/platform/observability	1.316s
+ok  	github.com/alltomatos/amparius/internal/platform/readiness	0.265s
+```
+
+Zero regressões. `go build ./...` e `go vet ./...` seguem limpos (sem saída,
+exit 0).
+
+### Testes novos desta correção (`-v`, contra o mesmo Postgres descartável)
+
+```
+=== RUN   TestClientIPFromIgnoresForwardedHeaderWithoutTrustedProxy
+--- PASS: TestClientIPFromIgnoresForwardedHeaderWithoutTrustedProxy (0.00s)
+=== RUN   TestClientIPFromIgnoresForwardedHeaderFromUntrustedPeer
+--- PASS: TestClientIPFromIgnoresForwardedHeaderFromUntrustedPeer (0.00s)
+=== RUN   TestClientIPFromTrustsForwardedHeaderFromAllowlistedProxy
+--- PASS: TestClientIPFromTrustsForwardedHeaderFromAllowlistedProxy (0.00s)
+=== RUN   TestClientIPFromFallsBackToRemoteAddrWithoutHeader
+--- PASS: TestClientIPFromFallsBackToRemoteAddrWithoutHeader (0.00s)
+=== RUN   TestNewTrustedProxiesRejectsInvalidCIDR
+--- PASS: TestNewTrustedProxiesRejectsInvalidCIDR (0.00s)
+=== RUN   TestAUTH01BLoginPendingAuthIsReachableViaLogin
+--- PASS: TestAUTH01BLoginPendingAuthIsReachableViaLogin (0.46s)
+PASS
+ok  	github.com/alltomatos/amparius/internal/modules/identity	0.743s
+```
+
 ## Desvios do ADR/contrato nesta fatia
 
 - **MFA/OIDC de plataforma**: fora de escopo (AUTH-01A). `MFAPolicyDisabled`

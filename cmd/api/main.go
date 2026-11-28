@@ -353,7 +353,15 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger, m
 	var publicRoutes []httpserver.PublicRoute
 	var selfServiceRoutes []httpserver.AuthenticatedRoute
 	if loginService != nil {
-		publicRoutes = identity.PublicLoginRoutes(loginService)
+		trustedProxies, err := identity.NewTrustedProxies(cfg.AuthTrustedProxyCIDRs)
+		if err != nil {
+			// config.validate() já rejeita CIDR inválido no boot; chegar aqui
+			// indica um bug de validação, não um AUTH_TRUSTED_PROXY_CIDRS do
+			// operador. Falha fechado para o lado seguro (ignora o cabeçalho).
+			logger.Warn("AUTH_TRUSTED_PROXY_CIDRS inválido após validação do boot, X-Forwarded-For será sempre ignorado no rate-limit de login", "erro", err)
+			trustedProxies = nil
+		}
+		publicRoutes = identity.PublicLoginRoutes(loginService, trustedProxies)
 		selfServiceRoutes = identity.SelfServiceLoginRoutes(loginService)
 		authenticatedRoutes = append(authenticatedRoutes, identity.InviteRoutes(loginService)...)
 	}
@@ -411,13 +419,19 @@ func buildTenantAuthentication(cfg config.Config, repository *identity.Repositor
 	loginService := identity.NewLoginService(repository, issuer)
 	policy, err := platformauth.DefaultRolePolicy()
 	if err != nil {
-		logger.Warn("política RBAC padrão indisponível, rotas autenticadas de tenant respondem 503")
-		return nil, loginService
+		// Devolve loginService nil também: com a chave presente mas a política
+		// RBAC indisponível, manter só login/refresh/bootstrap funcionando
+		// (PublicRoutes) enquanto logout/revoke/invite ficam 503 por
+		// Authenticator nil seria um boot parcial inconsistente. Correção #3
+		// do parecer do Analista: /v1/auth/* fica inteiramente 503 (fallback
+		// em httpserver, ver routes()) neste estado, nunca parcialmente de pé.
+		logger.Warn("política RBAC padrão indisponível com chave de assinatura presente, /v1/auth/* inteiro responde 503 em vez de um boot parcial")
+		return nil, nil
 	}
 	authenticator, err := platformauth.NewService(issuer, nil, repository, repository, policy, logger, platformauth.MFAPolicyDisabled)
 	if err != nil {
-		logger.Warn("autenticador de tenant indisponível, rotas autenticadas de tenant respondem 503")
-		return nil, loginService
+		logger.Warn("autenticador de tenant indisponível com chave de assinatura presente, /v1/auth/* inteiro responde 503 em vez de um boot parcial")
+		return nil, nil
 	}
 	return authenticator, loginService
 }

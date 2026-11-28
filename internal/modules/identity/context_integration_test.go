@@ -61,9 +61,8 @@ func TestListUserCompaniesUsesPersistedScopeAndRLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	tenantIDs = append(tenantIDs, first.TenantID, second.TenantID)
-	if _, err := adminPool.Exec(ctx, `INSERT INTO identity.user_company (tenant_id, user_id, company_id) VALUES ($1, $2, $3)`, first.TenantID, first.OwnerUserID, first.CompanyID); err != nil {
-		t.Fatal(err)
-	}
+	// identity.create_onboarding (migration 0042) já vincula o owner à empresa
+	// sede em identity.user_company; nenhum INSERT manual é necessário aqui.
 
 	page, err := repository.ListUserCompanies(db.WithTenant(ctx, first.TenantID), first.OwnerUserID, "", 10)
 	if err != nil {

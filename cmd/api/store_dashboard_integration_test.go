@@ -70,7 +70,8 @@ func TestStoreDashboardHTTPPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 		exec(cellAdmin, `UPDATE identity.app_user SET auth_subject=$1,status='active',mfa_enabled=true WHERE id=$2`, token, result.OwnerUserID)
-		exec(cellAdmin, `INSERT INTO identity.user_company (tenant_id,user_id,company_id) VALUES ($1,$2,$3)`, result.TenantID, result.OwnerUserID, result.CompanyID)
+		// identity.create_onboarding (migration 0042) já vincula o owner à
+		// empresa sede em identity.user_company; nenhum INSERT manual é necessário.
 		return auth.OIDCIdentity{Issuer: "store79", Subject: token, TenantID: result.TenantID, CompanyID: result.CompanyID}, result.OwnerUserID
 	}
 	a, userA := onboard("a")

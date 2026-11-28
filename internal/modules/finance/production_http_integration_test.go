@@ -114,9 +114,8 @@ func TestFinanceProductionHTTPPostgres(t *testing.T) {
 		if _, err := admin.Exec(ctx, `UPDATE identity.app_user SET auth_subject=$1, status='active', mfa_enabled=true WHERE id=$2`, subject, result.OwnerUserID); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := admin.Exec(ctx, `INSERT INTO identity.user_company (tenant_id, user_id, company_id) VALUES ($1,$2,$3)`, result.TenantID, result.OwnerUserID, result.CompanyID); err != nil {
-			t.Fatal(err)
-		}
+		// identity.create_onboarding (migration 0042) já vincula o owner à
+		// empresa sede em identity.user_company; nenhum INSERT manual é necessário.
 		if role == "auditor" {
 			if _, err := admin.Exec(ctx, `UPDATE identity.role SET code='auditor' WHERE tenant_id=$1 AND code='owner'`, result.TenantID); err != nil {
 				t.Fatal(err)

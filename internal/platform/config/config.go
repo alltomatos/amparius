@@ -57,6 +57,18 @@ type Config struct {
 	ObjectStorageAccessKey    string
 	ObjectStorageSecretKey    string
 	ObjectStorageUsePathStyle bool
+
+	// AuthSigningKeySeed/AuthSigningKeyID e os campos "Previous" alimentam o
+	// EnvKeyProvider de desenvolvimento/teste do emissor próprio de tenant
+	// (ADR 0048 Lacuna 5: produção depende de um cofre/KMS real, fora desta
+	// fatia). Ausentes, o autenticador do tenant fica nil e as rotas de
+	// /v1/auth respondem 503 — nunca ficam propositalmente de fora de
+	// validate(), para não impedir o boot sem a chave em ambientes que ainda
+	// não precisam de autenticação de tenant.
+	AuthSigningKeySeed         string
+	AuthSigningKeyID           string
+	AuthPreviousSigningKeySeed string
+	AuthPreviousSigningKeyID   string
 }
 
 // Load lê a configuração do ambiente do processo.
@@ -112,6 +124,11 @@ func LoadFrom(lookup LookupFunc) (Config, error) {
 		ObjectStorageAccessKey:    text(lookup, "OBJECT_STORAGE_ACCESS_KEY", ""),
 		ObjectStorageSecretKey:    text(lookup, "OBJECT_STORAGE_SECRET_KEY", ""),
 		ObjectStorageUsePathStyle: usePathStyle,
+
+		AuthSigningKeySeed:         text(lookup, "AUTH_SIGNING_KEY_SEED", ""),
+		AuthSigningKeyID:           text(lookup, "AUTH_SIGNING_KEY_ID", ""),
+		AuthPreviousSigningKeySeed: text(lookup, "AUTH_PREVIOUS_SIGNING_KEY_SEED", ""),
+		AuthPreviousSigningKeyID:   text(lookup, "AUTH_PREVIOUS_SIGNING_KEY_ID", ""),
 	}
 
 	if err := cfg.validate(); err != nil {

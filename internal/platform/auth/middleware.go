@@ -66,6 +66,46 @@ func Require(gate Gate, permission Permission, logger *slog.Logger) func(http.Ha
 	}
 }
 
+// RequireAuthenticated protege uma rota de autosserviço de sessão
+// (logout/revoke) exigindo apenas autenticação + MFA + escopo tenant/empresa,
+// sem checar uma Permission de negócio: nenhum papel padrão concede uma
+// permissão comum a owner/admin/manager/operator/auditor simultaneamente, e
+// gatear o próprio logout por RBAC de negócio seria semanticamente errado.
+func RequireAuthenticated(gate Gate, logger *slog.Logger) func(http.Handler) http.Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if gate == nil {
+				logDecision(logger, r, "", "unavailable")
+				writeAuthError(w, r, http.StatusServiceUnavailable, "AUTHENTICATION_UNAVAILABLE", "autenticação indisponível")
+				return
+			}
+			principal, err := gate.Authenticate(r.Context(), r.Header.Get("Authorization"))
+			if err != nil {
+				status, code, message := authenticationError(err)
+				logDecision(logger, r, "", code)
+				if status == http.StatusUnauthorized {
+					w.Header().Set("WWW-Authenticate", `Bearer realm="amparius"`)
+				}
+				writeAuthError(w, r, status, code, message)
+				return
+			}
+			if principal.Subject == "" || principal.TenantID == uuid.Nil || principal.CompanyID == uuid.Nil || !principal.MFAAuthenticated {
+				logDecision(logger, r, "", "SCOPE_FORBIDDEN")
+				writeAuthError(w, r, http.StatusForbidden, "SCOPE_FORBIDDEN", "escopo não autorizado")
+				return
+			}
+
+			ctx := WithPrincipal(r.Context(), principal)
+			ctx = db.WithTenant(ctx, principal.TenantID)
+			ctx = db.WithCompany(ctx, principal.CompanyID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
 func authenticationError(err error) (int, string, string) {
 	switch {
 	case errors.Is(err, ErrAuthenticationUnavailable):

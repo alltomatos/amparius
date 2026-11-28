@@ -131,7 +131,7 @@ próprio tenant sem senha.
 
 ### `POST /v1/auth/bootstrap/complete`
 
-Corpo: `{"token":"...","password":"..."}`. `token` é o valor cru devolvido
+Corpo: `{"token":"...","password":"...","companyId":"uuid"}`. `token` é o valor cru devolvido
 uma única vez na resposta de onboarding ou de convite (ADR 0048 §12) — o
 servidor só guarda o hash. Define `password_hash`, muda `status` de
 `pending_auth` para `active`, consome o token (`consumed_at`) e devolve o

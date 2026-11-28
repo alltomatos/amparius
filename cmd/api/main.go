@@ -153,6 +153,7 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger, m
 	var platformRoutes []httpserver.PlatformRoute
 	// Inject the approved tenant privacy policy when a provider is available.
 	var policyProvider audit.PolicyProvider
+	var identityRepository *identity.Repository
 	if devOnboardingEnabled {
 		database, err := db.New(ctx, cfg.PostgresDSN)
 		if err != nil {
@@ -166,6 +167,7 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger, m
 			closeAll()
 			return nil, func() {}, fmt.Errorf("criar repositório de identidade: %w", err)
 		}
+		identityRepository = repository
 		onboardingHandler = identity.NewDevelopmentHTTPHandler(repository)
 
 		partyRepository, err := party.NewRepository(database)
@@ -247,13 +249,14 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger, m
 			closeAll()
 			return nil, func() {}, fmt.Errorf("criar repositório de party: %w", err)
 		}
+		repository, err := identity.NewRepository(database)
+		if err != nil {
+			closeAll()
+			return nil, func() {}, fmt.Errorf("criar repositório de identidade: %w", err)
+		}
+		identityRepository = repository
 		var checker funeral.AccessChecker
 		if cfg.ControlPlaneDSN != "" {
-			repository, err := identity.NewRepository(database)
-			if err != nil {
-				closeAll()
-				return nil, func() {}, fmt.Errorf("criar repositório de identidade: %w", err)
-			}
 			controlDatabase, controlErr := db.New(ctx, cfg.ControlPlaneDSN)
 			if controlErr != nil {
 				closeAll()
@@ -341,13 +344,33 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger, m
 		authenticatedRoutes = append(authenticatedRoutes, party.LegalEntityAuthenticatedRoutes(partyRepository, policyProvider)...)
 	}
 
+	// Emissor próprio de tenant (ADR 0048/AUTH-01B): só monta quando a chave
+	// de assinatura está configurada (EnvKeyProvider, lacuna documentada —
+	// produção depende de cofre/KMS real). Sem ela, tenantAuthenticator e
+	// loginService continuam nil e /v1/auth/* respondem 503 (fail-closed),
+	// sem impedir o boot do processo.
+	tenantAuthenticator, loginService := buildTenantAuthentication(cfg, identityRepository, logger)
+	var publicRoutes []httpserver.PublicRoute
+	var selfServiceRoutes []httpserver.AuthenticatedRoute
+	if loginService != nil {
+		publicRoutes = identity.PublicLoginRoutes(loginService)
+		selfServiceRoutes = identity.SelfServiceLoginRoutes(loginService)
+		authenticatedRoutes = append(authenticatedRoutes, identity.InviteRoutes(loginService)...)
+	}
+
 	options := httpserver.Options{
 		Readiness: readinessChecker,
-		// O provedor OIDC/MFA ainda não foi escolhido nem conectado ao
-		// bootstrap. Não usar um autenticador sintético aqui: auth.Require
-		// deve devolver 503 nas rotas autenticadas até essa configuração.
+		// Authenticator cobre só o emissor próprio de tenant (/v1/auth/*,
+		// RequireAuthenticated e demais rotas de negócio autenticadas). O
+		// provedor OIDC/MFA de plataforma ainda não foi escolhido nem
+		// conectado ao bootstrap: não usar um autenticador sintético aqui,
+		// PlatformAuthenticator fica nil e auth.RequirePlatform devolve 503
+		// em /admin/v1/* até essa configuração (ADR 0040).
+		Authenticator:            tenantAuthenticator,
 		AuthenticatedRoutes:      authenticatedRoutes,
 		PlatformRoutes:           platformRoutes,
+		PublicRoutes:             publicRoutes,
+		SelfServiceRoutes:        selfServiceRoutes,
 		DevelopmentMode:          devOnboardingEnabled,
 		DevelopmentOnboarding:    onboardingHandler,
 		DevelopmentParties:       partiesHandler,
@@ -364,6 +387,39 @@ func buildHandler(ctx context.Context, cfg config.Config, logger *slog.Logger, m
 	handler := httpserver.New(logger, options).Handler()
 
 	return handler, closeAll, nil
+}
+
+// buildTenantAuthentication monta o emissor próprio de tenant (ADR 0048,
+// AUTH-01B) a partir da chave de assinatura configurada no ambiente. Sem
+// chave ou política RBAC válidas, devolve (nil, nil): o chamador deixa
+// Authenticator/PublicRoutes/SelfServiceRoutes vazios e as rotas de /v1/auth
+// e demais rotas autenticadas respondem 503, nunca um caminho permissivo.
+func buildTenantAuthentication(cfg config.Config, repository *identity.Repository, logger *slog.Logger) (platformauth.Gate, *identity.LoginService) {
+	if repository == nil {
+		return nil, nil
+	}
+	keys, err := platformauth.NewEnvKeyProvider(cfg.AuthSigningKeySeed, cfg.AuthSigningKeyID, cfg.AuthPreviousSigningKeySeed, cfg.AuthPreviousSigningKeyID)
+	if err != nil {
+		logger.Warn("chave de assinatura do emissor de tenant indisponível, /v1/auth/* responde 503")
+		return nil, nil
+	}
+	issuer, err := platformauth.NewTenantIssuer(keys, 0)
+	if err != nil {
+		logger.Warn("emissor de tenant indisponível, /v1/auth/* responde 503")
+		return nil, nil
+	}
+	loginService := identity.NewLoginService(repository, issuer)
+	policy, err := platformauth.DefaultRolePolicy()
+	if err != nil {
+		logger.Warn("política RBAC padrão indisponível, rotas autenticadas de tenant respondem 503")
+		return nil, loginService
+	}
+	authenticator, err := platformauth.NewService(issuer, nil, repository, repository, policy, logger, platformauth.MFAPolicyDisabled)
+	if err != nil {
+		logger.Warn("autenticador de tenant indisponível, rotas autenticadas de tenant respondem 503")
+		return nil, loginService
+	}
+	return authenticator, loginService
 }
 
 func newReadiness(ctx context.Context, cfg config.Config) (*readiness.Checker, func(), error) {

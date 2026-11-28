@@ -184,14 +184,8 @@ func setupDeceasedFamilyLinkFixture(t *testing.T) *deceasedFamilyLinkFixture {
 		tenantB.TenantID, tenantBOwnerSubject, tenantB.OwnerUserID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := adminPool.Exec(ctx, `INSERT INTO identity.user_company (tenant_id, user_id, company_id) VALUES ($1,$2,$3)`,
-		tenantA.TenantID, tenantA.OwnerUserID, tenantA.CompanyID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := adminPool.Exec(ctx, `INSERT INTO identity.user_company (tenant_id, user_id, company_id) VALUES ($1,$2,$3)`,
-		tenantB.TenantID, tenantB.OwnerUserID, tenantB.CompanyID); err != nil {
-		t.Fatal(err)
-	}
+	// identity.create_onboarding (migration 0042) já vincula cada owner à
+	// empresa sede em identity.user_company; nenhum INSERT manual é necessário.
 
 	ownerToken := "token-owner-" + uuid.NewString()
 	tenantBToken := "token-tenant-b-" + uuid.NewString()

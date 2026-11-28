@@ -205,6 +205,27 @@ func (p RolePolicy) Allows(roles []string, permission Permission) bool {
 	return false
 }
 
+// MFAPolicy decide se Service.Authenticate exige um MFAVerifier real. O
+// emissor próprio de tenant (ADR 0048 §9/Consequências) adia MFA por decisão
+// de produto desta fatia; a plataforma (platform.go) não usa este tipo e
+// continua exigindo MFA sempre.
+type MFAPolicy int
+
+const (
+	// MFAPolicyRequired é o comportamento histórico: MFAVerifier obrigatório e
+	// MFAEnabled/Verify sempre avaliados. Valor zero: NewService sem o
+	// parâmetro variádico preserva o comportamento anterior.
+	MFAPolicyRequired MFAPolicy = iota
+	// MFAPolicyDisabled pula MFAEnabled e MFAVerifier.Verify inteiramente;
+	// usado pelo emissor de tenant enquanto não há MFA de plataforma neste
+	// slice (ADR 0048, fora de escopo de AUTH-01B).
+	MFAPolicyDisabled
+	// MFAPolicyOptional não é usado por nenhum caminho desta fatia; trata-se
+	// como MFAPolicyRequired para nunca afrouxar silenciosamente uma política
+	// não implementada.
+	MFAPolicyOptional
+)
+
 // Service autentica um bearer token e compõe o contexto confiável.
 type Service struct {
 	oidc      OIDCVerifier
@@ -213,23 +234,40 @@ type Service struct {
 	companies CompanyResolver
 	policy    RolePolicy
 	logger    *slog.Logger
+	mfaPolicy MFAPolicy
 }
 
-// NewService constrói a autenticação. Todas as dependências são obrigatórias:
-// uma configuração incompleta não pode iniciar um caminho permissivo.
-func NewService(oidc OIDCVerifier, mfa MFAVerifier, subjects SubjectResolver, companies CompanyResolver, policy RolePolicy, logger *slog.Logger) (*Service, error) {
-	if oidc == nil || mfa == nil || subjects == nil || companies == nil || len(policy.roles) == 0 {
+// NewService constrói a autenticação. Todas as dependências são obrigatórias,
+// exceto mfa quando mfaPolicy é MFAPolicyDisabled: uma configuração
+// incompleta não pode iniciar um caminho permissivo. mfaPolicy é variádico e
+// opcional para preservar chamadores existentes; na ausência, o padrão é
+// MFAPolicyRequired (comportamento anterior, inalterado).
+func NewService(oidc OIDCVerifier, mfa MFAVerifier, subjects SubjectResolver, companies CompanyResolver, policy RolePolicy, logger *slog.Logger, mfaPolicy ...MFAPolicy) (*Service, error) {
+	policyValue := MFAPolicyRequired
+	if len(mfaPolicy) > 0 {
+		policyValue = mfaPolicy[0]
+	}
+	if policyValue != MFAPolicyDisabled {
+		policyValue = MFAPolicyRequired
+	}
+	if oidc == nil || subjects == nil || companies == nil || len(policy.roles) == 0 {
+		return nil, ErrAuthenticationUnavailable
+	}
+	if policyValue != MFAPolicyDisabled && mfa == nil {
 		return nil, ErrAuthenticationUnavailable
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{oidc: oidc, mfa: mfa, subjects: subjects, companies: companies, policy: policy, logger: logger}, nil
+	return &Service{oidc: oidc, mfa: mfa, subjects: subjects, companies: companies, policy: policy, logger: logger, mfaPolicy: policyValue}, nil
 }
 
 // Authenticate valida o valor completo do cabeçalho Authorization.
 func (s *Service) Authenticate(ctx context.Context, authorization string) (Principal, error) {
-	if s == nil || s.oidc == nil || s.mfa == nil || s.subjects == nil || s.companies == nil || len(s.policy.roles) == 0 {
+	if s == nil || s.oidc == nil || s.subjects == nil || s.companies == nil || len(s.policy.roles) == 0 {
+		return Principal{}, ErrAuthenticationUnavailable
+	}
+	if s.mfaPolicy != MFAPolicyDisabled && s.mfa == nil {
 		return Principal{}, ErrAuthenticationUnavailable
 	}
 	token, err := bearerToken(authorization)
@@ -254,18 +292,20 @@ func (s *Service) Authenticate(ctx context.Context, authorization string) (Princ
 	if err != nil {
 		return Principal{}, fmt.Errorf("resolver vínculo OIDC: %w", err)
 	}
-	if !record.MFAEnabled {
+	if s.mfaPolicy != MFAPolicyDisabled && !record.MFAEnabled {
 		return Principal{}, ErrMFARequired
 	}
 	if !record.allowsCompany(identity.CompanyID) {
 		return Principal{}, ErrScopeForbidden
 	}
-	mfaOK, err := s.mfa.Verify(ctx, identity)
-	if err != nil {
-		return Principal{}, fmt.Errorf("verificar MFA: %w", err)
-	}
-	if !mfaOK {
-		return Principal{}, ErrMFARequired
+	if s.mfaPolicy != MFAPolicyDisabled {
+		mfaOK, err := s.mfa.Verify(ctx, identity)
+		if err != nil {
+			return Principal{}, fmt.Errorf("verificar MFA: %w", err)
+		}
+		if !mfaOK {
+			return Principal{}, ErrMFARequired
+		}
 	}
 
 	belongs, err := s.companies.CompanyBelongsToTenant(ctxTenant, identity.TenantID, identity.CompanyID)

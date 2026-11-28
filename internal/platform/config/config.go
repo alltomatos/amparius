@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -57,6 +58,24 @@ type Config struct {
 	ObjectStorageAccessKey    string
 	ObjectStorageSecretKey    string
 	ObjectStorageUsePathStyle bool
+
+	// AuthSigningKeySeed/AuthSigningKeyID e os campos "Previous" alimentam o
+	// EnvKeyProvider de desenvolvimento/teste do emissor próprio de tenant
+	// (ADR 0048 Lacuna 5: produção depende de um cofre/KMS real, fora desta
+	// fatia). Ausentes, o autenticador do tenant fica nil e as rotas de
+	// /v1/auth respondem 503 — nunca ficam propositalmente de fora de
+	// validate(), para não impedir o boot sem a chave em ambientes que ainda
+	// não precisam de autenticação de tenant.
+	AuthSigningKeySeed         string
+	AuthSigningKeyID           string
+	AuthPreviousSigningKeySeed string
+	AuthPreviousSigningKeyID   string
+
+	// AuthTrustedProxyCIDRs lista os CIDRs de proxy reverso confiáveis para
+	// que o rate-limit de login confie em X-Forwarded-For em vez de só no
+	// peer TCP direto (correção #2 do parecer do Analista sobre AUTH-01B).
+	// Vazio (padrão) ignora o cabeçalho sempre.
+	AuthTrustedProxyCIDRs []string
 }
 
 // Load lê a configuração do ambiente do processo.
@@ -112,6 +131,12 @@ func LoadFrom(lookup LookupFunc) (Config, error) {
 		ObjectStorageAccessKey:    text(lookup, "OBJECT_STORAGE_ACCESS_KEY", ""),
 		ObjectStorageSecretKey:    text(lookup, "OBJECT_STORAGE_SECRET_KEY", ""),
 		ObjectStorageUsePathStyle: usePathStyle,
+
+		AuthSigningKeySeed:         text(lookup, "AUTH_SIGNING_KEY_SEED", ""),
+		AuthSigningKeyID:           text(lookup, "AUTH_SIGNING_KEY_ID", ""),
+		AuthPreviousSigningKeySeed: text(lookup, "AUTH_PREVIOUS_SIGNING_KEY_SEED", ""),
+		AuthPreviousSigningKeyID:   text(lookup, "AUTH_PREVIOUS_SIGNING_KEY_ID", ""),
+		AuthTrustedProxyCIDRs:      list(lookup, "AUTH_TRUSTED_PROXY_CIDRS"),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -146,6 +171,11 @@ func (c Config) validate() error {
 	if c.RabbitMQURL == "" {
 		return fmt.Errorf("%w: RABBITMQ_URL não pode ser vazio", ErrInvalidConfig)
 	}
+	for _, cidr := range c.AuthTrustedProxyCIDRs {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return fmt.Errorf("%w: AUTH_TRUSTED_PROXY_CIDRS contém CIDR inválido %q: %v", ErrInvalidConfig, cidr, err)
+		}
+	}
 	return nil
 }
 
@@ -169,6 +199,22 @@ func duration(lookup LookupFunc, key string, fallback time.Duration) (time.Durat
 		return 0, fmt.Errorf("%w: %s deve ser positivo, recebido %q", ErrInvalidConfig, key, value)
 	}
 	return parsed, nil
+}
+
+// list lê uma variável separada por vírgulas (ex.: AUTH_TRUSTED_PROXY_CIDRS),
+// descartando entradas vazias. Ausente ou vazia devolve nil.
+func list(lookup LookupFunc, key string) []string {
+	value, ok := lookup(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return nil
+	}
+	var result []string
+	for _, part := range strings.Split(value, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
 
 func boolean(lookup LookupFunc, key string, fallback bool) (bool, error) {

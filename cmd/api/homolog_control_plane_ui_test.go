@@ -103,10 +103,8 @@ func newHomologFixture(t testing.TB) *homologFixture {
 		t.Fatal(err)
 	}
 	tenants := []uuid.UUID{owner.TenantID, other.TenantID}
-	if _, err := admin.Exec(ctx, `INSERT INTO identity.user_company (tenant_id, user_id, company_id) VALUES ($1, $2, $3), ($4, $5, $6)`,
-		owner.TenantID, owner.OwnerUserID, owner.CompanyID, other.TenantID, other.OwnerUserID, other.CompanyID); err != nil {
-		t.Fatal(err)
-	}
+	// identity.create_onboarding (migration 0042) já vincula o owner à
+	// empresa sede em identity.user_company; nenhum INSERT manual é necessário.
 	service, err := entitlement.NewService(control)
 	if err != nil {
 		t.Fatal(err)

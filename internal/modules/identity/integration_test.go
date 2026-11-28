@@ -63,6 +63,7 @@ func TestOnboardingDevelopmentIdempotencyAndRLS(t *testing.T) {
 		if cleanupErr == nil {
 			defer func() { _ = tx.Rollback(cleanupCtx) }()
 			for _, statement := range []string{
+				"DELETE FROM identity.user_company WHERE tenant_id = ANY($1::uuid[])",
 				"DELETE FROM identity.onboarding_request WHERE tenant_id = ANY($1::uuid[])",
 				"DELETE FROM identity.user_role WHERE tenant_id = ANY($1::uuid[])",
 				"DELETE FROM identity.app_user WHERE tenant_id = ANY($1::uuid[])",

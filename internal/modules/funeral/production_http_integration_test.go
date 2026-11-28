@@ -135,9 +135,8 @@ func TestFuneralJourneyProductionHTTPPostgres(t *testing.T) {
 		if _, err := admin.Exec(ctx, `UPDATE identity.app_user SET auth_subject=$1, status='active', mfa_enabled=true WHERE id=$2`, subject, result.OwnerUserID); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := admin.Exec(ctx, `INSERT INTO identity.user_company (tenant_id, user_id, company_id) VALUES ($1,$2,$3)`, result.TenantID, result.OwnerUserID, result.CompanyID); err != nil {
-			t.Fatal(err)
-		}
+		// identity.create_onboarding (migration 0042) já vincula o owner à
+		// empresa sede em identity.user_company; nenhum INSERT manual é necessário.
 		return auth.OIDCIdentity{Issuer: "funeral-test-issuer", Subject: subject, TenantID: result.TenantID, CompanyID: result.CompanyID}
 	}
 
@@ -202,7 +201,7 @@ func TestFuneralJourneyProductionHTTPPostgres(t *testing.T) {
 		}
 		contract, err := repo.CreateContract(scoped(identity), funeral.ContractCreate{
 			CompanyID: identity.CompanyID, CustomerPartyID: customer, DeceasedID: deceased, IdempotencyKey: "contract-" + uuid.NewString(),
-			Items: []funeral.ContractItemCreate{{CatalogItemID: item, Quantity: 1, UnitAmountCents: 10000}},
+			Items:       []funeral.ContractItemCreate{{CatalogItemID: item, Quantity: 1, UnitAmountCents: 10000}},
 			PaymentPlan: &funeral.ContractPaymentPlan{InstallmentCount: 3, FirstDueDate: time.Date(2026, 12, 15, 0, 0, 0, 0, time.UTC), IntervalMonths: 1},
 		})
 		if err != nil {

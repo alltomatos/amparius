@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/alltomatos/amparius/internal/platform/auth"
+	"github.com/alltomatos/amparius/internal/platform/observability"
 	"github.com/alltomatos/amparius/internal/platform/readiness"
 )
 
@@ -25,6 +26,12 @@ type Options struct {
 	// AuthenticatedRoutes são handlers de produção já prontos para receber o
 	// contexto confiável tenant/company composto pelo middleware.
 	AuthenticatedRoutes []AuthenticatedRoute
+	// SelfServiceRoutes exigem autenticação + MFA + escopo, mas nenhuma
+	// Permission de negócio (ex.: logout/revoke da própria sessão).
+	SelfServiceRoutes []AuthenticatedRoute
+	// PublicRoutes não exigem autenticação (ex.: login, refresh, conclusão de
+	// bootstrap/recuperação). O handler é responsável por toda validação.
+	PublicRoutes []PublicRoute
 	// PlatformAuthenticator protege `/admin/v1/*` (ADR 0040) com OIDC + MFA +
 	// `platform_admin`. Sem ele, as rotas de plataforma respondem 503.
 	PlatformAuthenticator auth.PlatformGate
@@ -71,6 +78,12 @@ type PlatformRoute struct {
 	Handler    http.Handler
 }
 
+// PublicRoute é uma rota sem middleware de autenticação.
+type PublicRoute struct {
+	Pattern string
+	Handler http.Handler
+}
+
 // New constrói o servidor com as dependências injetadas.
 func New(logger *slog.Logger, options ...Options) *Server {
 	if logger == nil {
@@ -104,11 +117,32 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) routes(options Options) {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
+	// Fallback de /v1/auth/*: sem o emissor próprio de tenant configurado (ou
+	// com ele parcialmente indisponível, ver buildTenantAuthentication em
+	// cmd/api), nenhuma PublicRoute/SelfServiceRoute específica é registrada
+	// e esta rota menos específica responde 503 em vez do 404 padrão do mux —
+	// nunca um "rota inexistente" quando o motivo real é autenticação fora do
+	// ar (correção #3 do parecer do Analista sobre AUTH-01B). Uma rota exata
+	// com método (ex.: "POST /v1/auth/login") sempre tem precedência sobre
+	// esta quando registrada.
+	s.mux.HandleFunc("/v1/auth/", s.handleAuthUnavailable)
 	for _, route := range options.AuthenticatedRoutes {
 		if route.Pattern == "" || route.Handler == nil {
 			continue
 		}
 		s.mux.Handle(route.Pattern, auth.Require(options.Authenticator, route.Permission, s.logger)(route.Handler))
+	}
+	for _, route := range options.SelfServiceRoutes {
+		if route.Pattern == "" || route.Handler == nil {
+			continue
+		}
+		s.mux.Handle(route.Pattern, auth.RequireAuthenticated(options.Authenticator, s.logger)(route.Handler))
+	}
+	for _, route := range options.PublicRoutes {
+		if route.Pattern == "" || route.Handler == nil {
+			continue
+		}
+		s.mux.Handle(route.Pattern, route.Handler)
 	}
 	for _, route := range options.PlatformRoutes {
 		if route.Pattern == "" || route.Handler == nil {
@@ -181,6 +215,17 @@ func (s *Server) routes(options Options) {
 		s.mux.Handle("/_dev/funeral/schedules/{id}/cancel", options.DevelopmentFuneral)
 		s.mux.Handle("/_dev/funeral/contracts/{id}/schedules", options.DevelopmentFuneral)
 	}
+}
+
+// handleAuthUnavailable é o fallback de /v1/auth/* quando nenhuma rota mais
+// específica foi registrada (ver routes()).
+func (s *Server) handleAuthUnavailable(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+		"code":    "AUTHENTICATION_UNAVAILABLE",
+		"message": "autenticação indisponível",
+		"details": map[string]any{},
+		"traceId": observability.TraceIDFromContext(r.Context()),
+	})
 }
 
 // handleHealthz é o liveness probe: processo vivo responde 200.

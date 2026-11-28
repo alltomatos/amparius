@@ -81,12 +81,8 @@ func TestResolveSubjectUsesPersistedCompanyScopeAndRLS(t *testing.T) {
 		 WHERE tenant_id = $1 AND id = $3`, onboarded.TenantID, subject, onboarded.OwnerUserID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := adminPool.Exec(ctx, `INSERT INTO identity.user_company (tenant_id, user_id, company_id) VALUES ($1,$2,$3)`, onboarded.TenantID, onboarded.OwnerUserID, onboarded.CompanyID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := adminPool.Exec(ctx, `INSERT INTO identity.user_company (tenant_id, user_id, company_id) VALUES ($1,$2,$3)`, second.TenantID, second.OwnerUserID, second.CompanyID); err != nil {
-		t.Fatal(err)
-	}
+	// identity.create_onboarding (migration 0042) já vincula o owner à empresa
+	// sede em identity.user_company; nenhum INSERT manual é necessário aqui.
 	for _, fixture := range []struct {
 		name   string
 		tenant uuid.UUID
